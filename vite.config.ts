@@ -11,7 +11,7 @@ function stamp() {
   const git = (cmd: string) => { try { return execSync(cmd, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { return ''; } };
   const sha = git('git rev-parse --short HEAD') || 'unknown';
   const dirty = git('git status --porcelain --untracked-files=no -- src') !== '';
-  const RULES = ['catalog', 'engine', 'world', 'rng', 'metrics', 'demography', 'ledger', 'invent', 'ages', 'civ', 'polity'].map((f) => `src/sim/${f}.ts`);
+  const RULES = ['catalog', 'engine', 'world', 'rng', 'metrics', 'demography', 'ledger', 'invent', 'ages', 'civ', 'polity', 'diffusion'].map((f) => `src/sim/${f}.ts`);
   const h = createHash('sha256');
   for (const f of RULES) { try { h.update(readFileSync(f)); } catch { h.update(f); } }
   let trainedAt = '';

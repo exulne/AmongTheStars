@@ -48,6 +48,7 @@ Same **seed**, same future. Change the seed and you get a different future: mayb
 - **Knowledge** accumulates from people doing research. It unlocks technologies in a tree (you can't build a fusion ship without fusion).
 - **Expansion:** rich, stable settlements send ships to nearby worlds. Interstellar trips take decades to centuries, and some ships never arrive.
 - **Politics:** humanity as a whole moves between moods such as expansion, golden age, stagnation, war, pandemic and collapse, and each mood changes the dice. Far-off colonies with long light-delay to Earth tend to declare independence.
+- **News travels at light speed:** an invention happens at one lab on one world. A colony 60 light years away hears of it 60 years later, and only then can it build with it or live differently because of it. Each world's inspector lists the news still on its way.
 - **Events:** solar storms, habitat breaches, asteroid strikes, breakthroughs, plagues, mutinies, new religions, and humans slowly drifting genetically on low-gravity worlds.
 
 ## The people (how billions of real individuals fit in a browser)

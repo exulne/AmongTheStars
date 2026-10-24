@@ -37,7 +37,7 @@ const r = new Engine(world, seed);
 r.logEvents = false;
 while (r.st.step < step) r.step();
 const settled = Int32Array.from(r.st.settled.slice(0, r.st.nSettled));
-const snap: any = { type: 'state', id: 0, step, S: Float64Array.from(r.st.S), techDone: Float64Array.from(r.st.techDone), ships: r.shipList(), globals: r.globals(), settled };
+const snap: any = { type: 'state', id: 0, step, S: Float64Array.from(r.st.S), techDone: Float64Array.from(r.st.techDone), techWhere: Float64Array.from(r.st.techWhere), ships: r.shipList(), globals: r.globals(), settled };
 const year = r.years[step];
 console.log(`seed ${seed}, year ${2040 + Math.round(year)}: ${settled.length} settled bodies, ${snap.ships.length} ships in transit`);
 

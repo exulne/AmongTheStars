@@ -34,7 +34,7 @@ export type ToWorker =
 
 export type FromWorker =
   | { type: 'progress'; seed: number; step: number; years: number[]; series: Float64Array; done: boolean; ms: number }
-  | { type: 'state'; id: number; step: number; S: Float64Array; techDone: Float64Array; ships: ReturnType<Engine['shipList']>; globals: ReturnType<Engine['globals']>; settled: Int32Array }
+  | { type: 'state'; id: number; step: number; S: Float64Array; techDone: Float64Array; techWhere: Float64Array; ships: ReturnType<Engine['shipList']>; globals: ReturnType<Engine['globals']>; settled: Int32Array }
   | { type: 'history'; id: number; body: number; steps: number[]; cols: Record<string, number[]> }
   | { type: 'events'; id: number; events: Engine['events'] }
   | { type: 'residents'; id: number; pending?: boolean; total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] }
@@ -129,9 +129,9 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
   else if (m.type === 'state') {
     const e = stateAt(m.step);
     const S = e.st.S.slice();
-    const techDone = e.st.techDone.slice();
+    const techDone = e.st.techDone.slice(), techWhere = e.st.techWhere.slice();
     const settled = e.st.settled.slice(0, e.st.nSettled);
-    post({ type: 'state', id: m.id, step: e.st.step, S, techDone, ships: e.shipList(), globals: e.globals(), settled }, [S.buffer, techDone.buffer, settled.buffer]);
+    post({ type: 'state', id: m.id, step: e.st.step, S, techDone, techWhere, ships: e.shipList(), globals: e.globals(), settled }, [S.buffer, techDone.buffer, techWhere.buffer, settled.buffer]);
   } else if (m.type === 'history' && main) {
     const w = 2 + HIST_FIELDS.length;
     const steps: number[] = [];
@@ -160,7 +160,7 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
     if (!ok) post({ type: 'society', id: m.id, pending: true, society: null });
     else {
       const e = stateAt(m.step);
-      post({ type: 'society', id: m.id, society: society!.at(m.body, e.years[e.st.step], e.st.S, e.st.techDone, e.st.g[1], e.st.hx) });
+      post({ type: 'society', id: m.id, society: society!.at(m.body, e.years[e.st.step], e.st.S, e.st.techDone, e.st.g[1], e.st.hx, e.st.techWhere) });
     }
   } else if (m.type === 'placeNames') {
     const L = people(), names: [number, string][] = [];

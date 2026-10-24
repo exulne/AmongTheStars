@@ -8,6 +8,7 @@ import { STAGE_CSS } from '../view/textures.ts';
 import { alive, cityCount, citySplit, systemSummary, type Pickable } from '../view/views.ts';
 import { fmtNum, fmtUnit, fmtYear, parseCount } from './format.ts';
 import { periodOf } from '../sim/ledger.ts';
+import { techArrival } from '../sim/diffusion.ts';
 import { names } from './names.ts';
 import type { Biography, PersonBrief } from '../sim/lives.ts';
 import { biographyHtml, residentsHtml } from './peoplePanel.ts';
@@ -384,12 +385,27 @@ export class Inspector {
       ${this.kv([...(city === undefined ? [] : [['People in this settlement', fmtNum(cityPop)] as [string, string]]), [city === undefined ? 'Population' : 'Whole world', fmtNum(pop)], ['Allegiance', esc(faction)], ['Faith', esc(names.faith(v('culture')))]])}
       ${this.historyChart(c)}
       <h3>Society in ${fmtYear(c.year)}</h3>${this.society(c, id)}
+      ${this.news(c, id)}
       <h3>Residents</h3>${this.people(c, id, cityPop, offset)}
       <h3>All metrics</h3>${this.kv(metrics)}
       <h3>World</h3>${phys}
       <h3>Resources</h3>${res}
       <h3>History</h3>${this.chronicle(c, id)}
       <h3>Events here</h3>${this.eventsList(c, 10)}`;
+  }
+
+  /** Inventions already made elsewhere whose news is still crossing space toward this place. */
+  private news(c: InspectorCtx, b: number): string {
+    const snap = c.snap;
+    if (!snap?.techWhere) return '';
+    const rows = TECHS.map((t, i) => ({ t, i, at: techArrival(c.world, snap.techDone, snap.techWhere, i, b) }))
+      .filter((r) => r.at > c.year && snap.techDone[r.i] <= c.year).sort((a, z) => a.at - z.at);
+    if (!rows.length) return '';
+    return `<h3>News on its way</h3><p class="muted">Invented elsewhere, but word travels at the speed of light. Until it arrives, nobody here can build with it.</p>
+      <ul class="techs">${rows.slice(0, 8).map((r) => {
+        const from = snap.techWhere[r.i];
+        return `<li><span class="num">${fmtYear(r.at)}</span> ${esc(r.t.name)}<span class="blurb">invented ${fmtYear(snap.techDone[r.i])}${from >= 0 ? ` on <button class="link" data-act="body" data-id="${from}" type="button">${esc(names.place(c.world, from))}</button>, ${Math.round(r.at - snap.techDone[r.i])} light years away` : ''}</span></li>`;
+      }).join('')}</ul>${rows.length > 8 ? `<p class="muted">and ${rows.length - 8} more</p>` : ''}`;
   }
 
   private historyChart(c: InspectorCtx): string {
