@@ -1011,7 +1011,8 @@ function writeHash(): void {
   if (leaving) return;
   hashTimer = window.setTimeout(() => {
     const sel = ctx.selected;
-    const parts = [`future${sim.seed}`, `y${Math.round(ctx.year)}`];
+    // a linked year still waiting for the run to reach it stays in the link
+    const parts = [`future${sim.seed}`, `y${Math.round(pendingYear ?? ctx.year)}`];
     if (sel) parts.push(sel.kind === 'city' ? `c${ctx.body}.${sel.id}` : sel.kind === 'thing' ? `x${sel.ex}.${sel.id}` : `${REF_CODE[sel.kind]}${sel.id}`);
     if (isMicro(level) && micro.pid) parts.push(`p${micro.pid.replace(/-/g, '~')}`, micro.hash());
     parts.push(`l${level}`, STAMP_CODE);
