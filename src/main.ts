@@ -1198,6 +1198,12 @@ if (fromHash.sel) {
 setLevel(fromHash.level ?? 'system', null, undefined, false);
 pendingYear = fromHash.year;
 
+/** Report a time trip once the state for its year has arrived, so "where are we" reads that year's numbers. */
+function arrived(y: number, done: (y: number) => void, tries = 0): void {
+  if (tries > 100 || (!inFlight && lastStep === sim.stepAt(y))) done(y);
+  else setTimeout(() => arrived(y, done, tries + 1), 50);
+}
+
 let last = performance.now(), frame = 0, lastYear = 0;
 function loop(now: number): void {
   const dt = Math.min(0.1, (now - last) / 1000), wall = Math.min(1, (now - last) / 1000); // trips run on the clock, even on a slow machine
@@ -1207,7 +1213,7 @@ function loop(now: number): void {
     c.t += wall;
     const k = Math.min(1, c.t / c.dur), e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
     timeline.set(c.from + (c.to - c.from) * e, true);
-    if (k >= 1) { chronoTrip = null; c.done(ctx.year); }
+    if (k >= 1) { chronoTrip = null; arrived(ctx.year, c.done); }
   }
   govern(dt);
   ctx.t += dt;
