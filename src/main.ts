@@ -310,10 +310,18 @@ function select(p: Pickable | null): void {
   refreshEvents();
   refreshPanels();
   if (changed) inspector.toTop();
+  if (changed) inspector.el.classList.toggle('open', !!p);
   writeHash();
 }
 inspector.onSelect = (p) => select(p);
 inspector.onClose = () => select(null);
+// on phones the inspector is a bottom sheet: the grab bar folds it down to its title
+const grab = document.createElement('button');
+grab.className = 'insp-grab';
+grab.type = 'button';
+grab.setAttribute('aria-label', 'Show or hide details');
+grab.addEventListener('click', () => inspector.el.classList.toggle('open'));
+inspector.el.prepend(grab);
 inspector.onDive = (p) => { select(p); dive(p); };
 
 // Wheel out past the outer limit goes up a level. Wheel in over a thing pulls
@@ -400,7 +408,8 @@ function measureOccluders(): void {
     if (el.offsetParent !== null || el === bottom) occluders.push(el.getBoundingClientRect());
   }
 }
-new ResizeObserver(measureOccluders).observe(document.body);
+const occRO = new ResizeObserver(measureOccluders);
+occRO.observe(document.body); occRO.observe(inspector.el); occRO.observe(bottom);
 const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
 function drawLabels(): void {
   const list = views[level].labels(ctx);

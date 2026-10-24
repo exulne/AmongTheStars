@@ -57,7 +57,8 @@ export class Timeline {
       const t = document.createElement('span');
       t.style.left = `${yearToPos(y) * 100}%`;
       t.textContent = fmtYear(y);
-      if (y === 10 || y === 2500) t.className = 'minor';
+      // dropped on narrow screens, where they would collide with their neighbours
+      if (y === 10 || y === 50 || y === 250) t.className = 'minor';
       ticks.append(t);
     }
     this.input.addEventListener('input', () => {

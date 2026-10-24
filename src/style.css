@@ -189,15 +189,48 @@ input.tl-big:focus { outline: none; border-bottom-color: var(--accent); }
   .charts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .charts .chart:nth-child(n + 4) { display: none; }
 }
+.insp-grab { display: none; }
 @media (max-width: 40rem) {
   body { font-size: 15px; }
+  .top { flex-direction: column; gap: 0.35rem; align-items: stretch; }
+  .intro { max-width: none; }
   .intro p { display: none; }
-  .intro h1 { font-size: 1.6rem; }
-  .run { margin-right: 0; }
-  .inspector { top: auto; left: 0; width: auto; height: 34vh; bottom: var(--bottom-h, 200px); background: var(--wash); padding: 0.8rem max(16px, env(safe-area-inset-right, 0px)) 0.8rem max(16px, env(safe-area-inset-left, 0px)); }
+  .intro h1 { font-size: 1.35rem; }
+  .crumbs { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; scrollbar-width: none; margin-top: 0.2rem; }
+  .run { margin-right: 0; justify-content: flex-start; gap: 0.2rem 0.6rem; }
+  .search { flex: 1 0 100%; margin: 0; }
+  .search input { width: 100%; }
+  .status { display: none; }
+  /* bottom sheet: folded to its title until something is selected or the grab bar is tapped */
+  .scrim { --iw: 0px; }
+  .inspector { top: auto; left: 0; width: auto; bottom: var(--bottom-h, 200px); max-height: 2.9rem; overflow: hidden; background: rgba(4, 4, 7, 0.93);
+    border-top: 1px solid var(--faint); padding: 0.75rem max(16px, env(safe-area-inset-right, 0px)) 0.8rem max(16px, env(safe-area-inset-left, 0px));
+    transition: max-height 0.3s ease; }
+  .inspector.open { max-height: 46vh; overflow-y: auto; }
+  .inspector:not(.open) .insp-body > :not(h2):not(.insp-close) { visibility: hidden; }
+  .inspector h2 { font-size: 1.1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .insp-grab { display: block; position: absolute; left: 0; right: 3rem; top: 0; height: 2.9rem; background: none; border: 0; padding: 0; cursor: pointer; z-index: 1; }
+  .insp-grab::before { content: ''; position: absolute; left: 50%; top: 0.35rem; width: 2.2rem; height: 2px; margin-left: -1.1rem; background: var(--faint); }
+  .inspector.open .insp-grab { position: sticky; margin-bottom: -2.9rem; }
   .legend { display: none; }
+  .tl-row { flex-wrap: wrap; gap: 0.2rem 0.8rem; }
+  .tl-sub { display: none; }
+  .ticker { order: 3; flex-basis: 100%; margin-right: 0; min-height: 1.2rem; }
+  .tick.older { display: none; }
+  .tl-ticks .minor, .tl-eras { display: none; }
   .charts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .charts .chart:nth-child(n + 3) { display: none; }
+}
+/* fingers: 44px targets without changing the layout */
+@media (pointer: coarse) {
+  .link, .tick { padding-block: 0.75rem; margin-block: -0.75rem; }
+  .tl-play { min-height: 2.75rem; min-width: 2.75rem; }
+  .tl-track { height: 2.75rem; }
+  .tl-track input { height: 2.75rem; }
+  .tl-track input::-webkit-slider-runnable-track { height: 2.75rem; }
+  .tl-track input::-webkit-slider-thumb { height: 2.75rem; width: 3px; }
+  .person { min-height: 2.75rem; }
+  .search input, .run input, input.tl-big { min-height: 2.2rem; }
 }
 @media (prefers-reduced-motion: reduce) { .xfade { display: none; } .tick { animation: none; } .sel-ring i + i { animation: none; } }
 .odds { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.15rem 0.8rem; margin: 0; font-size: 0.8125rem; }
