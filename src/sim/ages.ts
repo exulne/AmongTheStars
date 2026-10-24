@@ -60,9 +60,13 @@ export function binHazard(k: number, m: Mortality): number {
   return m.A + g + (k === 0 ? m.inf : 0);
 }
 
-/** Total fertility rate from product per person (market $), before policy and crowding. */
+/** Total fertility rate from product per person (market $), before policy and crowding.
+ *  The transition, then a partial recovery at very high development: Myrskylä, Kohler &
+ *  Billari 2009 (Nature 460:741) find fertility rising again past HDI ≈ 0.9. The recovery
+ *  term adds up to 0.3, half of it by y_ppp ≈ $200k, so rich worlds level off near 1.9. */
 export function tfrTransition(gdpPerCap: number): number {
-  return 1.6 + 2.5 * Math.exp(-(PPP * Math.max(0, gdpPerCap)) / 20000);
+  const y = PPP * Math.max(0, gdpPerCap);
+  return 1.6 + 2.5 * Math.exp(-y / 20000) + 0.3 * (1 - Math.exp(-y / 300000));
 }
 
 /** Under-5 hazard falls with income (UN IGME: under-5 mortality ≈ 3.7% in 2022, ≈ 0.4% in rich countries). */

@@ -4,7 +4,7 @@
 
 import { ERA_FX, ERA_MATRIX, ERAS, EV, STAGE, STAGE_CAP, STAGE_TECH, TECHS, isAlive, type Tech } from './catalog.ts';
 import { F, GM, HIST_FIELDS, NF, NGM } from './metrics.ts';
-import { AGE_W, A_MIN, CREW_AGES, FERT_SHARE, GM_A0, GM_B0, GM_b0, MIGRANT_AGES, deployed, NAGE, binHazard, earthBins, infantHazard, lifeExpectancyBins, medianAge, tfrTransition } from './ages.ts';
+import { AGE_W, A_MIN, CREW_AGES, FERT_SHARE, GM_A0, GM_B0, GM_b0, MIGRANT_AGES, WORK_SHARE, deployed, NAGE, binHazard, earthBins, infantHazard, lifeExpectancyBins, medianAge, tfrTransition } from './ages.ts';
 import { EFFECTS, compat, effectFor, effectSize, isAdd, isDown, spineField, FIELDS, type Field } from './invent.ts';
 import { FLOW, GENERATION, Ledger, NPERIODS, isPeriodBoundary, periodOf } from './ledger.ts';
 import { next, seedRng, type RngState } from './rng.ts';
@@ -41,6 +41,8 @@ const G = {
   prevShortage: 15, prevFactions: 16, prevStability: 17, rivals: 18,
   flowSeq: 19, // id of the next discrete group of travellers (crew or ship), same in replays
   nGen: 20,    // generated inventions so far
+  tfp: 21,     // total factor productivity index A (Jones semi-endogenous growth), 1 in 2040
+  researchers: 22, // effective research effort S behind TFP: people × research multipliers (last step)
 } as const;
 const NG = 24;
 
@@ -56,6 +58,8 @@ export interface SimState {
   gen: Float64Array;       // generated inventions, MAX_GEN × GC (see GC)
   /** people per age bin (ages.ts), NAGE per settlement in founding order (settled[n] owns ages[n·NAGE..]) */
   ages: Float64Array;
+  /** per system: [year its Dyson swarm phase I began, year phase II began], -1 if not (yet) */
+  swarm: Float64Array;
   nSettled: number;
   rng: RngState;
 }
@@ -73,7 +77,15 @@ const MULT_KEYS = new Set(['extract', 'habitat', 'lifeSupport', 'energy', 'launc
 /** techs that move the ageing curve, phased in along their S-curve every step (see `longevity`) */
 const AGEING = TECHS.flatMap((t, i) => (t.fx.gompB !== undefined || t.fx.gompb !== undefined ? [i] : []));
 
-const RESEARCH = 10; // calibrates knowledge output to the tech tree's milestone years
+const RESEARCH = 14; // calibrates knowledge output to the tech tree's milestone years
+const SIGMA = 5.670374e-8, L_SUN = 3.828e26; // Stefan–Boltzmann (W m⁻² K⁻⁴), nominal solar luminosity (W, IAU 2015)
+// TFP growth (see step): g0 at 2040's research effort S0 (Earth's people), λ = 0.75 (invention-model
+// §5.3). β/λ ≈ 3.3 from Bloom et al. 2020: US research effort grew ≈ 4.3%/yr while TFP grew ≈ 1.3%/yr,
+// and in Jones's steady state g_A = λ·g_S/β. So per-head growth slows as the frontier advances unless
+// ever more minds work on it.
+const TFP_G0 = 0.006, TFP_S0 = 9.2e9, TFP_LAMBDA = 0.75, TFP_BETA = 2;
+// Production scale: Earth 2040 makes $160T a year from K = $552T, 23 TW and its working-age people
+const Y_SCALE = 1.6e14 / (Math.pow(9.2e9 * 60000, 0.3) * Math.pow(2.3e13 + 6e5, 0.08) * Math.pow(earthBins(9.2e9).reduce((a, n, k) => a + n * WORK_SHARE[k], 0), 0.62));
 const SHIP_MIN_HAB = 0.15;
 const MIGRATE = 0.001; // share of a town's people per year who move to younger settlements in the same system
 const REACH_OUTER = 1, REACH_RAD = 2, REACH_DEEP = 4;
@@ -115,7 +127,12 @@ export class Engine {
   private sysBodies: number[][];
   private migW: Float64Array; private migD: Float64Array;
   private recv: Float64Array; private sent: Float64Array; // per-body migration scratch, rebuilt every step // per-system scratch, rebuilt every step
-  private swarmStamp: Int32Array; private sysLum: Float64Array; private tick = 0;
+  private sysLum: Float64Array;
+  /** per body: waste heat its surface can shed, W (see constructor) */
+  private bHeat: Float64Array;
+  /** per-system scratch, rebuilt every step: people, people in hubs, swarm power in use (W) */
+  private sysPop: Float64Array; private hubPop: Float64Array; private swarmW: Float64Array;
+  private sysList: number[] = []; private sysMark: Int32Array; private markGen = 0;
   /** body → index in st.settled (and its age bins), -1 if never settled; derived, rebuilt on restore */
   private pos: Int32Array;
   private mu = new Float64Array(NAGE);
@@ -146,7 +163,16 @@ export class Engine {
     this.sysBodies = world.systems.map((s) => s.bodies);
     this.migW = new Float64Array(ns); this.migD = new Float64Array(ns);
     this.recv = new Float64Array(nb); this.sent = new Float64Array(nb);
-    this.swarmStamp = new Int32Array(ns); this.sysLum = Float64Array.from(world.systems, (s) => s.lum);
+    this.sysLum = Float64Array.from(world.systems, (s) => s.lum);
+    this.sysPop = new Float64Array(ns); this.hubPop = new Float64Array(ns); this.swarmW = new Float64Array(ns); this.sysMark = new Int32Array(ns);
+    // Waste heat: a planet sheds extra power P only by warming until it radiates it,
+    // P ≤ σ·4πR²·(T_max⁴ − T_eq⁴). A living world tolerates T_max = T_eq + 3 K (Earth: ≈ 6 PW,
+    // against 0.02 PW used in 2024 and 120 PW of absorbed sunlight); a dead one can be paved
+    // with radiators running 30 K above its surface, and never colder than 250 K.
+    this.bHeat = Float64Array.from(world.bodies, (b) => {
+      const R = b.radius * 1e3, T = Math.max(b.temp, 3), Tmax = b.hab >= 0.3 ? T + 3 : Math.max(T + 30, 250);
+      return SIGMA * 4 * Math.PI * R * R * (Tmax ** 4 - T ** 4);
+    });
     world.systems.forEach((s, i) => {
       this.sysX[i] = s.x; this.sysY[i] = s.y; this.sysZ[i] = s.z;
       this.sysRegion[i] = ({ sol: 0, local: 1, galaxy: 2, extra: 3 } as const)[s.region];
@@ -187,11 +213,13 @@ export class Engine {
       techDone: new Float64Array(TECHS.length).fill(-1), ships: new Float64Array(MAX_SHIPS * NSH),
       settled: new Int32Array(nb), nSettled: 0, rng, shipRetry: new Float64Array(this.world.systems.length),
       gen: new Float64Array(MAX_GEN * NGC), ages: new Float64Array(nb * NAGE),
+      swarm: new Float64Array(this.world.systems.length * 2).fill(-1),
     };
     this.st = st;
     st.g[G.era] = 0;
     st.g[G.launchCap] = 5000;
     st.g[G.faiths] = 6;
+    st.g[G.tfp] = 1; st.g[G.researchers] = TFP_S0;
     const W = this.world;
     // Earth: 9.2 billion people, $160T/yr, 23 TW
     this.found(st, W.earth, STAGE.HUB, 9.2e9, -1, 0);
@@ -331,10 +359,14 @@ export class Engine {
 
     // ---- per settlement
     this.longevity(year);
-    const swarm = this.swarmPower(year);
-    this.tick++; // never repeats, even after a restore to an earlier step
-    const tfp = fx.productivity * Math.pow(1 + g[G.knowledge] / 2000, 0.22);
-    let research = 0;
+    this.systemsPass(year);
+    // total factor productivity: Jones (1995) semi-endogenous growth, d ln A/dt = g0 (R/R0)^λ A^(−β):
+    // research effort R raises A, but ideas get harder to find as A grows (Bloom, Jones, Van Reenen
+    // & Webb 2020 find research productivity falling ≈ 5%/yr). Level shifts from named technologies
+    // (robotics, AGI, nanofabrication) come on top through fx.productivity.
+    g[G.tfp] *= Math.exp(dt * TFP_G0 * Math.pow(Math.max(g[G.researchers], 1) / TFP_S0, TFP_LAMBDA) * Math.pow(g[G.tfp], -TFP_BETA));
+    const tfp = fx.productivity * g[G.tfp];
+    let research = 0, researchers = 0;
     // migration inside a system: Earth (launch-limited) and every town or bigger send
     // people to the young settlements around the same star, weighted by free room
     const migW = this.migW.fill(0), migD = this.migD.fill(0);
@@ -370,6 +402,7 @@ export class Engine {
     }
 
     const sysNet = new Map<number, Float64Array>(); // per-system resource pooling
+    let kRef = 60000; // Earth's capital per head, set when Earth (settled[0]) is processed
     for (let n = 0; n < st.nSettled; n++) {
       const b = st.settled[n], o = b * NF;
       const stg = S[o + F.stage];
@@ -395,22 +428,27 @@ export class Engine {
         (stg > STAGE.MEGA ? 1e9 * (stg - STAGE.MEGA) * (0.5 + this.bRes[b * 5 + 1]) : 0);
       const cap = isEarth ? 1.15e10 * dense : Math.min(STAGE_CAP[stg] * hf * Math.pow(fx.lifeSupport, 0.25), room);
       S[o + F.capacity] = cap;
+      // share of the room that is in orbit (cylinders, rings): those people radiate their own heat
+      const fOrb = isEarth || room <= 0 ? 0 : 1 - Math.min(1, (1e10 * this.bArea[b] * hf) / room);
 
       // energy (W per person)
       const flux = this.bFlux[b];
-      const eTech = Math.pow(fx.energy, 0.3);
+      // richer people use more energy: income elasticity ≈ 0.5 (Csereklyei, Rubio-Varas & Stern
+      // 2016 find 0.6–0.7 across countries 1971–2010), on top of what the technology makes cheap
+      const eTech = Math.pow(fx.energy, 0.3) * Math.sqrt(Math.min(30, Math.max(1, S[o + F.gdp] / Math.max(pop, 1) / 17400)));
       const perCap = isEarth
         ? 2600 * eTech
         : 14000 * Math.max(Math.pow(Math.min(flux, 4), 0.5), fx.fission > 0 ? 1 : 0) * eTech;
       const need = isEarth ? 2000 : 9000 * (1.5 - 0.5 * h);
-      const eRatio = perCap / need;
+      // the surface can only shed so much waste heat; orbital habitats and the system's Dyson
+      // swarm radiate into space, so the swarm is booked to the hubs that run it, not to the ground
+      const sy = this.bSys[b];
+      const surface = Math.min(pop * (1 - fOrb) * perCap, this.bHeat[b]);
+      const orbital = pop * fOrb * perCap + (stg >= STAGE.HUB && this.hubPop[sy] > 0 ? this.swarmW[sy] * pop / this.hubPop[sy] : 0);
+      const eRatio = pop > 0 ? (surface + orbital) / pop / need : perCap / need;
       S[o + F.energyRatio] = eRatio;
-      S[o + F.energy] = pop * perCap + stg * 1e5;
-      // the system's Dyson swarm is counted once, at its first hub, and grows with it
-      if (swarm > 0 && stg >= STAGE.HUB && this.swarmStamp[this.bSys[b]] !== this.tick) {
-        this.swarmStamp[this.bSys[b]] = this.tick;
-        S[o + F.energy] += swarm * this.sysLum[this.bSys[b]] * Math.min(1, pop / 1e9);
-      }
+      S[o + F.energy] = surface + orbital + stg * 1e5;
+      S[o + F.orbitalPower] = orbital; S[o + F.heatLoad] = surface / this.bHeat[b];
 
       // resources: self-sufficiency per resource, then stock dynamics
       const stageEff = isEarth ? 1 : 0.55 + 0.1 * Math.min(stg, 5);
@@ -460,9 +498,10 @@ export class Engine {
       // 70% of its room (settles near half full), and fewer children past capacity
       let tfr = tfrTransition(gdppc);
       if (!isEarth) tfr += 2.5 * fx.growth * Math.max(0, 1 - crowd);
-      else tfr += 1.5 * Math.max(0, 1 - crowd / 0.7);
+      // a shrinking Earth pays for children (family policy) once it falls below ≈ 10 billion
+      else tfr += 2 * Math.max(0, 1 - pop / 0.9 / 1.15e10);
       if (crowd > 1) tfr *= Math.max(0, (1.3 - crowd) / 0.3);
-      tfr *= E.growth * (1 - short) * (0.8 + 0.4 * S[o + F.happiness]);
+      tfr *= E.growth * (1 - short) * (0.87 + 0.2 * S[o + F.happiness]); // ≈ 1 at a typical happiness of 0.65
       if (stg === STAGE.OUTPOST) tfr *= 0.3; // rotating crews don't raise families
       let births = 0;
       for (let k = 2; k < 6; k++) births += 0.5 * N[ao + k] * tfr * FERT_SHARE[k] / AGE_W[k];
@@ -497,19 +536,30 @@ export class Engine {
       S[o + F.tfr] = tfr; S[o + F.medianAge] = medianAge(N, ao);
       if (st.step % 4 === 0 || S[o + F.lifeExp] === 0) S[o + F.lifeExp] = lifeExpectancyBins(mu);
 
-      // economy
-      const kpc = pop > 0 ? S[o + F.capital] / pop : 0;
-      const y0 = isEarth ? 17400 : 30000;
-      const gdp = pop * y0 * tfp * Math.sqrt(energyOk) * Math.pow(Math.max(kpc, 1000) / 60000, 0.3) * (1 - 0.6 * short) * (stg >= STAGE.HUB ? 1.3 : 1);
+      // economy: Y = A·K^0.3·E^0.08·L^0.62 (capital share 0.3; energy's cost share ≈ 5–8% of world
+      // product, IEA/World Bank; constant returns). L counts people of working age. Capital beyond
+      // 3× Earth's per head is habitat and life support, not productive capital. Small markets are
+      // less productive: urban output per head scales as N^0.13 (Bettencourt et al. 2007, PNAS 104:7301),
+      // with N the local population plus 5% of the rest of the system (in-system trade).
+      let L = 0;
+      for (let k = 0; k < NAGE; k++) L += N[ao + k] * WORK_SHARE[k];
+      if (isEarth) kRef = Math.max(60000, S[o + F.capital] / Math.max(pop, 1));
+      const Keff = Math.min(S[o + F.capital], 3 * kRef * pop);
+      const market = Math.min(1.5, Math.pow((pop + 0.05 * Math.max(0, this.sysPop[sy] - pop)) / 9.2e9, 0.13));
+      const gdp = L > 0 ? Y_SCALE * tfp * Math.pow(Keff, 0.3) * Math.pow(S[o + F.energy], 0.08) * Math.pow(L, 0.62) * market * (1 - 0.6 * short) : 0;
       S[o + F.gdp] = gdp;
-      S[o + F.capital] = Math.max(0, S[o + F.capital] + (0.22 * gdp - 0.04 * S[o + F.capital]) * dt);
+      // saving 22% of output, capital wearing out at 5%/yr: K/Y ≈ s/(δ + g) ≈ 3, Earth's ≈ 3.45 in 2040
+      S[o + F.capital] = Math.max(0, S[o + F.capital] + (0.22 * gdp - 0.05 * S[o + F.capital]) * dt);
       S[o + F.military] = gdp * (0.015 + (g[G.era] === 4 ? 0.08 : 0) + (S[o + F.faction] !== b || isEarth ? 0 : 0.03));
       S[o + F.robots] = S[o + F.capital] / 2e6 * (fx.productivity > 1.4 ? 3 : 1);
 
       // research
-      const r = Math.pow(pop / 1e9, 0.7) * Math.pow(Math.max(gdp / Math.max(pop, 1), 1) / 17400, 0.6) * 9 * RESEARCH * fx.research * E.research + S[o + F.robots] * 1e-9 * fx.research;
+      const r = Math.pow(pop / 1e9, 0.7) * Math.pow(Math.min(1000, Math.max(gdp / Math.max(pop, 1), 1) / 17400), 0.6) * 9 * RESEARCH * fx.research * E.research + S[o + F.robots] * 1e-9 * fx.research;
       S[o + F.research] = r;
       research += r;
+      // research effort: people × the share in research (rising with income, as R&D intensity
+      // did from ~1% to ~3% of GDP in rich countries) × what AI and better tools add per researcher
+      researchers += pop * fx.research * E.research * Math.min(10, Math.sqrt(Math.max(gdp / Math.max(pop, 1), 1) / 17400));
 
       // society
       const lag = this.lagToCapital(b);
@@ -552,6 +602,7 @@ export class Engine {
     // ---- research and technology
     research *= 1 + (g[G.contact] === 1 ? 2 : 0);
     g[G.researchRate] = research;
+    g[G.researchers] = researchers;
     g[G.knowledge] += research * dt;
     this.research(research * dt, year);
 
@@ -590,14 +641,34 @@ export class Engine {
     return id;
   }
 
-  /** Watts a Dyson swarm around a 1 L_sun star captures by now. Phase I is ~1e16 W
-   *  (bible M15); phase II then grows e-fold every 60 years to half the star. */
-  private swarmPower(year: number): number {
-    const d = this.st.techDone, t1 = d[TECH_INDEX.get('dyson1')!], t2 = d[TECH_INDEX.get('dyson2')!];
-    if (t1 < 0) return 0;
-    let cov = 2.6e-11 * Math.min(1, (year - t1) / 50 + 0.1);
-    if (t2 >= 0) cov = Math.max(cov, Math.min(this.has('starLifting') ? 0.9 : 0.5, 2.6e-7 * Math.exp((year - t2) / 60)));
-    return cov * 3.846e26;
+  /** Per-system totals for this step, and each system's own Dyson swarm. A swarm starts
+   *  around a star once its people know how (dyson1) and have an industrial hub there.
+   *  Phase I captures ~2.6e-11 of the star within ~50 years (1e16 W at the Sun, bible M15);
+   *  phase II grows e-fold every 60 years from 2.6e-7 to half the star (0.9 with star lifting).
+   *  Only what the system's hubs can use is captured: ×min(1, hub people / 1e9). */
+  private systemsPass(year: number): void {
+    const st = this.st, S = st.S, list = this.sysList;
+    const mark = ++this.markGen;
+    list.length = 0;
+    for (let n = 0; n < st.nSettled; n++) {
+      const b = st.settled[n], o = b * NF, stg = S[o + F.stage];
+      if (!isAlive(stg)) continue;
+      const sy = this.bSys[b];
+      if (this.sysMark[sy] !== mark) { this.sysMark[sy] = mark; list.push(sy); this.sysPop[sy] = 0; this.hubPop[sy] = 0; this.swarmW[sy] = 0; }
+      this.sysPop[sy] += S[o + F.pop];
+      if (stg >= STAGE.HUB) this.hubPop[sy] += S[o + F.pop];
+    }
+    const has1 = this.has('dyson1'), has2 = this.has('dyson2'), lift = this.has('starLifting') ? 0.9 : 0.5;
+    for (const sy of list) {
+      const sw = st.swarm;
+      if (this.hubPop[sy] <= 0) continue;
+      if (has1 && sw[sy * 2] < 0) sw[sy * 2] = year;
+      if (has2 && sw[sy * 2] >= 0 && sw[sy * 2 + 1] < 0) sw[sy * 2 + 1] = year;
+      if (sw[sy * 2] < 0) continue;
+      let cov = 2.6e-11 * Math.min(1, (year - sw[sy * 2]) / 50 + 0.1);
+      if (sw[sy * 2 + 1] >= 0) cov = Math.max(cov, Math.min(lift, 2.6e-7 * Math.exp((year - sw[sy * 2 + 1]) / 60)));
+      this.swarmW[sy] = cov * L_SUN * this.sysLum[sy] * Math.min(1, this.hubPop[sy] / 1e9);
+    }
   }
 
   private lagToCapital(b: number): number {
@@ -622,7 +693,7 @@ export class Engine {
     if (stg >= STAGE.UPLOADED || pop < cap * 0.65 || pop < STAGE_CAP[stg] * 0.2) return;
     // the far-future ladder: each tier needs its technology, and the star-scale ones a share
     // of the star's light actually captured (W, against L* in watts)
-    const Lstar = this.sysLum[this.bSys[b]] * 3.846e26, E = S[o + F.energy];
+    const Lstar = this.sysLum[this.bSys[b]] * L_SUN, E = S[o + F.energy];
     const gate =
       stg === STAGE.OUTPOST ? has('closedLoop') :
       stg === STAGE.BASE ? has('isru') :
@@ -1064,6 +1135,7 @@ export class Engine {
       stabW += S[o + F.stability] * pop; happW += S[o + F.happiness] * pop; giniW += S[o + F.gini] * pop; ageW += S[o + F.medianAge] * pop;
       leW += S[o + F.lifeExp] * pop; tfrW += S[o + F.tfr] * pop;
       shortP += S[o + F.shortage] * pop;
+      row[GM.heatLoad] = Math.max(row[GM.heatLoad], S[o + F.heatLoad]);
       reach = Math.max(reach, this.world.systems[this.bSys[b]].dist);
     }
     const P = Math.max(row[GM.pop], 1);
@@ -1073,6 +1145,9 @@ export class Engine {
     row[GM.shortage] = (100 * shortP) / P;
     row[GM.kardashev] = row[GM.energy] > 0 ? (Math.log10(row[GM.energy]) - 6) / 10 : 0;
     row[GM.energyPerCap] = row[GM.energy] / P; row[GM.gdpPerCap] = row[GM.gdp] / P;
+    row[GM.tfp] = g[G.tfp];
+    for (let sy = 0; sy < this.world.systems.length; sy++) if (st.swarm[sy * 2] >= 0) row[GM.swarms]++;
+    for (const sy of this.sysList) row[GM.swarmPower] += this.swarmW[sy];
     row[GM.launchCap] = g[G.launchCap]; row[GM.knowledge] = g[G.knowledge]; row[GM.research] = g[G.researchRate];
     row[GM.techs] = st.techDone.reduce((a, d) => a + (d >= 0 ? 1 : 0), 0);
     row[GM.shipsInTransit] = g[G.nShips]; row[GM.shipsLaunched] = g[G.shipsLaunched]; row[GM.shipsLost] = g[G.shipsLost];
@@ -1103,6 +1178,7 @@ export class Engine {
       step: st.step, S: st.S.slice(), g: st.g.slice(), techProg: st.techProg.slice(), techDone: st.techDone.slice(),
       ships: st.ships.slice(0, st.g[G.nShips] * NSH), settled: st.settled.slice(0, st.nSettled), nSettled: st.nSettled, rng: st.rng.slice(),
       shipRetry: st.shipRetry.slice(), gen: st.gen.slice(0, st.g[G.nGen] * NGC), ages: st.ages.slice(0, st.nSettled * NAGE),
+      swarm: st.swarm.slice(),
     };
   }
 
@@ -1115,6 +1191,7 @@ export class Engine {
       ships, settled, nSettled: s.nSettled, rng: s.rng.slice(), shipRetry: s.shipRetry.slice(),
       gen: (() => { const g = new Float64Array(MAX_GEN * NGC); g.set(s.gen); return g; })(),
       ages: (() => { const a = new Float64Array(nb * NAGE); a.set(s.ages); return a; })(),
+      swarm: s.swarm.slice(),
     };
     this.pos.fill(-1);
     for (let n = 0; n < s.nSettled; n++) this.pos[s.settled[n]] = n;
