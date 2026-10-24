@@ -15,8 +15,8 @@ import { makeGalaxy } from './galaxyPoints.ts';
 import { atmosphereMaterial, planetMaterial } from './planetShader.ts';
 import { STAGE_COLORS, flareTex, galaxySpriteTex, glowTex, pointsMaterial, specColor } from './textures.ts';
 
-export type Level = 'universe' | 'galaxy' | 'local' | 'system' | 'planet';
-export const LEVELS: Level[] = ['universe', 'galaxy', 'local', 'system', 'planet'];
+export type Level = 'universe' | 'galaxy' | 'local' | 'system' | 'planet' | 'street';
+export const LEVELS: Level[] = ['universe', 'galaxy', 'local', 'system', 'planet', 'street'];
 
 export interface Ctx {
   world: World;
@@ -26,13 +26,14 @@ export interface Ctx {
   controls: OrbitControls;
   system: number;   // focused star system
   body: number;     // focused body
+  city: number;     // focused settlement on that body
   selected: Pickable | null;
   t: number;        // seconds since start
   tm: number;       // motion clock: orbits and spin; slows to a stop while hovering a thing so it can be clicked
   colorBy: ColorMode;
 }
 
-export type PickKind = 'galaxy' | 'system' | 'body' | 'city' | 'humanspace';
+export type PickKind = 'galaxy' | 'system' | 'body' | 'city' | 'humanspace' | 'person';
 /** `weight` (px) lets important things win near-ties when picking */
 export interface Pickable { pos: THREE.Vector3; kind: PickKind; id: number; name: string; weight?: number; r?: number }
 /** Enough to find a thing again in any view. */
@@ -1013,7 +1014,7 @@ export class PlanetView implements View {
     return null;
   }
 
-  diveDist(): number { return 0; }
+  diveDist(_ctx: Ctx, r: Ref): number { return r.kind === 'city' ? 16 : 0; }
 
   size(_ctx: Ctx, r: Ref): number { return r.kind === 'body' ? 10.9 : 0; }
 
