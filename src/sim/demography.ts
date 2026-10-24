@@ -60,6 +60,15 @@ export interface Pool {
 
 export interface Block { pool: Pool; start: number; count: number; F: number }
 
+/** Sex is the parity of a member's rank in their birth pool. An arrival segment's
+ *  rank r is native rank srcStart + r (chained), so its women sit at ranks with
+ *  r ≡ parity(pool) (mod 2): 0 for natives and even-offset segments, 1 otherwise. */
+export function parity(x: Pool): number {
+  let off = 0;
+  while (!x.native) { off += x.srcStart!; x = x.src!; }
+  return off % 2;
+}
+
 const AGE_ADULT: [number, number] = [16, 65];
 const MOTHER: [number, number] = [16, 49];
 const FATHER: [number, number] = [18, 64];
@@ -307,7 +316,8 @@ export class Demography {
       const k = p - x.p0;
       if (k >= x.aStart.length) continue;
       const aliveEnd = x.aStart[k] - x.em[k] - x.dd[k];
-      const F = sex === 0 ? Math.ceil(aliveEnd / 2) : Math.floor(aliveEnd / 2);
+      const women = parity(x) ? Math.floor(aliveEnd / 2) : Math.ceil(aliveEnd / 2);
+      const F = sex === 0 ? women : aliveEnd - women;
       const age = periodMid(p) - periodMid(x.q);
       if (F <= 0 || age < lo || age > hi) continue;
       cands.push(x); Fs.push(F); w.push(F * (sex === 0 ? fert(age) : fert(age - 3))); caps.push(Number.MAX_SAFE_INTEGER);
@@ -402,7 +412,7 @@ export class Demography {
     const slot = this.childPerm(id.b, id.q, born.n, 0).fwd(id.i);
     const bl = blocks.find((x) => slot >= x.start && slot < x.start + x.count);
     if (!bl) return null;
-    return { pool: bl.pool, rank: 2 * ((slot - bl.start) % bl.F) };
+    return { pool: bl.pool, rank: parity(bl.pool) + 2 * ((slot - bl.start) % bl.F) };
   }
 
   /** The partner rank of this person in their pool (alive or not). */
@@ -415,7 +425,7 @@ export class Demography {
     const out: Id[] = [];
     for (const s of stays) {
       if (s.end === 'lost') continue;
-      const male = s.rank % 2 === 1;
+      const par = parity(s.pool), male = (par + s.rank) % 2 === 1;
       const t = this.town(s.body);
       for (let p = s.from; p <= s.to; p++) {
         // present and alive at the end of p (someone who died or left in p has no child then)
@@ -424,7 +434,8 @@ export class Demography {
         const bl = blocks.find((x) => x.pool === s.pool);
         if (!bl) continue;
         // a father's children are his partner's, born while both were alive here
-        const k = (male ? s.rank - 1 : s.rank) / 2;
+        const k = ((male ? s.rank - 1 : s.rank) - par) / 2;
+        if (k < 0) continue;
         const born = t.nativeByPeriod.get(p)!;
         const perm = this.childPerm(s.body, p, born.n, 0);
         for (let o = k; o < bl.count; o += bl.F) out.push({ b: s.body, q: p, i: perm.inv(bl.start + o) });
@@ -467,10 +478,7 @@ export class Demography {
     for (const { pool, alive } of pools) {
       const band = Math.max(0, Math.floor((periodStart(p + 1) - periodMid(pool.q)) / 10));
       const e = bands.get(band) ?? { women: 0, men: 0 };
-      // women hold even native ranks; an arrival segment that starts at an odd one has one fewer
-      let off = 0, x = pool;
-      while (!x.native) { off += x.srcStart!; x = x.src!; }
-      const w = off % 2 ? Math.floor(alive / 2) : Math.ceil(alive / 2);
+      const w = parity(pool) ? Math.floor(alive / 2) : Math.ceil(alive / 2);
       e.women += w; e.men += alive - w;
       bands.set(band, e);
     }
