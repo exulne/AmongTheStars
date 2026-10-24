@@ -24,8 +24,12 @@ export const GLOBAL_METRICS: MetricDef[] = [
   { key: 'energy', label: 'Energy use', unit: 'W', log: true, group: 'Energy' },
   { key: 'kardashev', label: 'Kardashev rating', unit: 'K', group: 'Energy' },
   { key: 'energyPerCap', label: 'Energy per person', unit: 'W', log: true, group: 'Energy' },
+  { key: 'swarmPower', label: 'Dyson swarm power', unit: 'W', log: true, group: 'Energy' },
+  { key: 'swarms', label: 'Systems with a Dyson swarm', unit: '', group: 'Energy' },
+  { key: 'heatLoad', label: 'Hottest world: waste heat vs limit', unit: '×', group: 'Energy' },
   { key: 'gdp', label: 'Gross product', unit: '$/yr', log: true, group: 'Economy' },
   { key: 'gdpPerCap', label: 'Product per person', unit: '$', log: true, group: 'Economy' },
+  { key: 'tfp', label: 'Total factor productivity', unit: '×2040', log: true, group: 'Economy' },
   { key: 'capital', label: 'Capital stock', unit: '$', log: true, group: 'Economy' },
   { key: 'launchCap', label: 'Earth launch capacity', unit: 't/yr', log: true, group: 'Economy' },
   { key: 'gini', label: 'Inequality (Gini)', unit: '', group: 'Economy' },
@@ -55,7 +59,7 @@ export const SETTLEMENT_FIELDS = [
   'food', 'capital', 'gdp', 'research', 'stability', 'happiness', 'gini', 'births', 'deaths', 'medianAge',
   'military', 'divergence', 'capacity', 'culture', 'imports', 'exports', 'energyRatio', 'shortage', 'robots',
   'lastEvent', 'terraform', 'inbound',
-  'lifeExp', 'tfr',
+  'lifeExp', 'tfr', 'orbitalPower', 'heatLoad',
 ] as const;
 export type SField = typeof SETTLEMENT_FIELDS[number];
 export const F = Object.fromEntries(SETTLEMENT_FIELDS.map((k, i) => [k, i])) as Record<SField, number>;
@@ -69,7 +73,7 @@ export const SETTLEMENT_LABELS: Partial<Record<SField, [string, string]>> = {
   medianAge: ['Median age', 'yr'], military: ['Military', '$/yr'], divergence: ['Genetic divergence', ''],
   capacity: ['Habitat capacity', 'people'], imports: ['Imports', 't/yr'], exports: ['Exports', 't/yr'],
   lifeExp: ['Life expectancy at birth', 'yr'], tfr: ['Children per woman', ''],
-  energyRatio: ['Energy supply ratio', '×'], shortage: ['Shortage', ''], robots: ['Robots', ''], terraform: ['Terraforming', ''],
+  energyRatio: ['Energy supply ratio', '×'], orbitalPower: ['Power in orbit (habitats, swarm)', 'W'], heatLoad: ['Surface waste heat, share of limit', '×'], shortage: ['Shortage', ''], robots: ['Robots', ''], terraform: ['Terraforming', ''],
 };
 
 // Settlement history columns logged every few steps (for per-settlement charts).

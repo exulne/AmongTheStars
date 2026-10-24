@@ -75,5 +75,14 @@ ok(gf.keys.includes(world.mars), 'groups focus key is included');
 const gx = await ask<'groups'>({ type: 'groups', by: 'stage', of: 'gdp / pop', stride: 20, top: 3 });
 ok(!gx.error && gx.keys.length === 3, `groups over an expression ${gx.error ?? ''}`);
 
+// place history: every field of a few places; the end matches the table
+const ph = await ask<'place'>({ type: 'place', bodies: [world.mars, world.earth, tbl.bodies[tbl.bodies.length - 1]], stride: 20 });
+const lastRow = (ph.steps.length - 1) * ph.bodies.length;
+const j = tbl.bodies.indexOf(world.mars);
+ok(!ph.pending && ph.steps.length === sum.steps.length && ph.rows[(lastRow + 0) * NF + F.pop] === tbl.rows[j * NF + F.pop], 'place history: Mars at the end matches the table');
+ok(Number.isNaN(ph.rows[(0 * 3 + 2) * NF + F.pop]), 'place history: NaN before a place is settled');
+const ph4 = await ask<'place'>({ type: 'place', bodies: [world.mars], stride: 4 });
+ok(ph4.steps.length > ph.steps.length * 4, `place history by replay: ${ph4.steps.length} points`);
+
 console.log(bad ? `${bad} data checks failed` : 'data: all checks ok');
 process.exit(bad ? 1 : 0);

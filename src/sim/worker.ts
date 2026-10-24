@@ -5,7 +5,7 @@
 import { EV } from './catalog.ts';
 import { Engine, type SimState } from './engine.ts';
 import { HIST_FIELDS, NGM } from './metrics.ts';
-import { Chronicle, type Entry } from './chronicle.ts';
+import { Chronicle, type Annals, type Entry } from './chronicle.ts';
 import { Lives, type Biography, type PersonBrief } from './lives.ts';
 import { SocietyModel, type Society } from './society.ts';
 import { buildWorld } from './world.ts';
@@ -29,7 +29,8 @@ export type ToWorker =
   | { type: 'society'; id: number; body: number; step: number }
   | { type: 'placeNames'; id: number }
   | DataReq
-  | { type: 'ship'; id: number; from: number; to: number; depart: number };
+  | { type: 'ship'; id: number; from: number; to: number; depart: number }
+  | { type: 'annals'; id: number };
 
 export type FromWorker =
   | { type: 'progress'; seed: number; step: number; years: number[]; series: Float64Array; done: boolean; ms: number }
@@ -45,7 +46,8 @@ export type FromWorker =
   /** places whose people call them something other than the catalogue name: [body, name] */
   | { type: 'placeNames'; id: number; pending?: boolean; names: [number, string][] }
   | DataRes
-  | { type: 'ship'; id: number; pending?: boolean; ship: ShipInfo | null };
+  | { type: 'ship'; id: number; pending?: boolean; ship: ShipInfo | null }
+  | { type: 'annals'; id: number; pending?: boolean; annals: Annals | null };
 
 /** A ship in transit, as the people model knows it: its name, who boarded, and the Chronicle's launch entry (with its captain). */
 export interface ShipInfo { name: string; n: number; generation: boolean; launch: Entry | null }
@@ -66,11 +68,13 @@ function people(): Lives | null {
     const c = (chron = new Chronicle(main, lives));
     society = new SocietyModel(main, (b, n) => lives!.coinedWord(b, n));
     society.faithInfo = (f) => ({ name: c.faithName(f), tenets: c.tenetsOf(f) });
+    society.polityName = (p) => c.polityName(p);
     const civ = main.civ;
     lives.faithAt = (b, year, u) => {
       for (const [f, sh] of civ.faithsAt(b, periodOf(year))) { if (u < sh) return c.faithName(f); u -= sh; }
       return null;
     };
+    lives.bodyShares = (b, year) => civ.bodiesAt(b, periodOf(year));
     lives.deeds = (pid, stays) => c.deedsOf(pid, stays).map((en) => ({ year: en.year, text: en.segs.map((s) => (typeof s === 'string' ? s : s.t)).join('') }));
   }
   return lives;
@@ -165,6 +169,9 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
   } else if (m.type === 'ship') {
     const L = people();
     post({ type: 'ship', id: m.id, pending: !L, ship: L ? shipInfo(L, m.from, m.to, m.depart) : null });
+  } else if (m.type === 'annals') {
+    const ok = people() && chron;
+    post({ type: 'annals', id: m.id, pending: !ok, annals: ok ? chron!.annals() : null });
   } else if (m.type === 'inventions') {
     const ok = people() && chron;
     post({ type: 'inventions', id: m.id, pending: !ok, list: ok ? chron!.inventions() : [] });

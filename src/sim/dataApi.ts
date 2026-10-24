@@ -18,7 +18,9 @@ export type DataReq =
   | { type: 'runinfo'; id: number }
   /** a place field or expression summed per group (faction, faith, system or stage) at every stride-th step */
   | { type: 'groups'; id: number; by: GroupBy; of?: string; stride: number; top: number; focus?: number }
-  | { type: 'faiths'; id: number };
+  | { type: 'faiths'; id: number }
+  /** every field of up to a few places at every stride-th step */
+  | { type: 'place'; id: number; bodies: number[]; stride: number };
 
 export type DataRes =
   | { type: 'table'; id: number; step: number; year: number; bodies: Int32Array; rows: Float64Array }
@@ -28,8 +30,11 @@ export type DataRes =
   /** values[i * keys.length + k]: group keys[k] at steps[i]; other: the rest; total: every living place */
   | { type: 'groups'; id: number; pending?: boolean; error?: string; by: GroupBy; steps: Int32Array; keys: number[]; values: Float64Array; other: Float64Array; total: Float64Array; nGroups: Int32Array }
   /** every faith by number: its name and where it was founded (body -1: the faiths of Earth) */
-  | { type: 'faiths'; id: number; pending?: boolean; faiths: { n: number; name: string; body: number; year: number }[] };
+  | { type: 'faiths'; id: number; pending?: boolean; faiths: { n: number; name: string; body: number; year: number }[] }
+  /** rows[(i * bodies.length + j) * NF + f]: field f of bodies[j] at steps[i] (NaN before it was settled) */
+  | { type: 'place'; id: number; pending?: boolean; bodies: number[]; steps: Int32Array; rows: Float64Array };
 
+export type PlaceRes = Extract<DataRes, { type: 'place' }>;
 export type GroupBy = 'faction' | 'culture' | 'system' | 'stage';
 
 export interface DataEnv {
@@ -42,7 +47,7 @@ export interface DataEnv {
   faithName?: (f: number) => string | null;
 }
 
-const DATA_TYPES = new Set(['table', 'scan', 'runinfo', 'groups', 'faiths']);
+const DATA_TYPES = new Set(['table', 'scan', 'runinfo', 'groups', 'faiths', 'place']);
 export function isDataReq(m: { type: string }): m is DataReq { return DATA_TYPES.has(m.type); }
 
 export const living = isAlive;
@@ -105,6 +110,20 @@ export function handleData(m: DataReq, env: DataEnv): void {
     if (!e) { env.post({ type: 'runinfo', id: m.id, seed: 0, done: false, feasible: [], costMult: [], wanderlust: 1, techDone: [] }); return; }
     env.post({ type: 'runinfo', id: m.id, seed: e.seed, done: e.done, feasible: Array.from(e.feasible), costMult: Array.from(e.techCostMult), wanderlust: e.wanderlust, techDone: Array.from(e.st.techDone) });
   } else if (m.type === 'groups') groups(m, env);
+  else if (m.type === 'place') {
+    const bodies = m.bodies.slice(0, 8).filter((b) => b >= 0 && b < env.world.bodies.length), nb = bodies.length;
+    const steps: number[] = [], chunks: Float64Array[] = [];
+    scan(env, m.stride, (st, step) => {
+      const r = new Float64Array(nb * NF).fill(NaN);
+      bodies.forEach((b, j) => { if (st.S[b * NF + F.stage] >= 0) r.set(st.S.subarray(b * NF, b * NF + NF), j * NF); });
+      steps.push(step); chunks.push(r);
+    }).then((ok) => {
+      const rows = new Float64Array(chunks.length * nb * NF);
+      chunks.forEach((c, i) => rows.set(c, i * nb * NF));
+      const st = Int32Array.from(steps);
+      env.post({ type: 'place', id: m.id, pending: !ok, bodies, steps: st, rows }, [st.buffer, rows.buffer]);
+    });
+  }
   else if (m.type === 'faiths') {
     // a place's culture is its biggest faith: 0 for Earth's old faiths, else 1 + its row in the faith table
     const e = env.main();

@@ -11,6 +11,8 @@ import { TimeTab } from './dataTime.ts';
 import { Highlight } from './highlight.ts';
 import { RunTab } from './dataRun.ts';
 import { GroupsTab } from './dataGroups.ts';
+import { ChartsTab } from './dataCharts.ts';
+import { HistoryTab } from './dataHistory.ts';
 import { esc } from './dataPanel.ts';
 import { installStamp, stampLine } from './stamp.ts';
 
@@ -23,6 +25,7 @@ export interface DeskOpts {
   view: () => View;
   selectBody: (b: number) => void;
   showSeries: (key: string) => void;
+  pickYear?: (y: number) => void;
 }
 
 export function installDataDesk(o: DeskOpts): DataPanel {
@@ -33,8 +36,11 @@ export function installDataDesk(o: DeskOpts): DataPanel {
     selectedBody: () => (o.ctx.selected?.kind === 'body' ? o.ctx.selected.id : -1),
     setHighlight: (ids) => hl.set(ids),
     showSeries: o.showSeries,
+    pickYear: o.pickYear,
   });
+  desk.add(new ChartsTab(desk.hostApi));
   desk.add(new GroupsTab(desk.hostApi, desk));
+  desk.add(new HistoryTab(desk.hostApi));
   desk.add(new TimeTab(desk.hostApi, desk));
   desk.add(new RunTab(desk.hostApi));
   installStamp({ app: o.app, seed: () => o.sim.seed, year: () => o.ctx.year });

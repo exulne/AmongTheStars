@@ -7,7 +7,7 @@ import { placeBinder, tryCompile, type PlaceRow } from '../sim/query.ts';
 import { registerSeries } from './charts.ts';
 import { esc, queryHelp, showError, type DataHost, type DataPanel, type DataTab } from './dataPanel.ts';
 import { copyText, toCsv } from './exporter.ts';
-import { drawLines } from './miniChart.ts';
+import { AnalystChart } from './analystChart.ts';
 
 const AGG_LABEL: Record<Agg, string> = { count: 'number of places', sum: 'sum of', mean: 'population-weighted mean of', min: 'smallest', max: 'largest' };
 
@@ -21,10 +21,9 @@ export class TimeTab implements DataTab {
   private of: HTMLInputElement;
   private agg: HTMLSelectElement;
   private stride: HTMLSelectElement;
-  private log: HTMLInputElement;
   private err: HTMLElement;
   private note: HTMLElement;
-  private canvas: HTMLCanvasElement;
+  private chart = new AnalystChart({ label: 'Query result over time' });
   private result: { title: string; key: string; years: number[]; values: Float64Array; seed: number } | null = null;
   private waiting = false;
   private n = 0;
@@ -46,21 +45,20 @@ export class TimeTab implements DataTab {
       <p class="q-err" hidden></p>
       ${queryHelp()}
       <div class="data-actions">
-        <label><input type="checkbox" class="tlog"> log scale</label>
         <button class="link" type="button" data-act="chart" disabled>Show in the charts below</button>
         <button class="link" type="button" data-act="csv" disabled>Copy CSV</button>
         <span class="copy-status muted" aria-live="polite"></span>
       </div>
-      <p class="t-note muted"></p>
-      <canvas class="data-chart" aria-label="Query result over time"></canvas>`;
+      <p class="t-note muted"></p>`;
+    this.el.append(this.chart.el);
+    this.chart.onPick = (y) => this.host.pickYear?.(y);
     const $ = <T extends HTMLElement>(s: string) => this.el.querySelector<T>(s)!;
-    this.q = $('.tq'); this.of = $('.tof'); this.agg = $('.tagg'); this.stride = $('.tstride'); this.log = $('.tlog');
-    this.err = $('.q-err'); this.note = $('.t-note'); this.canvas = $('canvas');
+    this.q = $('.tq'); this.of = $('.tof'); this.agg = $('.tagg'); this.stride = $('.tstride');
+    this.err = $('.q-err'); this.note = $('.t-note');
     const ofWrap = $('.tof-wrap');
     const sync = () => { ofWrap.hidden = this.agg.value === 'count'; };
     sync();
     this.agg.addEventListener('change', sync);
-    this.log.addEventListener('change', () => this.draw());
     this.q.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.run(); });
     this.of.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.run(); });
     this.el.addEventListener('click', (e) => {
@@ -72,7 +70,6 @@ export class TimeTab implements DataTab {
         void copyText(toCsv(['year', 'value'], r.years.map((y, i) => [2040 + y, r.values[i]]), r.title), 'Series as CSV', this.el.querySelector<HTMLElement>('.copy-status'));
       }
     });
-    new ResizeObserver(() => this.draw()).observe(this.canvas);
   }
 
   refresh(): void {
@@ -109,7 +106,9 @@ export class TimeTab implements DataTab {
       const key = `q:${what} where ${expr || 'alive'}`;
       const years = Array.from(m.steps, (s) => sim.years[s]);
       this.result = { title, key, years, values: m.values, seed };
-      registerSeries(key, { years, n: years.length, values: (i) => m.values[i], def: { key, label: `${what} where ${expr || 'alive'}`, unit: '', log: this.log.checked, group: 'Query' } });
+      const fin = Array.from(m.values).filter(Number.isFinite), lo = Math.min(...fin), hi = Math.max(...fin);
+      this.chart.log = lo > 0 && hi / lo > 1000;
+      registerSeries(key, { years, n: years.length, values: (i) => m.values[i], def: { key, label: `${what} where ${expr || 'alive'}`, unit: '', log: this.chart.log, group: 'Query' } });
       this.note.innerHTML = `${esc(title)} — ${years.length} points in ${((performance.now() - t0) / 1000).toFixed(1)} s.`;
       this.buttons();
       this.draw();
@@ -119,6 +118,6 @@ export class TimeTab implements DataTab {
   private draw(): void {
     if (this.el.hidden) return;
     const r = this.result;
-    drawLines(this.canvas, r ? [{ label: r.title, color: '#ffc45c', xs: r.years, ys: r.values }] : [], { log: this.log.checked, cursor: this.host.year(), x0: 0, x1: 10000 });
+    this.chart.set({ lines: r ? [{ label: r.title, color: '#ffc45c', xs: r.years, ys: r.values }] : [], cursor: this.host.year(), empty: 'Run a query to see it over the whole future.' });
   }
 }
