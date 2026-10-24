@@ -73,6 +73,7 @@ export class Engine {
   techCostMult: Float64Array;
   /** per tech: 1 if this universe's physics allows it (rolled once per seed) */
   feasible: Uint8Array;
+  wanderlust: number;
   fx!: Fx;
   logEvents = true;
   events: SimEvent[] = [];
@@ -137,6 +138,8 @@ export class Engine {
       this.techCostMult[i] = Math.exp(sigma * z);
     }
     this.feasible = Uint8Array.from(TECHS, (t) => (next(rng) < (t.feasible ?? 1) ? 1 : 0));
+    // how keen this civilization is on colony ships: the main source of spread in reach
+    this.wanderlust = Math.exp(0.6 * Math.sqrt(-2 * Math.log(Math.max(1e-9, next(rng)))) * Math.cos(2 * Math.PI * next(rng)));
     this.st = this.initialState(rng);
     this.recomputeFx();
     this.record(0);
@@ -566,7 +569,7 @@ export class Engine {
       // interstellar: needs a drive, a colony with money, and a stable home
       if (fx.shipSpeed <= 0 || stg < STAGE.CITY) continue;
       const shipCost = 4e12 / Math.sqrt(fx.productivity);
-      const pShip = dt * 0.004 * eraLaunch * Math.min(4, Math.sqrt(gdp / shipCost)) * (isEarth ? 3 : 1);
+      const pShip = dt * 0.0008 * this.wanderlust * eraLaunch * Math.min(4, Math.sqrt(gdp / shipCost)) * (isEarth ? 3 : 1);
       if (this.rand() < pShip && S[o + F.capital] > shipCost) {
         let target = -1, ftlTrip = false;
         if (fx.ftl > 0 && stg >= STAGE.HUB && this.rand() < 0.25 * fx.ftl) {
@@ -574,7 +577,7 @@ export class Engine {
         } else {
           // a home with nothing left in range stops looking for a while
           if (year < st.shipRetry[this.bSys[b]]) continue;
-          target = this.pickTarget(b, fx.shipSpeed * 400 * fx.voyage, false);
+          target = this.pickTarget(b, fx.shipSpeed * 200 * Math.sqrt(fx.voyage), false);
           if (target < 0) st.shipRetry[this.bSys[b]] = year + 50;
         }
         if (target < 0) continue;
@@ -888,7 +891,7 @@ function cellId(i: number, j: number, k: number): number {
 
 // Static per-world neighbour lists (CSR, sorted by distance) for systems a ship
 // can reach in one hop. Built once per world and shared by every engine.
-const MAX_HOP = 60;
+const MAX_HOP = 50;
 interface Neighbours { start: Int32Array; sys: Int32Array; d: Float32Array }
 const NBR_CACHE = new WeakMap<World, Neighbours>();
 function neighbours(world: World): Neighbours {
