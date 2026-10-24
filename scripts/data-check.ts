@@ -57,5 +57,23 @@ ok(Math.abs(sum.values[sum.values.length - 1] - popSum) / popSum < 1e-9, 'sum(po
 const err = await ask<'scan'>({ type: 'scan', expr: 'pop >', agg: 'count', stride: 20 });
 ok(!!err.error, 'a bad query reports an error');
 
+// groups: the top groups plus everyone else add up to the total, which is sum(pop)
+for (const by of ['faction', 'culture', 'system', 'stage'] as const) {
+  const g = await ask<'groups'>({ type: 'groups', by, stride: 20, top: 8 });
+  const K = g.keys.length, T = g.steps.length;
+  let worst = 0;
+  for (let i = 0; i < T; i++) {
+    let s = g.other[i];
+    for (let j = 0; j < K; j++) s += g.values[i * K + j];
+    worst = Math.max(worst, Math.abs(s - g.total[i]) / (g.total[i] || 1));
+  }
+  ok(T === sum.steps.length && worst < 1e-9 && Math.abs(g.total[T - 1] - popSum) / popSum < 1e-9, `groups by ${by}: ${K} keys, closure ${worst}`);
+  if (by === 'faction') console.log(`  ${g.nGroups[T - 1]} factions at the end; top shares: ${g.keys.slice(0, 4).map((k, j) => `${world.bodies[k].name} ${(g.values[(T - 1) * K + j] / g.total[T - 1] * 100).toFixed(1)}%`).join(', ')}`);
+}
+const gf = await ask<'groups'>({ type: 'groups', by: 'faction', stride: 20, top: 2, focus: world.mars });
+ok(gf.keys.includes(world.mars), 'groups focus key is included');
+const gx = await ask<'groups'>({ type: 'groups', by: 'stage', of: 'gdp / pop', stride: 20, top: 3 });
+ok(!gx.error && gx.keys.length === 3, `groups over an expression ${gx.error ?? ''}`);
+
 console.log(bad ? `${bad} data checks failed` : 'data: all checks ok');
 process.exit(bad ? 1 : 0);

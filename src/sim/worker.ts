@@ -101,7 +101,7 @@ function stateAt(step: number): Engine {
   return replay;
 }
 
-const dataEnv = { world, main: () => main, snaps: () => snaps, stateAt, post: (m: DataRes, t: Transferable[] = []) => post(m, t) };
+const dataEnv = { world, main: () => main, snaps: () => snaps, stateAt, post: (m: DataRes, t: Transferable[] = []) => post(m, t), faithName: (b: number, n: number) => (people() && chron ? chron.faithName(b, n) : null) };
 
 self.onmessage = (ev: MessageEvent<ToWorker>) => {
   const m = ev.data;

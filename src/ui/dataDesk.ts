@@ -10,6 +10,7 @@ import { DataPanel } from './dataPanel.ts';
 import { TimeTab } from './dataTime.ts';
 import { Highlight } from './highlight.ts';
 import { RunTab } from './dataRun.ts';
+import { GroupsTab } from './dataGroups.ts';
 import { esc } from './dataPanel.ts';
 import { installStamp, stampLine } from './stamp.ts';
 
@@ -33,6 +34,7 @@ export function installDataDesk(o: DeskOpts): DataPanel {
     setHighlight: (ids) => hl.set(ids),
     showSeries: o.showSeries,
   });
+  desk.add(new GroupsTab(desk.hostApi, desk));
   desk.add(new TimeTab(desk.hostApi, desk));
   desk.add(new RunTab(desk.hostApi));
   installStamp({ app: o.app, seed: () => o.sim.seed, year: () => o.ctx.year });
