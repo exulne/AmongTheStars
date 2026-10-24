@@ -467,7 +467,11 @@ export class Demography {
     for (const { pool, alive } of pools) {
       const band = Math.max(0, Math.floor((periodStart(p + 1) - periodMid(pool.q)) / 10));
       const e = bands.get(band) ?? { women: 0, men: 0 };
-      e.women += Math.ceil(alive / 2); e.men += Math.floor(alive / 2);
+      // women hold even native ranks; an arrival segment that starts at an odd one has one fewer
+      let off = 0, x = pool;
+      while (!x.native) { off += x.srcStart!; x = x.src!; }
+      const w = off % 2 ? Math.floor(alive / 2) : Math.ceil(alive / 2);
+      e.women += w; e.men += alive - w;
       bands.set(band, e);
     }
     return [...bands.entries()].sort((a, b) => a[0] - b[0]).map(([band, v]) => ({ band, ...v }));
