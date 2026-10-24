@@ -30,7 +30,7 @@ const G = {
   kesslerUntil: 8, contact: 9, faiths: 10, nShips: 11, launchCap: 12, researchRate: 13, warUntil: 14,
   // last step's aggregates that feed the era chain; kept here (not read back from
   // the series) so a restored snapshot replays exactly
-  prevShortage: 15, prevFactions: 16, prevStability: 17,
+  prevShortage: 15, prevFactions: 16, prevStability: 17, rivals: 18,
 } as const;
 const NG = 20;
 
@@ -212,9 +212,8 @@ export class Engine {
     const era = g[G.era];
     const row = ERA_MATRIX[era].slice();
     const shortage = st.step > 0 ? g[G.prevShortage] / 100 : 0;
-    const factions = st.step > 0 ? g[G.prevFactions] : 1;
     const stab = st.step > 0 ? g[G.prevStability] : 0.6;
-    row[4] *= (1 + 4 * shortage) * Math.sqrt(factions) * fx.war;                 // war
+    row[4] *= (1 + 4 * shortage) * (1 + 0.2 * Math.min(g[G.rivals], 10)) * fx.war; // war (bible §5.3)
     row[6] *= (1 + 6 * shortage) * (stab < 0.4 ? 3 : 1);                         // collapse
     row[2] *= stab > 0.65 ? 2 : 1;                                               // golden age
     row[7] *= era === 6 ? 1 + (year - g[G.eraSince]) / 50 : 1;                   // renaissance after long dark
@@ -617,6 +616,8 @@ export class Engine {
         else {
           this.found(st, to, colonists > 2000 ? STAGE.COLONY : STAGE.BASE, colonists, from, year);
           st.S[to * NF + F.capital] = colonists * 3e5;
+          // years of light-lag from home: de facto independent from the day they land
+          if (this.bSys[to] !== this.bSys[from]) st.S[to * NF + F.faction] = to;
         }
         if (this.rand() < 0.08) { st.S[to * NF + F.stability] = 0.4; this.log(EV['Mutiny in transit'], to, from); }
         if (!joined) this.log(EV['Colony founded'], to, from, 1);
@@ -641,7 +642,7 @@ export class Engine {
       if (stg < STAGE.COLONY || stg > STAGE.MEGA || S[o + F.faction] === b) continue;
       const lag = this.lagToCapital(b);
       const sol = this.bSys[b] === 0;
-      const p = dt * fx.secession * (1 - S[o + F.stability]) * (sol ? (S[o + F.pop] > 1e6 ? 0.004 : 0) : 0.012 * Math.sqrt(lag / 5));
+      const p = dt * fx.secession * (1 - S[o + F.stability]) * (sol ? (S[o + F.pop] > 1e6 ? 0.008 : 0) : 0.012 * Math.sqrt(lag / 5));
       if (this.rand() < p) {
         const old = S[o + F.faction];
         // the colony and everything it founded leave together
@@ -652,29 +653,35 @@ export class Engine {
         this.log(EV.Independence, b, old);
       }
     }
-    // war between factions
-    const facs = new Set<number>();
+    // war: only between factions that share a star system (light-lag under a day)
+    const sysFac = new Map<number, number[]>();
     for (let n = 0; n < st.nSettled; n++) {
-      const o = st.settled[n] * NF;
-      if (S[o + F.stage] >= STAGE.OUTPOST && S[o + F.stage] <= STAGE.MEGA) facs.add(S[o + F.faction]);
+      const b = st.settled[n], o = b * NF;
+      if (S[o + F.stage] < STAGE.OUTPOST || S[o + F.stage] > STAGE.MEGA) continue;
+      const f = S[o + F.faction], s = this.bSys[b];
+      const l = sysFac.get(s);
+      if (!l) sysFac.set(s, [f]);
+      else if (!l.includes(f)) l.push(f);
     }
-    if (facs.size < 2) return;
-    const pWar = dt * 0.004 * eraWar * fx.war * Math.sqrt(facs.size - 1);
+    const contested: number[][] = [];
+    let rivals = 0;
+    for (const l of sysFac.values()) if (l.length > 1) { contested.push(l); rivals += l.length - 1; }
+    st.g[G.rivals] = rivals;
+    if (!rivals) return;
+    const pWar = dt * 0.004 * eraWar * fx.war * Math.sqrt(Math.min(rivals, 16));
     if (this.rand() < pWar) {
-      const list = [...facs];
-      const a = list[Math.floor(this.rand() * list.length)];
-      let bF = list[Math.floor(this.rand() * list.length)];
-      if (a === bF) bF = list[(list.indexOf(a) + 1) % list.length];
-      // wars only happen between factions within ~25 ly of each other
-      if (this.dist(a, bF) > 25 && fx.ftl === 0) return;
+      const l = contested[Math.floor(this.rand() * contested.length)];
+      const i = Math.floor(this.rand() * l.length);
+      const a = l[i], bF = l[(i + 1 + Math.floor(this.rand() * (l.length - 1))) % l.length];
       st.g[G.wars]++;
       const sev = 0.02 + this.rand() * 0.2;
       for (let n = 0; n < st.nSettled; n++) {
         const c = st.settled[n], o = c * NF;
         const f = S[o + F.faction];
         if ((f !== a && f !== bF) || S[o + F.stage] < STAGE.OUTPOST || S[o + F.stage] > STAGE.MEGA) continue;
+        if (this.dist(c, a) > 25 && fx.ftl === 0) continue;
         const k = sev * (0.5 + this.rand());
-        S[o + F.pop] *= 1 - k; S[o + F.capital] *= 1 - k; S[o + F.stability] -= 0.15;
+        S[o + F.pop] *= 1 - k; S[o + F.capital] *= 1 - k; S[o + F.stability] = Math.max(0, S[o + F.stability] - 0.15);
         if (S[o + F.stage] <= STAGE.BASE && this.rand() < sev) {
           S[o + F.stage] = STAGE.DEAD; S[o + F.pop] = 0; st.g[G.dead]++;
         }
