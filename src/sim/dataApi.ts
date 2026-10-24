@@ -3,7 +3,7 @@
 // time" replays the run from its first snapshot on a private engine, in
 // slices, so the worker keeps answering while it scans.
 
-import { STAGE } from './catalog.ts';
+import { isAlive } from './catalog.ts';
 import { Engine, type SimState } from './engine.ts';
 import { F, NF } from './metrics.ts';
 import { compile, placeBinder, QueryError, type PlaceRow } from './query.ts';
@@ -33,7 +33,7 @@ export interface DataEnv {
 const DATA_TYPES = new Set(['table', 'scan', 'runinfo']);
 export function isDataReq(m: { type: string }): m is DataReq { return DATA_TYPES.has(m.type); }
 
-export const living = (s: number) => s >= STAGE.OUTPOST && s <= STAGE.MEGA;
+export const living = isAlive;
 const SNAP_EVERY = 20; // the worker's snapshot spacing
 
 // ---------------------------------------------------------------- replay scans

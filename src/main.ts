@@ -44,6 +44,7 @@ app.innerHTML = `
       <button id="reroll" class="link" type="button">Another future</button>
       <button id="chronicle" class="link" type="button">Chronicle</button>
       <button id="data" class="link" type="button" aria-pressed="false">Data</button>
+      <a id="starship" class="link" href="ship.html" title="Fly there yourself in the Starship, in this year">Fly the Starship</a>
       <span class="status num" aria-live="polite"></span>
     </div>
   </header>
@@ -728,7 +729,24 @@ function refreshForecast(): void {
 timeline.onToggle = (playing) => { if (!playing) refreshForecast(); };
 charts.setFan((key) => (fcOn && fc ? fanFor(fc, key) : null));
 
+/** The Starship link carries the selected real world (the ship knows the Solar System and the real
+ *  nearby stars) and the current year, as a spoken-style order in the hash. */
+const shipLink = app.querySelector<HTMLAnchorElement>('#starship');
+function updateShipLink(): void {
+  if (!shipLink) return;
+  const sel = ctx.selected;
+  let place = '';
+  if (sel?.kind === 'body') {
+    const b = world.bodies[sel.id], sys = world.systems[b.system];
+    place = sys.id === 0 ? b.name : sys.real ? sys.name : '';
+  } else if (sel?.kind === 'system' && world.systems[sel.id].real) place = world.systems[sel.id].name;
+  const yearCal = Math.round(2040 + ctx.year);
+  const order = place ? `take me to ${place} in the year ${yearCal}` : `go to the year ${yearCal}`;
+  shipLink.href = `ship.html#${order.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+}
+
 function refreshPanels(): void {
+  updateShipLink();
   const step = Math.max(0, sim.stepAt(ctx.year));
   const row = (col: number) => sim.series[step * NGM + col];
   inspector.render({

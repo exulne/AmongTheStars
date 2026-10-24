@@ -12,6 +12,7 @@
 
 import { FLOW, NPERIODS, periodOf, periodStart, type Flow, type Ledger } from './ledger.ts';
 import { hash01 } from './rng.ts';
+import { earthPyramid, hazard, type Mortality } from './ages.ts';
 
 // ---------------------------------------------------------------- invertible permutation
 
@@ -76,17 +77,7 @@ const FATHER: [number, number] = [18, 64];
 export function periodMid(p: number): number { return (periodStart(p) + periodStart(p + 1)) / 2; }
 export function periodLen(p: number): number { return periodStart(p + 1) - periodStart(p); }
 
-/** Earth's 2040 age pyramid in 5-year cohorts born 1920–2040 (periods −24..−1). */
-function earthPyramid(total: number): number[] {
-  const w: number[] = [];
-  for (let k = -24; k < 0; k++) {
-    const age = -k * 5 - 2.5;
-    w.push(Math.exp(-age / 70) * (age < 60 ? 1 : Math.exp(-((age - 60) ** 2) / 380)));
-  }
-  const s = w.reduce((a, b) => a + b, 0);
-  return w.map((x) => Math.round((x / s) * total));
-}
-
+/** Fallback law where the engine left none (generation ships): the old longevity-scaled curve. */
 function gompertz(age: number, longevity: number): number {
   return 0.0004 + 0.00002 * Math.exp((0.088 / longevity) * Math.max(0, age)) + (age < 1 ? 0.004 : 0);
 }
@@ -286,9 +277,12 @@ export class Demography {
     // a settlement that empties in this period: nobody is left to die beyond everyone,
     // so the excess comes off the births (else newborns outlive an abandoned town)
     if (D > now) { births -= D - now; D = now; }
-    const lon = this.longevity(periodStart(p));
+    // deaths fall by age as the engine's did: its Gompertz–Makeham law for this place and period (ages.ts)
+    const mt = this.L.mortality.get(t.body);
+    const law: Mortality | null = mt && mt[p * 4] >= 0 ? { A: mt[p * 4], B: mt[p * 4 + 1], b: mt[p * 4 + 2], inf: mt[p * 4 + 3] } : null;
+    const lon = law ? 1 : this.longevity(periodStart(p));
     const pool = [...before, ...arrivals].filter((x) => x.alive > 0);
-    const w = pool.map((x) => x.alive * gompertz(periodMid(p) - periodMid(x.q), lon));
+    const w = pool.map((x) => { const age = periodMid(p) - periodMid(x.q); return x.alive * (law ? hazard(age, law) : gompertz(age, lon)); });
     const dead = split(D, w, pool.map((x) => x.alive));
     pool.forEach((x, i) => { x.alive -= dead[i]; });
     const deadOf = new Map(pool.map((x, i) => [x, dead[i]] as const));

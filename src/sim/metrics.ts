@@ -10,6 +10,8 @@ export const GLOBAL_METRICS: MetricDef[] = [
   { key: 'births', label: 'Births per year', unit: '/yr', log: true, group: 'People' },
   { key: 'deaths', label: 'Deaths per year', unit: '/yr', log: true, group: 'People' },
   { key: 'medianAge', label: 'Median age', unit: 'yr', group: 'People' },
+  { key: 'lifeExp', label: 'Life expectancy at birth', unit: 'yr', group: 'People' },
+  { key: 'tfr', label: 'Children per woman (TFR)', unit: '', group: 'People' },
   { key: 'divergence', label: 'Max genetic divergence', unit: 'idx', group: 'People' },
   { key: 'settlements', label: 'Living settlements', unit: '', log: true, group: 'Expansion' },
   { key: 'systems', label: 'Star systems settled', unit: '', log: true, group: 'Expansion' },
@@ -53,6 +55,7 @@ export const SETTLEMENT_FIELDS = [
   'food', 'capital', 'gdp', 'research', 'stability', 'happiness', 'gini', 'births', 'deaths', 'medianAge',
   'military', 'divergence', 'capacity', 'culture', 'imports', 'exports', 'energyRatio', 'shortage', 'robots',
   'lastEvent', 'terraform', 'inbound',
+  'lifeExp', 'tfr',
 ] as const;
 export type SField = typeof SETTLEMENT_FIELDS[number];
 export const F = Object.fromEntries(SETTLEMENT_FIELDS.map((k, i) => [k, i])) as Record<SField, number>;
@@ -65,6 +68,7 @@ export const SETTLEMENT_LABELS: Partial<Record<SField, [string, string]>> = {
   happiness: ['Happiness', ''], gini: ['Gini', ''], births: ['Births', '/yr'], deaths: ['Deaths', '/yr'],
   medianAge: ['Median age', 'yr'], military: ['Military', '$/yr'], divergence: ['Genetic divergence', ''],
   capacity: ['Habitat capacity', 'people'], imports: ['Imports', 't/yr'], exports: ['Exports', 't/yr'],
+  lifeExp: ['Life expectancy at birth', 'yr'], tfr: ['Children per woman', ''],
   energyRatio: ['Energy supply ratio', '×'], shortage: ['Shortage', ''], robots: ['Robots', ''], terraform: ['Terraforming', ''],
 };
 
