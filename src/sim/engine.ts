@@ -338,8 +338,9 @@ export class Engine {
       S[o + F.gini] = clamp01(S[o + F.gini] + (giniT - S[o + F.gini]) * Math.min(1, 0.03 * dt));
       const ageT = 16 + 22 * (dRate / (bRate + 0.002)) * (fx.death < 0.5 ? 2.2 : 1);
       S[o + F.medianAge] += (Math.min(ageT, 160) - S[o + F.medianAge]) * Math.min(1, 0.05 * dt);
+      const div0 = S[o + F.divergence];
       S[o + F.divergence] += dt * 0.0006 * fx.divergence * Math.pow(Math.abs(1 - this.bG[b]), 1.5) * (this.bSys[b] === 0 ? 0.4 : 1) * (isEarth ? 0 : 1);
-      if (S[o + F.divergence] >= 1 && S[o + F.divergence] - dt * 0.0006 * fx.divergence * 3 < 1) this.log(EV.Speciation, b);
+      if (div0 < 1 && S[o + F.divergence] >= 1) this.log(EV.Speciation, b);
       if (fx.hab > 0.1 && h < 0.8 && stg >= STAGE.CITY) S[o + F.terraform] = Math.min(0.5, S[o + F.terraform] + dt * 0.0008 * fx.hab);
 
       S[o + F.pop] = pop;
@@ -396,7 +397,7 @@ export class Engine {
   private stageUp(b: number, o: number, stg: number, pop: number, cap: number, short: number, dt: number): void {
     const S = this.st.S, fx = this.fx, done = this.st.techDone;
     const has = (id: string) => done[TECH_INDEX.get(id)!] >= 0;
-    if (stg >= STAGE.MEGA || short > 0.25 || S[o + F.stability] < 0.35) {
+    if (short > 0.25 || S[o + F.stability] < 0.35) {
       // collapse: a bad stage can fall
       const pc = dt * (0.0008 + 0.04 * short * short + (S[o + F.stability] < 0.2 ? 0.02 : 0)) * (1 - fx.reliability);
       if (stg > STAGE.OUTPOST && this.rand() < pc) {
@@ -405,7 +406,7 @@ export class Engine {
       }
       return;
     }
-    if (pop < cap * 0.65) return;
+    if (stg >= STAGE.MEGA || pop < cap * 0.65) return;
     const gate =
       stg === STAGE.OUTPOST ? has('closedLoop') :
       stg === STAGE.BASE ? has('isru') :
@@ -431,10 +432,11 @@ export class Engine {
     }
     const rel = Math.min(0.9, fx.reliability);
     if (stg <= STAGE.COLONY && r() < dt * 0.012 * (1 - rel)) {
-      const k = 0.05 + r() * 0.3; S[o + F.pop] *= 1 - k; S[o + F.stability] -= 0.08; this.log(EV['Habitat breach'], b, k);
+      // a lost module: a few people, or up to 2% of a bigger place
+      const k = Math.min(0.5, r() * 0.02 + (2 + r() * 8) / Math.max(pop, 1)); S[o + F.pop] *= 1 - k; S[o + F.stability] -= 0.03; this.log(EV['Habitat breach'], b, k);
     }
     if (this.bSys[b] === 0 && this.bFlux[b] > 0.2 && stg <= STAGE.TOWN && r() < dt * 0.01) {
-      const k = 0.01 + r() * 0.05; S[o + F.pop] *= 1 - k; this.log(EV['Solar storm'], b, k);
+      const k = 0.001 + r() * 0.01; S[o + F.pop] *= 1 - k; this.log(EV['Solar storm'], b, k);
     }
     if (r() < dt * 0.00015) {
       const k = 0.1 + r() * 0.6; S[o + F.pop] *= 1 - k; S[o + F.capital] *= 1 - k; this.log(EV['Asteroid strike'], b, k);
@@ -446,11 +448,11 @@ export class Engine {
     if (short > 0.3 && r() < dt * 0.1) { S[o + F.pop] *= 1 - short * 0.1; this.log(EV.Famine, b, short); }
     if (S[o + F.stability] < 0.3 && r() < dt * 0.05) { S[o + F.capital] *= 0.9; S[o + F.stability] += 0.1; this.log(EV.Revolt, b); }
     if (pop > 1e6 && r() < dt * 0.0006) { this.st.g[G.faiths]++; S[o + F.culture] = this.st.g[G.faiths]; this.log(EV['New faith'], b, this.st.g[G.faiths]); }
-    if (r() < dt * 0.003) {
+    if (stg <= STAGE.TOWN && r() < dt * 0.003) {
       const k = Math.floor(r() * 5); S[o + F.water + k] += pop * 40 + 1e4; this.log(EV['Rich deposit found'], b, k);
     }
     if (fx.fission && !fx.fusion && r() < dt * 0.0008) { S[o + F.pop] *= 0.98; this.log(EV['Reactor accident'], b); }
-    if (S[o + F.happiness] > 0.7 && r() < dt * 0.003) { S[o + F.pop] *= 1.03; this.log(EV['Baby boom'], b); }
+    if (S[o + F.happiness] > 0.7 && S[o + F.pop] < S[o + F.capacity] && r() < dt * 0.001) { S[o + F.pop] *= 1.03; this.log(EV['Baby boom'], b); }
     if (pop > 1e7 && S[o + F.research] > 0 && r() < dt * 0.0012) { this.st.g[G.knowledge] += S[o + F.research] * 30; this.log(EV.Breakthrough, b); }
   }
 
