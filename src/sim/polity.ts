@@ -6,7 +6,7 @@ import { EV, STAGE } from './catalog.ts';
 import { F, NF } from './metrics.ts';
 import {
   H, HG, MAX_GRUDGE, MAX_PEND, MAX_WAR, NH, NWC, OUTCOME, PEND, WAR_CAUSE, WAR_KIND, WC, FC, NFC,
-  type Civ,
+  GRIEV, MAX_POL, NPC, PC, REGIME, type Civ,
 } from './civ.ts';
 
 const LIVING = (s: number) => s >= STAGE.OUTPOST && s <= STAGE.MEGA;
@@ -16,15 +16,44 @@ const MT = 4.184e15;            // J per megaton of TNT
 export function kineticJ(kg: number, beta: number): number { return (1 / Math.sqrt(1 - beta * beta) - 1) * kg * C * C; }
 export const megatons = (J: number) => J / MT;
 
+/** What each kind of government does to its people: war appetite, secession, research, inequality, military spending. */
+export interface RegimeFx { war: number; secede: number; research: number; gini: number; mil: number }
+export const REGIME_FX: RegimeFx[] = [
+  /* CHARTER     */ { war: 1, secede: 1, research: 1, gini: 0, mil: 1 },
+  /* ASSEMBLY    */ { war: 0.6, secede: 0.8, research: 1.05, gini: -0.05, mil: 0.8 },
+  /* JUNTA       */ { war: 2.0, secede: 1.6, research: 0.85, gini: 0.06, mil: 2.2 },
+  /* THEOCRACY   */ { war: 1.4, secede: 0.9, research: 0.85, gini: 0, mil: 1.2 },
+  /* CORPORATE   */ { war: 0.9, secede: 1.2, research: 1.1, gini: 0.08, mil: 1 },
+  /* TECHNOCRACY */ { war: 0.7, secede: 0.9, research: 1.2, gini: -0.02, mil: 0.9 },
+  /* MACHINE     */ { war: 0.5, secede: 0.7, research: 1.35, gini: -0.06, mil: 0.7 },
+  /* COMMITTEE   */ { war: 1.3, secede: 1.5, research: 0.7, gini: 0, mil: 1.3 },
+];
+const NEUTRAL: RegimeFx = REGIME_FX[0];
+/** the order regimes are considered in: emergencies first, the plain charter last */
+const PRIORITY = [7, 2, 6, 3, 1, 5, 4, 0];
+export const REGIME_NAMES = ['Charter republic', 'Citizens\' assembly', 'Military junta', 'Theocracy', 'Corporate republic', 'Forecast technocracy', 'Machine trust', 'Emergency committee'];
+/** forms of a polity's name: {B} is the capital's name, {X} a word in its own tongue */
+export const POLITY_FORMS = ['Free {B}', 'the {X} Compact', 'the {B} Hegemony', 'the Republic of {B}', 'the {X} Commonwealth', 'the {B} Concord', 'the {X} Directorate', 'the {X} Concord', 'the Covenant of {X}', 'the {X} League'];
+const X_FORMS = [1, 4, 6, 7, 9];
+
+/** per-faction aggregates for choosing a regime */
+interface PAgg { pop: number; gdp: number; gini: number; stab: number; worlds: number; hub: boolean; lastWar: number; faith: number; upl: number; res: number }
+
 interface Agg { f: number; pop: number; mil: number; short: number; res: number; faith: Map<number, number>; bodies: number[] }
 
 export class Politics {
   private c: Civ;
-  constructor(c: Civ) { this.c = c; }
+  private firstFac: Float64Array; private contested: Uint8Array;
+  constructor(c: Civ) {
+    this.c = c;
+    const ns = c.e.world.systems.length;
+    this.firstFac = new Float64Array(ns); this.contested = new Uint8Array(ns);
+  }
   private get e() { return this.c.e; }
   private get X() { return this.c.X; }
 
   step(dt: number, year: number, eraWar: number): { rivals: number; wars: number; dead: number } {
+    this.regimes(dt, year, eraWar);
     this.independence(dt, year);
     const out = this.localWars(dt, year, eraWar);
     out.wars += this.kineticWars(dt, year, eraWar);
@@ -109,7 +138,137 @@ export class Politics {
     return bf;
   }
 
+  // ---------------------------------------------------------------- polities and their regimes
+
+  /** The polity row governing faction f, or -1. */
+  polityOf(f: number): number { return f >= 0 ? this.X.H[f * NH + H.pol] : -1; }
+  /** What faction f's government does (neutral for a faction without one). */
+  fx(f: number): RegimeFx {
+    const p = this.polityOf(f);
+    const r = p >= 0 ? this.X.pol[p * NPC + PC.regime] : -1;
+    return r >= 0 ? REGIME_FX[r] : NEUTRAL;
+  }
+  private markWar(o: number, a: number, b: number): void {
+    const X = this.X, pa = this.polityOf(a), pb = this.polityOf(b);
+    X.war[o + WC.pA] = pa; X.war[o + WC.pB] = pb;
+    if (pa >= 0) X.pol[pa * NPC + PC.wars]++;
+    if (pb >= 0) X.pol[pb * NPC + PC.wars]++;
+  }
+
+  /** A new government with capital `cap`, leaving faction `from` (-1: founded free). */
+  private create(cap: number, from: number, year: number, griev: number, gval: number, nWorlds = -1): number {
+    const X = this.X, n = X.hg[HG.nPol];
+    if (n >= MAX_POL) return -1;
+    const o = n * NPC, P = X.pol, S = this.e.st.S;
+    P.fill(0, o, o + NPC);
+    P[o + PC.cap] = cap; P[o + PC.from] = from; P[o + PC.year] = year; P[o + PC.alive] = 1; P[o + PC.griev] = griev; P[o + PC.gval] = gval;
+    P[o + PC.fromPol] = this.polityOf(from);
+    let worlds = nWorlds;
+    if (worlds < 0) { worlds = 0; for (let m = 0; m < this.e.st.nSettled; m++) { const c = this.e.st.settled[m]; if (S[c * NF + F.faction] === cap && LIVING(S[c * NF + F.stage])) worlds++; } }
+    // the name's form follows from why and how it began; catalogue numbers make poor flags
+    const h = (k: number) => (Math.imul(cap + 1, 2654435761) ^ Math.imul(n + k, 40503)) >>> 0;
+    const choice = worlds >= 5 ? [2] : ({ [GRIEV.TAXES]: [0, 9], [GRIEV.LAG]: [1, 7, 5], [GRIEV.STABILITY]: [6, 3], [GRIEV.FAITH]: [8], [GRIEV.SIZE]: [3, 2], [GRIEV.FAR]: [4, 7, 1] } as Record<number, number[]>)[griev] ?? [4];
+    let form = choice[h(1) % choice.length];
+    if (POLITY_FORMS[form].includes('{B}') && /\d/.test(this.e.world.bodies[cap].name)) form = X_FORMS[h(2) % X_FORMS.length];
+    P[o + PC.form] = form;
+    P[o + PC.regime] = -1; // set from the state on its first step, without ceremony
+    P[o + PC.since] = year; P[o + PC.target] = -1; P[o + PC.peakWorlds] = worlds;
+    X.H[cap * NH + H.pol] = n;
+    X.hg[HG.nPol] = n + 1;
+    return n;
+  }
+
+  /** Give every independent faction a government, end the ones that fell, and let regimes follow the state. */
+  private regimes(dt: number, year: number, eraWar: number): void {
+    const X = this.X, st = this.e.st, S = st.S, Hh = X.H, P = X.pol;
+    const agg = new Map<number, PAgg>();
+    let tRes = 0, tPop = 0;
+    for (let n = 0; n < st.nSettled; n++) {
+      const b = st.settled[n], o = b * NF;
+      if (!LIVING(S[o + F.stage])) continue;
+      const f = S[o + F.faction];
+      let a = agg.get(f);
+      if (!a) agg.set(f, (a = { pop: 0, gdp: 0, gini: 0, stab: 0, worlds: 0, hub: false, lastWar: -1e9, faith: 0, upl: 0, res: 0 }));
+      const pop = S[o + F.pop];
+      a.upl += Hh[b * NH + H.upl] * pop; a.res += S[o + F.research]; tRes += S[o + F.research]; tPop += pop;
+      a.pop += pop; a.gdp += S[o + F.gdp]; a.gini += S[o + F.gini] * pop; a.stab += S[o + F.stability] * pop; a.worlds++;
+      if (S[o + F.stage] >= STAGE.HUB) a.hub = true;
+      a.lastWar = Math.max(a.lastWar, Hh[b * NH + H.lastWar]);
+      // the share holding the capital's faith
+      const fc = Hh[f * NH + H.fa0];
+      if (fc >= 0) for (let k = 0; k < 3; k++) if (Hh[b * NH + 2 * k] === fc) a.faith += pop * Hh[b * NH + 2 * k + 1];
+    }
+    // governments end when their capital falls, is annexed, or is ruled from elsewhere
+    for (let p = 0; p < X.hg[HG.nPol]; p++) {
+      const o = p * NPC;
+      if (!P[o + PC.alive]) continue;
+      const cap = P[o + PC.cap];
+      if (!LIVING(S[cap * NF + F.stage]) || S[cap * NF + F.faction] !== cap || Hh[cap * NH + H.pol] !== p) {
+        P[o + PC.alive] = 0; P[o + PC.end] = year;
+        if (Hh[cap * NH + H.pol] === p) Hh[cap * NH + H.pol] = -1;
+      }
+    }
+    const forecast = this.c.has('psychohistory') || this.c.has('agi');
+    const rpcAll = tPop > 0 ? tRes / tPop : 0;
+    for (const [f, a] of agg) {
+      if (S[f * NF + F.faction] !== f || !LIVING(S[f * NF + F.stage])) continue;
+      let p = Hh[f * NH + H.pol];
+      if (p < 0) p = this.create(f, -1, year, f === this.e.world.earth ? GRIEV.NONE : GRIEV.FAR, this.c.sysDistLy(f, this.e.world.earth), a.worlds);
+      if (p < 0) continue;
+      const o = p * NPC;
+      if (a.pop > P[o + PC.peakPop]) P[o + PC.peakPop] = a.pop;
+      if (a.worlds > P[o + PC.peakWorlds]) P[o + PC.peakWorlds] = a.worlds;
+      if (a.pop <= 0) continue;
+      const gini = a.gini / a.pop, stab = a.stab / a.pop, upl = a.upl / a.pop, rpc = a.res / a.pop;
+      const top = a.faith / a.pop;
+      const fighting = year - a.lastWar < 25 || eraWar > 3;
+      // what the state of the polity calls for; the regime in power holds on past the point that brought it
+      const cur = P[o + PC.regime];
+      const holds = (r: number): boolean => {
+        const k = r === cur ? 1 : 0;
+        switch (r) {
+          case REGIME.COMMITTEE: return stab < 0.25 + 0.15 * k;
+          case REGIME.JUNTA: return gini > 0.42 - 0.04 * k && (fighting || (k === 1 && year - a.lastWar < 60)) && stab < 0.6 + 0.1 * k;
+          case REGIME.MACHINE: return upl > 0.4 - 0.1 * k;
+          case REGIME.THEOCRACY: return top > 0.45 - 0.12 * k;
+          case REGIME.ASSEMBLY: return a.pop < 2e7 * (1 + 2 * k) && a.worlds <= 2 + 2 * k && stab > 0.62 - 0.12 * k;
+          case REGIME.TECHNOCRACY: return forecast && stab > 0.66 - 0.1 * k && rpc > (1.4 - 0.5 * k) * rpcAll;
+          case REGIME.CORPORATE: return gini > 0.5 - 0.06 * k;
+          default: return true;
+        }
+      };
+      let target: number = REGIME.CHARTER;
+      for (const r of PRIORITY) if (holds(r)) { target = r; break; }
+      if (cur < 0) { P[o + PC.regime] = P[o + PC.target] = target; P[o + PC.since] = year; continue; }
+      if (target === cur) { P[o + PC.pressure] = 0; P[o + PC.target] = cur; continue; }
+      if (target !== P[o + PC.target]) { P[o + PC.target] = target; P[o + PC.pressure] = 0; }
+      P[o + PC.pressure] += dt;
+      // coups and emergencies come fast; reforms take a generation of pressure, and no regime falls in its first decades
+      const need = target === REGIME.JUNTA || target === REGIME.COMMITTEE ? 4 : 25;
+      if (P[o + PC.pressure] >= need && year - P[o + PC.since] >= 20) {
+        P[o + PC.regime] = target; P[o + PC.since] = year; P[o + PC.pressure] = 0;
+        this.c.log(EV['Regime change'], f, p, cur * 16 + target);
+      }
+    }
+  }
+
   // ---------------------------------------------------------------- independence
+
+  /** The strongest reason b has to leave faction `old`, scored from the numbers: [kind, value]. */
+  private grievance(b: number, old: number, lag: number): [number, number] {
+    const S = this.e.st.S, o = b * NF, Hh = this.X.H;
+    const fb = Hh[b * NH + H.fa0], fo = Hh[old * NH + H.fa0];
+    const ratio = S[o + F.pop] / Math.max(1, S[old * NF + F.pop]);
+    const c: [number, number, number][] = [
+      [GRIEV.LAG, lag / 3, lag],
+      [GRIEV.TAXES, (S[o + F.gini] - 0.3) * 8, S[o + F.gini]],
+      [GRIEV.STABILITY, (0.65 - S[o + F.stability]) * 4, S[o + F.stability]],
+      [GRIEV.FAITH, fb >= 0 && fb !== fo ? 2 * Hh[b * NH + H.sh0] : 0, fb],
+      [GRIEV.SIZE, Math.min(1.2, 3 * ratio), ratio],
+    ];
+    c.sort((x, y) => y[1] - x[1] || x[0] - y[0]);
+    return [c[0][0], c[0][2]];
+  }
 
   private independence(dt: number, year: number): void {
     const st = this.e.st, S = st.S, fx = this.e.fx, Hh = this.X.H;
@@ -121,6 +280,8 @@ export class Politics {
       const p = dt * fx.secession * this.c.mul(b, H.mSecede) * (1 - S[o + F.stability]) * (sol ? (S[o + F.pop] > 1e6 ? 0.008 : 0) : 0.012 * Math.sqrt(lag / 5));
       if (this.e.rand() < p) {
         const old = S[o + F.faction];
+        // what they say they are leaving over: the light-lag, the bill, or the disorder
+        const [griev, gval] = this.grievance(b, old, lag);
         // the colony and everything it founded leave together
         for (let m = 0; m < st.nSettled; m++) {
           const c = st.settled[m];
@@ -128,7 +289,8 @@ export class Politics {
         }
         Hh[b * NH + H.indep] = year; Hh[b * NH + H.indepFrom] = old;
         this.addGrudge(b, old, 0.6);
-        this.c.log(EV.Independence, b, old);
+        const row = this.create(b, old, year, griev, gval);
+        this.c.log(EV.Independence, b, old, row);
       }
     }
   }
@@ -137,10 +299,19 @@ export class Politics {
 
   private localWars(dt: number, year: number, eraWar: number): { rivals: number; wars: number; dead: number } {
     const st = this.e.st, S = st.S, fx = this.e.fx, Hh = this.X.H;
-    const bySys = new Map<number, Map<number, Agg>>();
+    // only systems held by more than one faction can have a war: find them cheaply first
+    const firstFac = this.firstFac, contested = this.contested;
+    firstFac.fill(-1); contested.fill(0);
     for (let n = 0; n < st.nSettled; n++) {
       const b = st.settled[n], o = b * NF;
       if (!LIVING(S[o + F.stage])) continue;
+      const sy = this.c.bSys[b], f = S[o + F.faction];
+      if (firstFac[sy] < 0) firstFac[sy] = f; else if (firstFac[sy] !== f) contested[sy] = 1;
+    }
+    const bySys = new Map<number, Map<number, Agg>>();
+    for (let n = 0; n < st.nSettled; n++) {
+      const b = st.settled[n], o = b * NF;
+      if (!LIVING(S[o + F.stage]) || !contested[this.c.bSys[b]]) continue;
       const f = S[o + F.faction], sy = this.c.bSys[b];
       let m = bySys.get(sy);
       if (!m) bySys.set(sy, (m = new Map()));
@@ -218,6 +389,7 @@ export class Politics {
     Wt[o + WC.end] = year + 1 + this.e.rand() * 12 * close; Wt[o + WC.cause] = cause; Wt[o + WC.kind] = WAR_KIND.LOCAL;
     Wt[o + WC.outcome] = OUTCOME.ONGOING; Wt[o + WC.winner] = -1; Wt[o + WC.front] = front; Wt[o + WC.target] = target; Wt[o + WC.sev] = sev;
     Wt[o + WC.fA] = this.topFaith(A); Wt[o + WC.fB] = this.topFaith(B);
+    this.markWar(o, A.f, B.f);
     Wt[o + WC.indep] = Hh[A.f * NH + H.indepFrom] === B.f ? Hh[A.f * NH + H.indep] : Hh[B.f * NH + H.indepFrom] === A.f ? Hh[B.f * NH + H.indep] : -1;
     X.hg[HG.nWar] = n + 1;
     // fighting happens where both sides are: the theatre system, within light-seconds
@@ -286,6 +458,7 @@ export class Politics {
     Wt[o + WC.a] = a; Wt[o + WC.b] = b; Wt[o + WC.sys] = this.c.bSys[b]; Wt[o + WC.start] = year; Wt[o + WC.cause] = WAR_CAUSE.GRUDGE;
     Wt[o + WC.kind] = WAR_KIND.KINETIC; Wt[o + WC.outcome] = OUTCOME.ONGOING; Wt[o + WC.winner] = -1; Wt[o + WC.front] = a; Wt[o + WC.target] = b;
     Wt[o + WC.energy] = E; Wt[o + WC.from] = this.c.bSys[a]; Wt[o + WC.speed] = beta; Wt[o + WC.mass] = tonnes;
+    this.markWar(o, a, b);
     let end = arrive;
     this.schedule(arrive, b, PEND.STRIKE, E, n);
     // the target sees nothing coming until the light of the launch arrives, d years later, barely ahead of the strike;

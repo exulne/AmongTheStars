@@ -7,11 +7,14 @@ import { EV, STAGE, TECHS } from './catalog.ts';
 import type { Engine } from './engine.ts';
 import { F, NF } from './metrics.ts';
 import { hash01 } from './rng.ts';
-import { H, NH, type CivState } from './civ.ts';
+import { H, NH, NPC, PC, REGIME, type CivState } from './civ.ts';
+import { REGIME_NAMES } from './polity.ts';
 
 export interface Society {
   year: number;
   government: string; governmentWhy: string;
+  polity: { id: number; name: string; capital: number; regime: string; since: number } | null; // who governs this place
+  bodies: { baseline: number; adapted: number; uploaded: number };                               // shares of its people
   language: string; languageDrift: number;      // 0 = Earth's languages, 1 = unrecognisable
   faith: string | null;
   faiths: { id: number; name: string; share: number; tenets: string }[]; // the top three, from the faith table
@@ -31,6 +34,8 @@ export class SocietyModel {
   private e: Engine;
   /** names and tenets of faith f (from the Chronicle) */
   faithInfo: (f: number) => { name: string; tenets: string } = (f) => ({ name: `faith ${f}`, tenets: '' });
+  /** name of polity row p (from the Chronicle) */
+  polityName: (p: number) => string = (p) => `polity ${p}`;
   private indep = new Map<number, number>();
   private specia = new Map<number, number>();
 
@@ -52,9 +57,18 @@ export class SocietyModel {
     const independent = v('faction') === b && b !== w.earth;
     const h = (k: number) => hash01(b, Math.floor(year / 150), k);
 
-    // government
+    // government: the polity that rules this place, and the regime it has now
     let government: string, why: string;
-    if (stage <= STAGE.BASE) { government = 'Mission command'; why = 'a crew this small takes orders from whoever sent it'; }
+    const fac = v('faction'), pRow = hx ? hx.H[fac * NH + H.pol] : -1;
+    const regime = pRow >= 0 && hx ? hx.pol[pRow * NPC + PC.regime] : -1;
+    const polity = pRow >= 0 && hx ? { id: pRow, name: this.polityName(pRow), capital: fac, regime: regime >= 0 ? REGIME_NAMES[regime] : REGIME_NAMES[0], since: hx.pol[pRow * NPC + PC.since] } : null;
+    if (polity && regime >= 0 && stage > STAGE.BASE) {
+      government = fac === b ? REGIME_NAMES[regime] : `${stage >= STAGE.CITY ? 'Province' : 'Territory'} of ${polity.name}`;
+      why = fac === b
+        ? `${polity.name}, ${['an elected charter government', 'every citizen votes on everything', 'the generals rule while the war lasts', 'its faith\'s elders hold the chair', 'the owning families run the state', 'policy is set by forecasts the citizens audit', 'uploaded minds vote continuously', 'an emergency committee holds what is left'][regime]}, since ${Math.round(2040 + polity.since)}`
+        : `ruled from ${w.bodies[fac]?.name ?? 'elsewhere'}, ${REGIME_NAMES[regime].toLowerCase()}`;
+      if (regime === REGIME.JUNTA && fac !== b) government = `Occupied territory of ${polity.name}`;
+    } else if (stage <= STAGE.BASE) { government = 'Mission command'; why = 'a crew this small takes orders from whoever sent it'; }
     else if (era === 4 && stab < 0.45) { government = 'Military council'; why = 'war, and stability below half'; }
     else if (era === 6 || stab < 0.25) { government = 'Emergency committee'; why = 'the collapse left nothing else standing'; }
     else if (has('mindUpload') && stage >= STAGE.HUB) { government = 'Consensus mesh'; why = 'uploaded minds vote continuously on everything'; }
@@ -116,7 +130,10 @@ export class SocietyModel {
     ];
     if (this.specia.has(b) && (this.specia.get(b) ?? Infinity) <= year) sentences.push(`Since ${Math.round(2040 + this.specia.get(b)!)} they are their own species.`);
     void h;
-    return { year, government, governmentWhy: why, language, languageDrift: drift, faith, faiths, art, architecture: arch, daily: { work, food, dress, transport, family, lifespan }, mood, sentences };
+    const adapted = hx ? hx.H[b * NH + H.adapt] : 0, uploaded = hx ? hx.H[b * NH + H.upl] : 0;
+    const bodies = { baseline: (1 - adapted) * (1 - uploaded), adapted: adapted * (1 - uploaded), uploaded };
+    if (uploaded > 0.05 || adapted > 0.05) sentences.push(`${Math.round(bodies.baseline * 100)}% are baseline humans, ${Math.round(bodies.adapted * 100)}% are engineered for this world, and ${Math.round(uploaded * 100)}% run on machines.`);
+    return { year, government, governmentWhy: why, polity, bodies, language, languageDrift: drift, faith, faiths, art, architecture: arch, daily: { work, food, dress, transport, family, lifespan }, mood, sentences };
   }
 
 }

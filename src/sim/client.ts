@@ -59,6 +59,8 @@ export class SimClient {
   chronicle(from: number, to: number, opts: { body?: number; query?: string; limit?: number; minWeight?: number } = {}) { return this.ask<Msg<'chronicle'>>({ type: 'chronicle', from, to, ...opts }); }
   society(body: number, step: number) { return this.ask<Msg<'society'>>({ type: 'society', body, step }); }
   inventions() { return this.ask<Msg<'inventions'>>({ type: 'inventions' }); }
+  /** ages, faiths, polities and wars of this future, with their names */
+  annals() { return this.ask<Msg<'annals'>>({ type: 'annals' }); }
   state(step: number) { return this.ask<StateMsg>({ type: 'state', step }); }
   history(body: number) { return this.ask<HistoryMsg>({ type: 'history', body }); }
   events(fromYear: number, toYear: number, body?: number, limit?: number) {

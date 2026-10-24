@@ -5,7 +5,7 @@
 import { EV } from './catalog.ts';
 import { Engine, type SimState } from './engine.ts';
 import { HIST_FIELDS, NGM } from './metrics.ts';
-import { Chronicle, type Entry } from './chronicle.ts';
+import { Chronicle, type Annals, type Entry } from './chronicle.ts';
 import { Lives, type Biography, type PersonBrief } from './lives.ts';
 import { SocietyModel, type Society } from './society.ts';
 import { buildWorld } from './world.ts';
@@ -25,7 +25,8 @@ export type ToWorker =
   | { type: 'residentAt'; id: number; body: number; year: number; k: number }
   | { type: 'chronicle'; id: number; from: number; to: number; body?: number; query?: string; limit?: number; minWeight?: number }
   | { type: 'inventions'; id: number }
-  | { type: 'society'; id: number; body: number; step: number };
+  | { type: 'society'; id: number; body: number; step: number }
+  | { type: 'annals'; id: number };
 
 export type FromWorker =
   | { type: 'progress'; seed: number; step: number; years: number[]; series: Float64Array; done: boolean; ms: number }
@@ -37,7 +38,8 @@ export type FromWorker =
   | { type: 'residentAt'; id: number; pending?: boolean; person: string | null }
   | { type: 'chronicle'; id: number; pending?: boolean; entries: Entry[] }
   | { type: 'inventions'; id: number; pending?: boolean; list: { tech: number; year: number; entry: Entry | null }[] }
-  | { type: 'society'; id: number; pending?: boolean; society: Society | null };
+  | { type: 'society'; id: number; pending?: boolean; society: Society | null }
+  | { type: 'annals'; id: number; pending?: boolean; annals: Annals | null };
 
 const world = buildWorld();
 let main: Engine | null = null;
@@ -55,11 +57,13 @@ function people(): Lives | null {
     const c = (chron = new Chronicle(main, lives));
     society = new SocietyModel(main, (b, n) => lives!.coinedWord(b, n));
     society.faithInfo = (f) => ({ name: c.faithName(f), tenets: c.tenetsOf(f) });
+    society.polityName = (p) => c.polityName(p);
     const civ = main.civ;
     lives.faithAt = (b, year, u) => {
       for (const [f, sh] of civ.faithsAt(b, periodOf(year))) { if (u < sh) return c.faithName(f); u -= sh; }
       return null;
     };
+    lives.bodyShares = (b, year) => civ.bodiesAt(b, periodOf(year));
     lives.deeds = (pid, stays) => c.deedsOf(pid, stays).map((en) => ({ year: en.year, text: en.segs.map((s) => (typeof s === 'string' ? s : s.t)).join('') }));
   }
   return lives;
@@ -144,6 +148,9 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
       const e = stateAt(m.step);
       post({ type: 'society', id: m.id, society: society!.at(m.body, e.years[e.st.step], e.st.S, e.st.techDone, e.st.g[1], e.st.hx) });
     }
+  } else if (m.type === 'annals') {
+    const ok = people() && chron;
+    post({ type: 'annals', id: m.id, pending: !ok, annals: ok ? chron!.annals() : null });
   } else if (m.type === 'inventions') {
     const ok = people() && chron;
     post({ type: 'inventions', id: m.id, pending: !ok, list: ok ? chron!.inventions() : [] });

@@ -248,10 +248,19 @@ export class Lives {
   /** baseline, adapted (engineered for their world) or uploaded */
   private bodyKind(id: Id, age: number, year: number): string {
     const born = year - age;
+    if (this.bodyShares && !isShipBody(id.b)) {
+      // the shares the sim keeps per settlement: uploads among the old where they live, adaptation from birth
+      const here = this.bodyShares(id.b, year), atBirth = this.bodyShares(id.b, born);
+      if (age > 40 && hash01(id.b, id.q, id.i, 71) < Math.min(1, here.uploaded * 1.6)) return 'uploaded';
+      if (hash01(id.b, id.q, id.i, 72) < atBirth.adapted) return 'adapted to this world';
+      return 'baseline human';
+    }
     if (this.techBy('mindUpload', year) && age > 60 && hash01(id.b, id.q, id.i, 71) < Math.min(0.6, (year - this.e.st.techDone[TECHS.findIndex((t) => t.id === 'mindUpload')]) / 800)) return 'uploaded';
     if (this.techBy('bioAdapt', born) && !isShipBody(id.b) && this.e.world.bodies[id.b] && Math.abs(1 - this.e.world.bodies[id.b].g) > 0.3) return 'adapted to this world';
     return 'baseline human';
   }
+  /** set by the worker: shares of a settlement's people adapted and uploaded in a year */
+  bodyShares: ((b: number, year: number) => { adapted: number; uploaded: number }) | null = null;
 
   brief(id: Id, year: number): PersonBrief {
     const born = this.D.birthYear(id);
