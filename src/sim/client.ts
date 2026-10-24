@@ -3,6 +3,7 @@
 import SimWorker from './worker.ts?worker&inline';
 import type { FromWorker, ToWorker } from './worker.ts';
 import { NGM } from './metrics.ts';
+import type { DataReq, DataRes } from './dataApi.ts';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 type Msg<T extends FromWorker['type']> = Extract<FromWorker, { type: T }>;
@@ -65,6 +66,10 @@ export class SimClient {
   table(step: number) { return this.ask<Msg<'table'>>({ type: 'table', step }); }
   /** A settlement query evaluated across the run (count, sum, pop-weighted mean, min or max). */
   scan(expr: string, agg: 'count' | 'sum' | 'mean' | 'min' | 'max', of: string, stride: number) { return this.ask<Msg<'scan'>>({ type: 'scan', expr, agg, of, stride }); }
+  /** Any data-desk request (see dataApi.ts), so new ones need no method here. */
+  data<T extends DataReq['type']>(req: DistributiveOmit<Extract<DataReq, { type: T }>, 'id'>): Promise<Extract<DataRes, { type: T }>> {
+    return this.ask(req as DistributiveOmit<Extract<ToWorker, { id: number }>, 'id'>);
+  }
   history(body: number) { return this.ask<HistoryMsg>({ type: 'history', body }); }
   events(fromYear: number, toYear: number, body?: number, limit?: number) {
     return this.ask<Msg<'events'>>({ type: 'events', fromYear, toYear, body, limit }).then((m) => m.events);

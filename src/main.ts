@@ -15,6 +15,7 @@ import { ChartStrip, globalSeries, type Series } from './ui/charts.ts';
 import { fmtNum, fmtYear, parseCount } from './ui/format.ts';
 import { Inspector } from './ui/inspector.ts';
 import { installDataDesk } from './ui/dataDesk.ts';
+import { STAMP_CODE } from './ui/stamp.ts';
 import { Search, type Hit } from './ui/search.ts';
 import { NOTABLE, Ticker, describe } from './ui/ticker.ts';
 import { Timeline } from './ui/timeline.ts';
@@ -812,7 +813,7 @@ function writeHash(): void {
     const sel = ctx.selected;
     const parts = [`future${sim.seed}`, `y${Math.round(ctx.year)}`];
     if (sel) parts.push(sel.kind === 'city' ? `c${ctx.body}.${sel.id}` : `${REF_CODE[sel.kind]}${sel.id}`);
-    parts.push(`l${level}`);
+    parts.push(`l${level}`, STAMP_CODE);
     // replaceState so scrubbing doesn't flood the back button
     try { window.history.replaceState(null, '', `#${parts.join('-')}`); } catch { /* sandboxed frames may refuse */ }
   }, 400);

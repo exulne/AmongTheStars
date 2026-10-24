@@ -5,9 +5,13 @@
 import type { SimClient } from '../sim/client.ts';
 import type { World } from '../sim/world.ts';
 import type { Ctx, View } from '../view/views.ts';
+import './data.css';
 import { DataPanel } from './dataPanel.ts';
 import { TimeTab } from './dataTime.ts';
 import { Highlight } from './highlight.ts';
+import { RunTab } from './dataRun.ts';
+import { esc } from './dataPanel.ts';
+import { installStamp, stampLine } from './stamp.ts';
 
 export interface DeskOpts {
   app: HTMLElement;
@@ -30,6 +34,9 @@ export function installDataDesk(o: DeskOpts): DataPanel {
     showSeries: o.showSeries,
   });
   desk.add(new TimeTab(desk.hostApi, desk));
+  desk.add(new RunTab(desk.hostApi));
+  installStamp({ app: o.app, seed: () => o.sim.seed, year: () => o.ctx.year });
+  desk.footer(`<span class="num">${esc(stampLine())}</span>`);
   o.app.append(desk.el);
   const btn = o.app.querySelector<HTMLButtonElement>('#data');
   btn?.addEventListener('click', () => { desk.toggle(); btn.setAttribute('aria-pressed', String(desk.open)); });

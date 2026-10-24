@@ -13,11 +13,14 @@ export type Agg = 'count' | 'sum' | 'mean' | 'min' | 'max';
 
 export type DataReq =
   | { type: 'table'; id: number; step: number }
-  | { type: 'scan'; id: number; expr: string; agg: Agg; of?: string; stride: number };
+  | { type: 'scan'; id: number; expr: string; agg: Agg; of?: string; stride: number }
+  | { type: 'runinfo'; id: number };
 
 export type DataRes =
   | { type: 'table'; id: number; step: number; year: number; bodies: Int32Array; rows: Float64Array }
-  | { type: 'scan'; id: number; pending?: boolean; error?: string; steps: Int32Array; values: Float64Array };
+  | { type: 'scan'; id: number; pending?: boolean; error?: string; steps: Int32Array; values: Float64Array }
+  /** what this seed rolled: which techs its physics allows, their cost luck, its wanderlust; techDone so far */
+  | { type: 'runinfo'; id: number; seed: number; done: boolean; feasible: number[]; costMult: number[]; wanderlust: number; techDone: number[] };
 
 export interface DataEnv {
   world: World;
@@ -27,7 +30,7 @@ export interface DataEnv {
   post: (m: DataRes, transfer?: Transferable[]) => void;
 }
 
-const DATA_TYPES = new Set(['table', 'scan']);
+const DATA_TYPES = new Set(['table', 'scan', 'runinfo']);
 export function isDataReq(m: { type: string }): m is DataReq { return DATA_TYPES.has(m.type); }
 
 export const living = (s: number) => s >= STAGE.OUTPOST && s <= STAGE.MEGA;
@@ -85,7 +88,11 @@ function pump(env: DataEnv): void {
 // ---------------------------------------------------------------- handlers
 
 export function handleData(m: DataReq, env: DataEnv): void {
-  if (m.type === 'table') {
+  if (m.type === 'runinfo') {
+    const e = env.main();
+    if (!e) { env.post({ type: 'runinfo', id: m.id, seed: 0, done: false, feasible: [], costMult: [], wanderlust: 1, techDone: [] }); return; }
+    env.post({ type: 'runinfo', id: m.id, seed: e.seed, done: e.done, feasible: Array.from(e.feasible), costMult: Array.from(e.techCostMult), wanderlust: e.wanderlust, techDone: Array.from(e.st.techDone) });
+  } else if (m.type === 'table') {
     const e = env.stateAt(m.step), st = e.st;
     const ids: number[] = [];
     for (let n = 0; n < st.nSettled; n++) if (living(st.S[st.settled[n] * NF + F.stage])) ids.push(st.settled[n]);
