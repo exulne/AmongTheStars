@@ -214,7 +214,9 @@ let lookAsked = ''; // body:step of the last society look asked for
 
 function enterLevel(next: Level): void {
   views[level].group.visible = false;
+  const up = LEVELS.indexOf(next) < LEVELS.indexOf(level);
   level = next;
+  tooltip.hidden = true; // the thing it named is in the level we left
   const v = views[level];
   v.group.visible = true;
   sky.visible = level === 'galaxy' || level === 'local';
@@ -232,6 +234,12 @@ function enterLevel(next: Level): void {
   if (level === 'street' && matchMedia('(max-width: 40rem)').matches) inspector.el.classList.remove('open');
   // things inside a body mean nothing once we've left it; above the Local Group, this future is the subject
   if (!isMicro(level) && ctx.selected?.kind === 'thing' && MICRO_KIND.test(ctx.selected.ex ?? '')) select(level === 'multiverse' ? { kind: 'thing', ex: 'futu', id: sim.seed, name: '', pos: new THREE.Vector3() } : null);
+  // back up inside a body (from an atom to the cell, say): the card is this level's, not the deeper thing's
+  if (up && isMicro(level) && ctx.selected?.kind === 'thing' && MICRO_KIND.test(ctx.selected.ex ?? '')) {
+    const ex = MICRO_SELECT[level];
+    if (ex) select({ kind: 'thing', ex, id: 0, name: '', pos: new THREE.Vector3() });
+    else { select(null); if (micro.pid) { inspector.openPerson(micro.pid); inspector.el.classList.add('open'); } }
+  }
   if (isMicro(level) || level === 'multiverse') refreshPanels();
 }
 // a deep link into a person: the levels above them become where they live, once their life is read
