@@ -109,6 +109,21 @@ function resize(): void {
 }
 new ResizeObserver(resize).observe(canvas);
 
+// If frames stay slow (under ~40 fps for two seconds), render fewer pixels. Only ever steps down:
+// on a 60 Hz screen frame times can't show spare headroom, so stepping back up would oscillate.
+let pixelRatio = Math.min(window.devicePixelRatio, 2), frameEma = 1 / 60, slowFor = 0;
+function govern(dt: number): void {
+  if (document.hidden || flight || pixelRatio <= 1) return;
+  frameEma += (dt - frameEma) * 0.05;
+  slowFor = frameEma > 1 / 40 ? slowFor + dt : 0;
+  if (slowFor < 2) return;
+  pixelRatio = Math.max(1, pixelRatio - 0.5);
+  renderer.setPixelRatio(pixelRatio);
+  composer.setPixelRatio(pixelRatio);
+  resize();
+  slowFor = 0; frameEma = 1 / 60;
+}
+
 // ------------------------------------------------------------------ state
 
 const world = buildWorld();
@@ -801,6 +816,7 @@ let last = performance.now(), frame = 0;
 function loop(now: number): void {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  govern(dt);
   ctx.t += dt;
   motion += ((hovering ? 0 : 1) - motion) * (1 - Math.exp(-dt * 5));
   ctx.tm += dt * motion;
