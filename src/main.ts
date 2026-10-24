@@ -5,7 +5,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import './style.css';
-import { STAGE_NAMES, TECHS } from './sim/catalog.ts';
+import { EVENT_NAMES, STAGE_NAMES, TECHS } from './sim/catalog.ts';
 import { forecast, type Forecast } from './ml/forecaster.ts';
 import { fanFor, oddsHtml } from './ui/psychohistory.ts';
 import { SimClient, type HistoryMsg, type SimEvent, type StateMsg } from './sim/client.ts';
@@ -18,6 +18,7 @@ import { Search, type Hit } from './ui/search.ts';
 import { NOTABLE, Ticker, describe } from './ui/ticker.ts';
 import { Timeline } from './ui/timeline.ts';
 import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionCss, stageLegend, type ColorMode } from './view/colorModes.ts';
+import { StreetView } from './view/street.ts';
 import { GalaxyView, LocalView, LEVELS, PlanetView, SystemView, UniverseView, alive, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
 
 // ------------------------------------------------------------------ DOM
@@ -144,7 +145,7 @@ function govern(dt: number): void {
 
 const world = buildWorld();
 const sim = new SimClient();
-const ctx: Ctx = { world, snap: null, year: 0, camera, controls, system: 0, body: world.mars, selected: null, t: 0, tm: 0, colorBy: 'stage' };
+const ctx: Ctx = { world, snap: null, year: 0, camera, controls, system: 0, body: world.mars, selected: null, t: 0, tm: 0, colorBy: 'stage', city: 0 };
 let events: SimEvent[] = [];
 let history: HistoryMsg | null = null;
 
@@ -154,7 +155,9 @@ const views: Record<Level, View> = {
   local: new LocalView(world),
   system: new SystemView(),
   planet: new PlanetView(),
+  street: new StreetView((b, y, o, n) => sim.residents(b, y, o, n)),
 };
+const street = views.street as StreetView;
 const sky = makeSky(1, 7000);
 scene.add(sky);
 for (const v of Object.values(views)) { v.group.visible = false; scene.add(v.group); }
@@ -173,6 +176,7 @@ function enterLevel(next: Level): void {
   renderCrumbs();
   renderLegend();
   writeHash();
+  streetMood();
 }
 
 // ------------------------------------------------------------------ legend and colour modes
@@ -265,6 +269,7 @@ function crossfade(deeper: boolean): void {
 
 /** What the current level is "about", so the next level up can start the camera there. */
 function levelRef(l: Level): Ref {
+  if (l === 'street') return { kind: 'city', id: ctx.city };
   return l === 'planet' ? { kind: 'body', id: ctx.body } : l === 'system' ? { kind: 'system', id: ctx.system } : l === 'local' ? { kind: 'humanspace', id: 0 } : { kind: 'galaxy', id: 0, name: 'Milky Way' };
 }
 
@@ -311,6 +316,7 @@ function renderCrumbs(): void {
   const names: Record<Level, string> = {
     universe: 'Local Group', galaxy: 'Milky Way', local: 'Nearby stars',
     system: world.systems[ctx.system].name, planet: world.bodies[ctx.body].name,
+    street: ctx.city === 0 ? 'Capital' : `Settlement ${ctx.city}`,
   };
   const idx = LEVELS.indexOf(level);
   crumbsEl.innerHTML = LEVELS.slice(0, idx + 1)
@@ -334,6 +340,7 @@ function dive(p: Ref): void {
   else if (p.kind === 'humanspace') setLevel('local', p);
   else if (p.kind === 'system') setLevel('system', p, () => { ctx.system = p.id; });
   else if (p.kind === 'body') setLevel('planet', p, () => { ctx.body = p.id; ctx.system = world.bodies[p.id].system; });
+  else if (p.kind === 'city' && level === 'planet') setLevel('street', p, () => { ctx.city = p.id; });
 }
 
 function fetchHistory(): void {
@@ -400,7 +407,7 @@ canvas.addEventListener('wheel', (e) => {
   const keep = pull && v.locate(ctx, pull) ? pull : null;
   const sel = ctx.selected && v.locate(ctx, ctx.selected) ? ctx.selected : null;
   const p: Ref | null = (gesture && keep) || pickAt(e.clientX, e.clientY) || keep || sel;
-  if (!p || level === 'planet') return;
+  if (!p || level === 'street' || (level === 'planet' && p.kind !== 'city')) return;
   pull = p;
   const at = v.locate(ctx, p);
   const dd = v.diveDist(ctx, p);
@@ -445,12 +452,25 @@ canvas.addEventListener('pointermove', (e) => {
 canvas.addEventListener('click', (e) => {
   if (Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5) return;
   const p = pickAt(e.clientX, e.clientY);
-  if (p) select(p);
+  if (p?.kind === 'person') openResident(p.id);
+  else if (p) select(p);
+  else if (level === 'street') street.follow = -1;
 });
+
+/** A resident dot in the street view: their biography opens in the inspector. */
+function openResident(k: number): void {
+  const id = street.personId(k);
+  if (!id) return;
+  street.focus = k;
+  street.follow = k;
+  inspector.openPerson(id);
+  inspector.el.classList.add('open');
+}
 canvas.addEventListener('dblclick', (e) => {
   if (busy) return;
   const p = pickAt(e.clientX, e.clientY);
-  if (p) { select(p); dive(p); }
+  if (p?.kind === 'person') openResident(p.id);
+  else if (p) { select(p); dive(p); }
 });
 
 // ------------------------------------------------------------------ labels
@@ -535,6 +555,37 @@ function labelRef(t: EventTarget | null): Ref | undefined {
 labelsEl.addEventListener('click', (e) => { const ref = labelRef(e.target); if (ref) select(asPick(ref)); });
 labelsEl.addEventListener('dblclick', (e) => { const ref = labelRef(e.target); if (ref && !busy) { select(asPick(ref)); dive(ref); } });
 
+// ------------------------------------------------------------------ street mood
+
+/** War, plague, shortage or a golden age, read from the settlement and recent events, sets how busy the streets are. */
+function streetMood(): void {
+  if (level !== 'street' || !ctx.snap) return;
+  const b = ctx.body, S = ctx.snap.S, o = b * NF, era = ctx.snap.globals.era, g = runGen;
+  sim.events(ctx.year - 15, ctx.year, b, 40).then((evs) => {
+    if (g !== runGen || !ctx.snap) return;
+    const has = (n: string) => evs.some((e) => EVENT_NAMES[e.type] === n);
+    const war = era === 'War' || has('War');
+    const plague = era === 'Pandemic' || has('Plague');
+    const short = S[o + F.shortage] > 0.15 || has('Famine');
+    const happy = S[o + F.happiness], stab = S[o + F.stability];
+    let activity = 0.55 + 0.4 * Math.min(1, happy * stab * 1.6);
+    if (war) activity *= 0.55;
+    if (plague) activity *= 0.45;
+    if (era === 'Collapse') activity *= 0.5;
+    if (short) activity *= 0.8;
+    const leisure = era === 'Golden Age' || era === 'Renaissance' ? 0.7 : 0.2 + 0.3 * happy;
+    street.setMood({ activity, leisure, war, plague, queue: short, faith: S[o + F.culture] > 0 });
+  });
+  // the place's whole past, for monuments and ruins
+  sim.events(0, ctx.year, b, 400).then((evs) => {
+    if (g !== runGen) return;
+    const ever = (n: string) => evs.some((e) => EVENT_NAMES[e.type] === n && e.body === b);
+    const recent = (n: string) => evs.some((e) => EVENT_NAMES[e.type] === n && e.body === b && e.year > ctx.year - 80);
+    street.setHistory({ independence: ever('Independence'), speciation: ever('Speciation'), collapse: recent('Collapse') || era === 'Collapse' });
+    street.sync(ctx);
+  });
+}
+
 // ------------------------------------------------------------------ selection ring
 
 const ringEl = app.querySelector<HTMLElement>('.sel-ring')!;
@@ -575,6 +626,7 @@ function requestState(year: number): void {
     ctx.snap = m;
     views[level].sync(ctx);
     timeline.setEra(m.globals.era);
+    streetMood();
     refreshPanels();
     renderLegend();
     if (wanted !== ask) requestState(sim.years[wanted]);
@@ -715,7 +767,7 @@ function readHash(): { seed: number; year: number | null; sel: Pickable | null; 
   const h = location.hash.slice(1);
   const seed = Number(h.match(/future(\d+)/)?.[1]) || 0;
   const y = h.match(/(?:^|-)y(\d+)/);
-  const lv = h.match(/(?:^|-)l(universe|galaxy|local|system|planet)/)?.[1] as Level | undefined;
+  const lv = h.match(/(?:^|-)l(universe|galaxy|local|system|planet|street)/)?.[1] as Level | undefined;
   const r = h.match(/(?:^|-)([bsghc])(\d+)(?:\.(\d+))?(?=-|$)/);
   let sel: Pickable | null = null;
   if (r) {
@@ -724,7 +776,7 @@ function readHash(): { seed: number; year: number | null; sel: Pickable | null; 
     else if (r[1] === 's' && world.systems[id]) sel = asPick({ kind: 'system', id });
     else if (r[1] === 'g' && GALAXIES[id]) sel = { kind: 'galaxy', id, name: GALAXIES[id].name, pos: new THREE.Vector3() };
     else if (r[1] === 'h') sel = asPick({ kind: 'humanspace', id: 0 });
-    else if (r[1] === 'c' && world.bodies[id] && r[3]) { ctx.body = id; sel = { kind: 'city', id: Number(r[3]), name: `${world.bodies[id].name} settlement ${r[3]}`, pos: new THREE.Vector3() }; }
+    else if (r[1] === 'c' && world.bodies[id] && r[3]) { ctx.body = id; ctx.city = Number(r[3]); sel = { kind: 'city', id: Number(r[3]), name: `${world.bodies[id].name} settlement ${r[3]}`, pos: new THREE.Vector3() }; }
   }
   return { seed, year: y ? Math.min(10000, Number(y[1])) : null, sel, level: lv ?? null };
 }
@@ -766,7 +818,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key.length === 1 && /[\p{L}\p{N}#]/u.test(e.key)) { e.preventDefault(); search.focus(e.key); return; }
   if (e.code === 'Space') { e.preventDefault(); timeline.toggle(); }
   else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); timeline.step(e.key === 'ArrowRight' ? 1 : -1, e.shiftKey); }
-  else if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; else select(null); }
+  else if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; else if (level === 'street' && street.follow >= 0) street.follow = -1; else select(null); }
   else if (e.key === '/') { e.preventDefault(); search.focus(); }
   else if (e.key === '?') help.hidden = !help.hidden;
   else if (e.key === 'Enter' && ctx.selected && !(e.target instanceof HTMLButtonElement)) dive(ctx.selected);
