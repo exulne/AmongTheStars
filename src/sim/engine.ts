@@ -4,6 +4,7 @@
 
 import { ERA_FX, ERA_MATRIX, ERAS, EV, STAGE, STAGE_CAP, TECHS, type Tech } from './catalog.ts';
 import { F, GM, HIST_FIELDS, NF, NGM } from './metrics.ts';
+import { AGE_W, CREW_AGES, FERT_SHARE, GM_A0, GM_B0, GM_b0, MIGRANT_AGES, NAGE, binHazard, earthBins, infantHazard, lifeExpectancyBins, medianAge, tfrTransition } from './ages.ts';
 import { EFFECTS, compat, effectFor, effectSize, isAdd, isDown, spineField, FIELDS, type Field } from './invent.ts';
 import { FLOW, GENERATION, Ledger, NPERIODS, isPeriodBoundary, periodOf } from './ledger.ts';
 import { next, seedRng, type RngState } from './rng.ts';
@@ -53,6 +54,8 @@ export interface SimState {
   settled: Int32Array;     // body ids with a settlement, in founding order
   shipRetry: Float64Array; // per system: year before which a failed ship search is not retried
   gen: Float64Array;       // generated inventions, MAX_GEN × GC (see GC)
+  /** people per age bin (ages.ts), NAGE per settlement in founding order (settled[n] owns ages[n·NAGE..]) */
+  ages: Float64Array;
   nSettled: number;
   rng: RngState;
 }
@@ -64,8 +67,9 @@ interface Fx {
   productivity: number; death: number; growth: number; stability: number; hab: number; habHostile: number;
   reliability: number; war: number; secession: number; shipSpeed: number; voyage: number; fission: number;
   fusion: number; dyson: number; ftl: number; ftl2: number; probes: number; divergence: number; orbital: number;
+  gompB: number; gompb: number;
 }
-const MULT_KEYS = new Set(['extract', 'habitat', 'lifeSupport', 'energy', 'launch', 'research', 'productivity', 'death', 'growth', 'war', 'secession', 'voyage', 'divergence']);
+const MULT_KEYS = new Set(['extract', 'habitat', 'lifeSupport', 'energy', 'launch', 'research', 'productivity', 'death', 'growth', 'war', 'secession', 'voyage', 'divergence', 'gompB']);
 
 const RESEARCH = 10; // calibrates knowledge output to the tech tree's milestone years
 const SHIP_MIN_HAB = 0.15;
@@ -110,6 +114,11 @@ export class Engine {
   private migW: Float64Array; private migD: Float64Array;
   private recv: Float64Array; private sent: Float64Array; // per-body migration scratch, rebuilt every step // per-system scratch, rebuilt every step
   private swarmStamp: Int32Array; private sysLum: Float64Array; private tick = 0;
+  /** body → index in st.settled (and its age bins), -1 if never settled; derived, rebuilt on restore */
+  private pos: Int32Array;
+  private mu = new Float64Array(NAGE);
+  /** per body: this step's mortality law [A, B, b, under-5] for the people ledger (main run only) */
+  private mort: Float64Array;
 
   constructor(world: World, seed: number) {
     this.world = world;
@@ -138,6 +147,8 @@ export class Engine {
       this.sysX[i] = s.x; this.sysY[i] = s.y; this.sysZ[i] = s.z;
       this.sysRegion[i] = ({ sol: 0, local: 1, galaxy: 2, extra: 3 } as const)[s.region];
     });
+    this.pos = new Int32Array(nb).fill(-1);
+    this.mort = new Float64Array(nb * 4);
     this.nbr = neighbours(world);
     this.surveyCursor = this.nbr.start.slice();
 
@@ -171,8 +182,9 @@ export class Engine {
       step: 0, S, g: new Float64Array(NG), techProg: new Float64Array(TECHS.length),
       techDone: new Float64Array(TECHS.length).fill(-1), ships: new Float64Array(MAX_SHIPS * NSH),
       settled: new Int32Array(nb), nSettled: 0, rng, shipRetry: new Float64Array(this.world.systems.length),
-      gen: new Float64Array(MAX_GEN * NGC),
+      gen: new Float64Array(MAX_GEN * NGC), ages: new Float64Array(nb * NAGE),
     };
+    this.st = st;
     st.g[G.era] = 0;
     st.g[G.launchCap] = 5000;
     st.g[G.faiths] = 6;
@@ -183,6 +195,7 @@ export class Engine {
     S[e + F.capital] = 9.2e9 * 60000; S[e + F.stability] = 0.62; S[e + F.medianAge] = 34;
     S[e + F.gini] = 0.62; S[e + F.water] = 1e12; S[e + F.metals] = 1e10; S[e + F.volatiles] = 1e10; S[e + F.rare] = 1e7;
     S[e + F.he3] = 0; S[e + F.gdp] = 1.6e14; S[e + F.energy] = 2.3e13; S[e + F.capacity] = 1.15e10; S[e + F.food] = 1;
+    st.ages.set(earthBins(9.2e9), this.pos[W.earth] * NAGE);
     // the premise: first crew on Mars, an Artemis-era base on the Moon
     const moon = W.bodies.find((b) => b.name === 'Moon')!.id;
     this.found(st, W.mars, STAGE.OUTPOST, 12, W.earth, 0);
@@ -199,7 +212,9 @@ export class Engine {
 
   private found(st: SimState, body: number, stage: number, pop: number, parent: number, year: number): void {
     const S = st.S, o = body * NF;
-    if (S[o + F.stage] === STAGE.NONE) st.settled[st.nSettled++] = body;
+    if (S[o + F.stage] === STAGE.NONE) { this.pos[body] = st.nSettled; st.settled[st.nSettled++] = body; }
+    const ao = this.pos[body] * NAGE;
+    for (let k = 0; k < NAGE; k++) st.ages[ao + k] = pop * CREW_AGES[k];
     S[o + F.stage] = stage;
     S[o + F.pop] = pop;
     S[o + F.founded] = year;
@@ -209,7 +224,7 @@ export class Engine {
     S[o + F.stability] = 0.7;
     S[o + F.happiness] = 0.6;
     S[o + F.gini] = 0.25;
-    S[o + F.medianAge] = 31;
+    S[o + F.medianAge] = medianAge(st.ages, ao);
     S[o + F.capital] = Math.max(S[o + F.capital], pop * 4e5 + (stage >= STAGE.OUTPOST ? 2e9 : 1e8));
     S[o + F.water] = pop * 5; S[o + F.metals] = pop * 2; S[o + F.volatiles] = pop * 2;
     S[o + F.energyRatio] = 1;
@@ -219,12 +234,13 @@ export class Engine {
     const fx: Fx = {
       extract: 1, habitat: 1, lifeSupport: 1, energy: 1, launch: 1, research: 1, productivity: 1, death: 1, growth: 1,
       stability: 0, hab: 0, habHostile: 0, reliability: 0, war: 1, secession: 1, shipSpeed: 0, voyage: 1, fission: 0,
-      fusion: 0, dyson: 0, ftl: 0, ftl2: 0, probes: 0, divergence: 1, orbital: 0,
+      fusion: 0, dyson: 0, ftl: 0, ftl2: 0, probes: 0, divergence: 1, orbital: 0, gompB: 1, gompb: GM_b0,
     };
     TECHS.forEach((t: Tech, i) => {
       if (this.st.techDone[i] < 0) return;
       for (const [k, v] of Object.entries(t.fx) as [keyof Fx, number][]) {
         if (k === 'shipSpeed') fx.shipSpeed = Math.max(fx.shipSpeed, v);
+        else if (k === 'gompb') fx.gompb = Math.min(fx.gompb, v);
         else if (MULT_KEYS.has(k)) fx[k] *= v;
         else fx[k] += v;
       }
@@ -392,25 +408,66 @@ export class Engine {
       const short = Math.max(0, 1 - Math.min(food, energyOk));
       S[o + F.shortage] = short;
 
-      // people
+      // people: 12 age bins (ages.ts). Deaths are Σ N_x·μ_x from a Gompertz–Makeham law,
+      // births come from a total fertility rate that follows the demographic transition.
       const crowd = cap > 0 ? pop / cap : 2;
-      const bRate = (isEarth ? 0.011 : 0.016) * fx.growth * E.growth * (1 - short) * (0.6 + 0.8 * S[o + F.happiness]);
-      const dRate = (isEarth ? 0.0085 : 0.009) * fx.death * E.death * (1 + 4 * short * short + (1 - h) * 0.4) * (crowd > 1 ? 1 + (crowd - 1) * 2 : 1);
-      // logistic: near capacity, births settle to replace baseline deaths
-      const dBase = (isEarth ? 0.0085 : 0.009) * fx.death;
-      let births = pop * (bRate * Math.max(0, 1 - crowd) + dBase * Math.min(1, crowd) * (1 - short));
-      const deaths = pop * dRate;
-      if (stg === STAGE.OUTPOST) births *= 0.3; // rotating crews don't raise families
-      const sy = this.bSys[b];
-      const immig = recv[b] - sent[b];
-      void sy;
-      // exponential step: a 10-year step at a high crowding death rate must not overshoot zero
+      const N = st.ages, ao = this.pos[b] * NAGE;
+      {
+        // events, crews and ship arrivals change the head-count directly: keep the bins in step
+        let sum = 0;
+        for (let k = 0; k < NAGE; k++) sum += N[ao + k];
+        if (sum > 0 && Math.abs(sum - pop) > 1e-9 * pop) { const f = pop / sum; for (let k = 0; k < NAGE; k++) N[ao + k] *= f; }
+        else if (sum <= 0 && pop > 0) for (let k = 0; k < NAGE; k++) N[ao + k] = pop * CREW_AGES[k];
+      }
+      const gdppc = pop > 0 ? S[o + F.gdp] / pop : 0;
+      // mortality law: extrinsic risk A rises on hostile worlds (bible §1.14 radiation, ~0.003/yr
+      // unshielded), in famine and when overcrowded; medicine lowers B; only life extension moves b
+      const mA = GM_A0 * fx.death + 0.003 * (1 - h) + 0.04 * short * short + (crowd > 1 ? 0.02 * (crowd - 1) : 0);
+      const mB = GM_B0 * fx.gompB * Math.max(0.5, fx.death), mb = fx.gompb, mInf = infantHazard(gdppc);
+      const law = { A: mA, B: mB, b: mb, inf: mInf };
+      const mu = this.mu;
+      for (let k = 0; k < NAGE; k++) mu[k] = binHazard(k, law) * E.death;
+      this.mort[b * 4] = mA * E.death; this.mort[b * 4 + 1] = mB * E.death; this.mort[b * 4 + 2] = mb; this.mort[b * 4 + 3] = mInf * E.death;
+      // fertility: the transition (ages.ts) plus colonists who want children while there is room
+      // (colonial America TFR ≈ 7; bible §7.3 frontier growth ≈ 2.7%/yr; at TFR 1.6 + 2.5·(1 − N/K)
+      // a colony levels off near 80% of its room), pronatalism on an Earth that has emptied below
+      // 70% of its room (settles near half full), and fewer children past capacity
+      let tfr = tfrTransition(gdppc);
+      if (!isEarth) tfr += 2.5 * fx.growth * Math.max(0, 1 - crowd);
+      else tfr += 1.5 * Math.max(0, 1 - crowd / 0.7);
+      if (crowd > 1) tfr *= Math.max(0, (1.3 - crowd) / 0.3);
+      tfr *= E.growth * (1 - short) * (0.8 + 0.4 * S[o + F.happiness]);
+      if (stg === STAGE.OUTPOST) tfr *= 0.3; // rotating crews don't raise families
+      let births = 0;
+      for (let k = 2; k < 6; k++) births += 0.5 * N[ao + k] * tfr * FERT_SHARE[k] / AGE_W[k];
+      // implicit step, youngest bin first: N' (1 + dt (1/w + μ)) = N + dt·inflow. Exact
+      // bookkeeping (what leaves a bin enters the next), positive and stable for any dt.
       const pop0 = pop;
-      pop = Math.max(0, pop * Math.exp(pop > 0 ? ((births - deaths) / pop) * dt : 0) + immig * dt);
-      // the ledger gets every newcomer born here: compounding can add more than births·dt
-      this.ledger?.addBirths(b, Math.max(births * dt, pop - pop0 - immig * dt + deaths * dt));
-      if (pop > cap * 1.5) pop = cap * 1.5;
-      S[o + F.births] = births; S[o + F.deaths] = deaths; S[o + F.imports] = Math.max(0, immig) * 10;
+      let inflow = births, deathsDt = 0;
+      for (let k = 0; k < NAGE; k++) {
+        const out = k + 1 < NAGE ? 1 / AGE_W[k] : 0;
+        const n1 = (N[ao + k] + dt * inflow) / (1 + dt * (out + mu[k]));
+        deathsDt += dt * mu[k] * n1;
+        inflow = n1 * out;
+        N[ao + k] = n1;
+      }
+      // migrants arrive young, and leave from the working ages
+      const immig = (recv[b] - sent[b]) * dt;
+      if (immig > 0) for (let k = 0; k < NAGE; k++) N[ao + k] += immig * MIGRANT_AGES[k];
+      else if (immig < 0) {
+        let adults = 0;
+        for (let k = 2; k < 6; k++) adults += N[ao + k];
+        const f = adults > 0 ? Math.max(0, 1 + immig / adults) : 1;
+        for (let k = 2; k < 6; k++) N[ao + k] *= f;
+      }
+      pop = 0;
+      for (let k = 0; k < NAGE; k++) pop += N[ao + k];
+      this.ledger?.addBirths(b, births * dt);
+      if (pop > cap * 1.5) { const f = (cap * 1.5) / pop; for (let k = 0; k < NAGE; k++) N[ao + k] *= f; pop = cap * 1.5; }
+      const deaths = deathsDt / dt;
+      void pop0;
+      S[o + F.births] = births; S[o + F.deaths] = deaths; S[o + F.imports] = Math.max(0, immig / dt) * 10;
+      S[o + F.tfr] = tfr; S[o + F.lifeExp] = lifeExpectancyBins(mu); S[o + F.medianAge] = medianAge(N, ao);
 
       // economy
       const kpc = pop > 0 ? S[o + F.capital] / pop : 0;
@@ -433,8 +490,6 @@ export class Engine {
       S[o + F.happiness] = clamp01(0.25 + 0.4 * S[o + F.stability] + 0.25 * Math.min(1, gdp / Math.max(pop, 1) / 60000) - 0.4 * short + (this.rand() - 0.5) * 0.02);
       const giniT = 0.28 + (stg >= STAGE.CITY ? 0.12 : 0) + 0.15 * short + (isEarth ? 0.25 : 0) - fx.stability;
       S[o + F.gini] = clamp01(S[o + F.gini] + (giniT - S[o + F.gini]) * Math.min(1, 0.03 * dt));
-      const ageT = 16 + 22 * (dRate / (bRate + 0.002)) * (fx.death < 0.5 ? 2.2 : 1);
-      S[o + F.medianAge] += (Math.min(ageT, 160) - S[o + F.medianAge]) * Math.min(1, 0.05 * dt);
       const div0 = S[o + F.divergence];
       S[o + F.divergence] += dt * 0.0006 * fx.divergence * Math.pow(Math.abs(1 - this.bG[b]), 1.5) * (this.bSys[b] === 0 ? 0.4 : 1) * (isEarth ? 0 : 1);
       if (div0 < 1 && S[o + F.divergence] >= 1) this.log(EV.Speciation, b);
@@ -488,6 +543,8 @@ export class Engine {
         for (let n = 0; n < st.nSettled; n++) {
           const b = st.settled[n];
           fn(b, Math.max(0, Math.round(S[b * NF + F.pop])));
+          // the period's mortality law, so the census's deaths fall by age as the engine's did
+          if (S[b * NF + F.pop] > 0) this.ledger!.setMortality(b, p, this.mort[b * 4], this.mort[b * 4 + 1], this.mort[b * 4 + 2], this.mort[b * 4 + 3]);
         }
       });
     }
@@ -952,7 +1009,7 @@ export class Engine {
     const st = this.st, S = st.S, g = st.g, row = this.series.subarray(step * NGM, step * NGM + NGM);
     row.fill(0);
     const earth = this.world.earth;
-    let stabW = 0, happW = 0, giniW = 0, ageW = 0, shortP = 0, reach = 0;
+    let stabW = 0, happW = 0, giniW = 0, ageW = 0, shortP = 0, reach = 0, leW = 0, tfrW = 0;
     const systems = new Set<number>(), facs = new Set<number>();
     for (let n = 0; n < st.nSettled; n++) {
       const b = st.settled[n], o = b * NF, stg = S[o + F.stage];
@@ -969,12 +1026,14 @@ export class Engine {
       row[GM.rare] += S[o + F.rare]; row[GM.he3] += S[o + F.he3]; row[GM.military] += S[o + F.military];
       row[GM.divergence] = Math.max(row[GM.divergence], S[o + F.divergence]);
       stabW += S[o + F.stability] * pop; happW += S[o + F.happiness] * pop; giniW += S[o + F.gini] * pop; ageW += S[o + F.medianAge] * pop;
+      leW += S[o + F.lifeExp] * pop; tfrW += S[o + F.tfr] * pop;
       shortP += S[o + F.shortage] * pop;
       reach = Math.max(reach, this.world.systems[this.bSys[b]].dist);
     }
     const P = Math.max(row[GM.pop], 1);
     row[GM.systems] = systems.size; row[GM.factions] = facs.size; row[GM.reach] = reach;
     row[GM.stability] = stabW / P; row[GM.happiness] = happW / P; row[GM.gini] = giniW / P; row[GM.medianAge] = ageW / P;
+    row[GM.lifeExp] = leW / P; row[GM.tfr] = tfrW / P;
     row[GM.shortage] = (100 * shortP) / P;
     row[GM.kardashev] = row[GM.energy] > 0 ? (Math.log10(row[GM.energy]) - 6) / 10 : 0;
     row[GM.energyPerCap] = row[GM.energy] / P; row[GM.gdpPerCap] = row[GM.gdp] / P;
@@ -1007,7 +1066,7 @@ export class Engine {
     return {
       step: st.step, S: st.S.slice(), g: st.g.slice(), techProg: st.techProg.slice(), techDone: st.techDone.slice(),
       ships: st.ships.slice(0, st.g[G.nShips] * NSH), settled: st.settled.slice(0, st.nSettled), nSettled: st.nSettled, rng: st.rng.slice(),
-      shipRetry: st.shipRetry.slice(), gen: st.gen.slice(0, st.g[G.nGen] * NGC),
+      shipRetry: st.shipRetry.slice(), gen: st.gen.slice(0, st.g[G.nGen] * NGC), ages: st.ages.slice(0, st.nSettled * NAGE),
     };
   }
 
@@ -1019,7 +1078,10 @@ export class Engine {
       step: s.step, S: s.S.slice(), g: s.g.slice(), techProg: s.techProg.slice(), techDone: s.techDone.slice(),
       ships, settled, nSettled: s.nSettled, rng: s.rng.slice(), shipRetry: s.shipRetry.slice(),
       gen: (() => { const g = new Float64Array(MAX_GEN * NGC); g.set(s.gen); return g; })(),
+      ages: (() => { const a = new Float64Array(nb * NAGE); a.set(s.ages); return a; })(),
     };
+    this.pos.fill(-1);
+    for (let n = 0; n < s.nSettled; n++) this.pos[s.settled[n]] = n;
     this.rebuildPairs();
     this.surveyCursor = this.nbr.start.slice();
     this.recomputeFx();
