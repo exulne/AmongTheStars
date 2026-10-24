@@ -83,6 +83,10 @@ export interface Annals {
   wars: { id: number; name: string; a: number; b: number; polityA: number; polityB: number; start: number; end: number; cause: string; outcome: string; winner: number; killed: number; kinetic: boolean }[];
 }
 
+/** A technology's name inside a sentence: "fully reusable heavy lift", but "O'Neill cylinders". */
+const PROPER = /^(O'Neill|Dyson|Bishop|Bussard|Matrioshka|Alcubierre|Venus|Helium|Kardashev|Shkadov)/;
+const inSentence = (name: string) => (PROPER.test(name) ? name : name.charAt(0).toLowerCase() + name.slice(1));
+
 export class Chronicle {
   private e: Engine;
   private L: Lives;
@@ -177,7 +181,7 @@ export class Chronicle {
     switch (ev.type) {
       case EV.War: return this.warName(ev.b);
       case EV['Kinetic strike']: return `the strike on ${this.name(ev.body)}`;
-      case EV.Technology: return TECHS[ev.a].name;
+      case EV.Technology: return inSentence(TECHS[ev.a].name);
       case EV.Independence: return ev.b >= 0 && ev.b < this.e.st.hx.hg[HG.nPol] ? this.polityName(ev.b) : `the ${this.name(ev.body)} secession`;
       case EV['Regime change']: return `the ${this.name(ev.body)} ${REGIME_NAMES[ev.b % 16].toLowerCase()}`;
       case EV['New faith']: case EV.Schism: return this.faithName(ev.a);
