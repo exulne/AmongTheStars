@@ -37,6 +37,10 @@ button, select, input { font: inherit; color: inherit; }
 .intro p { margin: 0.35rem 0 0.6rem; font-size: 0.85rem; color: var(--quiet); }
 .crumbs { font-size: 0.85rem; display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: baseline; }
 .crumbs .sep { color: var(--quiet); }
+.here { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.5rem; font-size: 0.75rem; color: var(--quiet); font-style: italic; }
+.here[hidden] { display: none; }
+.here canvas { width: 64px; height: 64px; flex: none; }
+@media (max-width: 40rem) { .here canvas { width: 40px; height: 40px; } .here { margin-top: 0.2rem; } }
 .crumbs [aria-current] { color: var(--accent); }
 .run { display: flex; gap: 0.6rem; align-items: baseline; font-size: 0.85rem; flex-wrap: wrap; justify-content: flex-end; margin-right: min(23rem, 34vw); text-shadow: 0 0 10px #000; }
 .run input { width: 5.5em; background: transparent; border: 0; border-bottom: 1px solid var(--rule); padding: 0 0.2em; font-size: 0.85rem; border-radius: 0; }
