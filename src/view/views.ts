@@ -28,6 +28,7 @@ export interface Ctx {
   body: number;     // focused body
   selected: Pickable | null;
   t: number;        // seconds since start
+  tm: number;       // motion clock: orbits and spin; slows to a stop while hovering a thing so it can be clicked
   colorBy: ColorMode;
 }
 
@@ -600,7 +601,7 @@ export class SystemView implements View {
   }
 
   frame(ctx: Ctx): void {
-    const yr = ctx.year + ctx.t * 0.04;
+    const yr = ctx.year + ctx.tm * 0.04;
     for (const v of this.vis) {
       const b = ctx.world.bodies[v.id];
       if (v.parent < 0) {
@@ -611,13 +612,13 @@ export class SystemView implements View {
         const ang = v.phase + (2 * Math.PI * yr * 365) / Math.max(b.period, 0.5) / 40;
         v.mesh.position.set(pv.mesh.position.x + Math.cos(ang) * v.orbitR, 0, pv.mesh.position.z - Math.sin(ang) * v.orbitR);
       }
-      v.mesh.rotation.y = ctx.t * 0.1;
+      v.mesh.rotation.y = ctx.tm * 0.1;
       const sun = v.mesh.position.clone().negate().normalize();
       (v.mesh.material as THREE.ShaderMaterial).uniforms.uSun.value.copy(sun);
       (v.mesh.material as THREE.ShaderMaterial).uniforms.uTime.value = ctx.t;
       v.marker.position.copy(v.mesh.position);
     }
-    if (this.swarm) this.swarm.pts.rotation.y = ctx.t * 0.03;
+    if (this.swarm) this.swarm.pts.rotation.y = ctx.tm * 0.03;
   }
 
   pickables(ctx: Ctx): Pickable[] {
@@ -753,9 +754,9 @@ export class PlanetView implements View {
   }
 
   frame(ctx: Ctx): void {
-    this.pivot.rotation.y = ctx.t * 0.02;
+    this.pivot.rotation.y = ctx.tm * 0.02;
     (this.planet.material as THREE.ShaderMaterial).uniforms.uTime.value = ctx.t;
-    if (this.habitats) this.habitats.rotation.y = ctx.t * 0.015;
+    if (this.habitats) this.habitats.rotation.y = ctx.tm * 0.015;
     if (this.cities) (this.cities.pts.material as THREE.ShaderMaterial).uniforms.uOpacity.value = 0.7 + 0.3 * Math.sin(ctx.t * 1.5);
   }
 

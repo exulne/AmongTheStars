@@ -110,7 +110,7 @@ new ResizeObserver(resize).observe(canvas);
 
 const world = buildWorld();
 const sim = new SimClient();
-const ctx: Ctx = { world, snap: null, year: 0, camera, controls, system: 0, body: world.mars, selected: null, t: 0, colorBy: 'stage' };
+const ctx: Ctx = { world, snap: null, year: 0, camera, controls, system: 0, body: world.mars, selected: null, t: 0, tm: 0, colorBy: 'stage' };
 let events: SimEvent[] = [];
 let history: HistoryMsg | null = null;
 
@@ -359,8 +359,11 @@ function pickAt(x: number, y: number): Pickable | null {
 }
 let downAt = { x: 0, y: 0 };
 canvas.addEventListener('pointerdown', (e) => { downAt = { x: e.clientX, y: e.clientY }; });
+let hovering = false, motion = 1;
+canvas.addEventListener('pointerleave', () => { hovering = false; tooltip.hidden = true; });
 canvas.addEventListener('pointermove', (e) => {
   const p = pickAt(e.clientX, e.clientY);
+  hovering = !!p;
   tooltip.hidden = !p;
   if (p) { tooltip.textContent = p.name; tooltip.style.transform = `translate(${e.clientX + 14}px, ${e.clientY + 10}px)`; }
   canvas.style.cursor = p ? 'pointer' : '';
@@ -633,6 +636,8 @@ function loop(now: number): void {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   ctx.t += dt;
+  motion += ((hovering ? 0 : 1) - motion) * (1 - Math.exp(-dt * 5));
+  ctx.tm += dt * motion;
   timeline.tick(dt);
   if (flight) stepFlight(dt);
   else {
