@@ -852,68 +852,9 @@ export class Engine {
   }
 
   private politics(dt: number, year: number, eraWar: number): void {
-    const st = this.st, S = st.S, fx = this.fx;
-    // independence
-    for (let n = 0; n < st.nSettled; n++) {
-      const b = st.settled[n], o = b * NF, stg = S[o + F.stage];
-      if (stg < STAGE.COLONY || stg > STAGE.MEGA || S[o + F.faction] === b) continue;
-      const lag = this.lagToCapital(b);
-      const sol = this.bSys[b] === 0;
-      const p = dt * fx.secession * (1 - S[o + F.stability]) * (sol ? (S[o + F.pop] > 1e6 ? 0.008 : 0) : 0.012 * Math.sqrt(lag / 5));
-      if (this.rand() < p) {
-        const old = S[o + F.faction];
-        // the colony and everything it founded leave together
-        for (let m = 0; m < st.nSettled; m++) {
-          const c = st.settled[m];
-          if (c === b || (S[c * NF + F.faction] === old && this.isDescendant(c, b))) S[c * NF + F.faction] = b;
-        }
-        this.log(EV.Independence, b, old);
-      }
-    }
-    // war: only between factions that share a star system (light-lag under a day)
-    const sysFac = new Map<number, number[]>();
-    for (let n = 0; n < st.nSettled; n++) {
-      const b = st.settled[n], o = b * NF;
-      if (S[o + F.stage] < STAGE.OUTPOST || S[o + F.stage] > STAGE.MEGA) continue;
-      const f = S[o + F.faction], s = this.bSys[b];
-      const l = sysFac.get(s);
-      if (!l) sysFac.set(s, [f]);
-      else if (!l.includes(f)) l.push(f);
-    }
-    const contested: number[][] = [];
-    let rivals = 0;
-    for (const l of sysFac.values()) if (l.length > 1) { contested.push(l); rivals += l.length - 1; }
-    st.g[G.rivals] = rivals;
-    if (!rivals) return;
-    const pWar = dt * 0.004 * eraWar * fx.war * Math.sqrt(Math.min(rivals, 16));
-    if (this.rand() < pWar) {
-      const l = contested[Math.floor(this.rand() * contested.length)];
-      const i = Math.floor(this.rand() * l.length);
-      const a = l[i], bF = l[(i + 1 + Math.floor(this.rand() * (l.length - 1))) % l.length];
-      st.g[G.wars]++;
-      const sev = 0.02 + this.rand() * 0.2;
-      for (let n = 0; n < st.nSettled; n++) {
-        const c = st.settled[n], o = c * NF;
-        const f = S[o + F.faction];
-        if ((f !== a && f !== bF) || S[o + F.stage] < STAGE.OUTPOST || S[o + F.stage] > STAGE.MEGA) continue;
-        if (this.dist(c, a) > 25 && fx.ftl === 0) continue;
-        const k = sev * (0.5 + this.rand());
-        S[o + F.pop] *= 1 - k; S[o + F.capital] *= 1 - k; S[o + F.stability] = Math.max(0, S[o + F.stability] - 0.15);
-        if (S[o + F.stage] <= STAGE.BASE && this.rand() < sev) {
-          S[o + F.stage] = STAGE.DEAD; S[o + F.pop] = 0; st.g[G.dead]++;
-        }
-      }
-      this.log(EV.War, a, bF, sev);
-    }
-  }
-
-  private isDescendant(c: number, root: number): boolean {
-    const S = this.st.S;
-    for (let k = 0; k < 64 && c >= 0; k++) {
-      if (c === root) return true;
-      c = S[c * NF + F.parent];
-    }
-    return false;
+    // independence, wars with causes and outcomes, grudges, effects at light speed (polity.ts)
+    const r = this.civ.pol.step(dt, year, eraWar);
+    this.st.g[G.rivals] = r.rivals; this.st.g[G.wars] += r.wars; this.st.g[G.dead] += r.dead;
   }
 
   private globalEvents(dt: number, year: number): void {

@@ -9,6 +9,7 @@ import { EV, STAGE, TECHS } from './catalog.ts';
 import { F, NF } from './metrics.ts';
 import { NPERIODS } from './ledger.ts';
 import type { Engine } from './engine.ts';
+import { Politics } from './polity.ts';
 
 // ---------------------------------------------------------------- per-settlement columns
 
@@ -18,6 +19,9 @@ export const H = {
   disaster: 7,    // year of the last disaster of any kind
   // nudges read by the engine next step (1 = no effect)
   mGrowth: 8, mLaunch: 9, mResearch: 10, mDiv: 11, mSecede: 12,
+  indep: 13,      // on a faction's capital: year it declared independence
+  indepFrom: 14,  // ... and the faction it left
+  lastWar: 15,    // year this settlement last saw fighting
 } as const;
 export const NH = 40;
 
@@ -44,30 +48,51 @@ export const FAITH_CAUSE = { DRIFT: 0, PLAGUE: 1, FAR: 2, BODY: 3, HUNGER: 4, SC
 const MILESTONES = [3, 10, 30, 100, 300];
 
 // global slots
-export const HG = { nFaith: 0, living: 1 } as const;
+export const HG = { nFaith: 0, living: 1, nWar: 2, nGrudge: 3, nPend: 4 } as const;
 const NHG = 64;
+
+// ---------------------------------------------------------------- wars, grudges, effects in flight
+
+/** The war log: every war ever, one row each (outcome -1 while it lasts). */
+export const WC = {
+  a: 0, b: 1, sys: 2, start: 3, end: 4, cause: 5, kind: 6, outcome: 7, winner: 8, front: 9, target: 10,
+  sev: 11, killed: 12, energy: 13, from: 14, speed: 15, mass: 16, fA: 17, fB: 18, indep: 19,
+} as const;
+export const NWC = 20;
+export const MAX_WAR = 4096;
+export const WAR_CAUSE = { RESOURCES: 0, FAITH: 1, INDEPENDENCE: 2, GRUDGE: 3 } as const;
+export const WAR_KIND = { LOCAL: 0, KINETIC: 1 } as const;
+export const OUTCOME = { ONGOING: -1, PEACE: 0, ANNEX: 1, REPARATIONS: 2 } as const;
+export const MAX_GRUDGE = 1024; // rows of (factionA < factionB, value)
+export const MAX_PEND = 2048;   // rows of (year, body, kind, magnitude, war)
+export const PEND = { MOBILIZE: 0, STRIKE: 1 } as const;
 
 export interface CivState {
   H: Float64Array;
   faith: Float64Array;
   hg: Float64Array;
+  war: Float64Array;
+  grudge: Float64Array;
+  pend: Float64Array;
 }
 
 export function cloneCiv(s: CivState): CivState {
-  return { H: s.H.slice(), faith: s.faith.slice(), hg: s.hg.slice() };
+  return { H: s.H.slice(), faith: s.faith.slice(), hg: s.hg.slice(), war: s.war.slice(), grudge: s.grudge.slice(), pend: s.pend.slice() };
 }
 export function civParts(s: CivState): [string, ArrayLike<number>][] {
-  return [['hx.H', s.H], ['hx.faith', s.faith.subarray(0, s.hg[HG.nFaith] * NFC)], ['hx.hg', s.hg]];
+  return [['hx.H', s.H], ['hx.faith', s.faith.subarray(0, s.hg[HG.nFaith] * NFC)], ['hx.hg', s.hg],
+    ['hx.war', s.war.subarray(0, s.hg[HG.nWar] * NWC)], ['hx.grudge', s.grudge.subarray(0, s.hg[HG.nGrudge] * 3)], ['hx.pend', s.pend.subarray(0, s.hg[HG.nPend] * 5)]];
 }
 
 const TECH_INDEX = new Map(TECHS.map((t, i) => [t.id, i]));
 const LIVING = (s: number) => s >= STAGE.OUTPOST && s <= STAGE.MEGA;
 
 export class Civ {
-  private e: Engine;
-  private log: (type: number, body: number, a?: number, b?: number) => void;
-  private bSys: Int32Array;
-  private sysDist: Float64Array;
+  e: Engine;
+  log: (type: number, body: number, a?: number, b?: number) => void;
+  bSys: Int32Array;
+  sysDist: Float64Array;
+  pol: Politics;
   private sx: Float64Array; private sy: Float64Array; private sz: Float64Array;
   private P = new Float64Array(5);
   private worlds = new Float64Array(MAX_FAITH);
@@ -81,28 +106,32 @@ export class Civ {
     this.bSys = Int32Array.from(w.bodies, (b) => b.system);
     this.sysDist = Float64Array.from(w.systems, (s) => s.dist);
     this.sx = Float64Array.from(w.systems, (s) => s.x); this.sy = Float64Array.from(w.systems, (s) => s.y); this.sz = Float64Array.from(w.systems, (s) => s.z);
+    this.pol = new Politics(this);
   }
 
   init(nb: number): CivState {
     const H0 = new Float64Array(nb * NH);
     for (let b = 0; b < nb; b++) this.blank(H0, b);
-    return { H: H0, faith: new Float64Array(MAX_FAITH * NFC), hg: new Float64Array(NHG) };
+    return { H: H0, faith: new Float64Array(MAX_FAITH * NFC), hg: new Float64Array(NHG), war: new Float64Array(MAX_WAR * NWC), grudge: new Float64Array(MAX_GRUDGE * 3), pend: new Float64Array(MAX_PEND * 5) };
   }
 
   private blank(Hh: Float64Array, b: number): void {
     const o = b * NH;
     Hh.fill(0, o, o + NH);
     Hh[o + H.fa0] = Hh[o + H.fa1] = Hh[o + H.fa2] = -1;
-    Hh[o + H.plague] = Hh[o + H.disaster] = -1e9;
+    Hh[o + H.plague] = Hh[o + H.disaster] = Hh[o + H.indep] = Hh[o + H.lastWar] = -1e9;
+    Hh[o + H.indepFrom] = -1;
     Hh[o + H.mGrowth] = Hh[o + H.mLaunch] = Hh[o + H.mResearch] = Hh[o + H.mDiv] = Hh[o + H.mSecede] = 1;
   }
 
-  private get X(): CivState { return this.e.st.hx; }
-  private has(id: string, year = Infinity): boolean { const d = this.e.st.techDone[TECH_INDEX.get(id)!]; return d >= 0 && d <= year; }
+  get X(): CivState { return this.e.st.hx; }
+  has(id: string, year = Infinity): boolean { const d = this.e.st.techDone[TECH_INDEX.get(id)!]; return d >= 0 && d <= year; }
   sysDistLy(a: number, b: number): number {
     const s1 = this.bSys[a], s2 = this.bSys[b];
     return Math.hypot(this.sx[s1] - this.sx[s2], this.sy[s1] - this.sy[s2], this.sz[s1] - this.sz[s2]);
   }
+  /** how warlike a faction's government makes it (1 = neutral) */
+  warMul(f: number): number { void f; return 1; }
   /** a per-settlement multiplier (column of H) for the engine */
   mul(b: number, col: number): number { return this.X.H[b * NH + col]; }
 
@@ -134,7 +163,7 @@ export class Civ {
 
   // ---------------------------------------------------------------- faiths
 
-  private slots(b: number): [number, number][] {
+  slots(b: number): [number, number][] {
     const Hh = this.X.H, o = b * NH, out: [number, number][] = [];
     for (let k = 0; k < 3; k++) if (Hh[o + 2 * k] >= 0) out.push([Hh[o + 2 * k], Hh[o + 2 * k + 1]]);
     return out;
@@ -241,6 +270,9 @@ export class Civ {
     sl[i][1] -= half;
     sl.push([n, half]);
     this.setSlots(b, sl);
+    // a split across a border is a grievance between the two governments
+    const S = this.e.st.S, fb = S[b * NF + F.faction], fh = S[X.faith[src + FC.home] * NF + F.faction];
+    if (fb !== fh) this.pol.addGrudge(fb, fh, 0.7);
     this.log(EV.Schism, b, n, f);
     return true;
   }
