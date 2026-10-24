@@ -69,7 +69,7 @@ export class MoleculeView implements View {
     this.R = Math.max(6, ...mol.atoms.map((a, k) => (a.mol < 0 ? this.pos[k].length() : 0))) + 3;
     addLights(this.group, this.R);
     const n = mol.atoms.length;
-    const balls = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 3), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.38, metalness: 0.05, emissive: 0x0c0c0c }), n);
+    const balls = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 2), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.38, metalness: 0.05, emissive: 0x0c0c0c }), n);
     const mtx = new THREE.Matrix4(), col = new THREE.Color(), dim = new THREE.Color(0x0a0c12);
     const vac: THREE.Vector3[] = [];
     mol.atoms.forEach((a, k) => {
