@@ -53,6 +53,9 @@ export class SimClient {
     });
   }
 
+  residents(body: number, year: number, offset: number, count: number) { return this.ask<Msg<'residents'>>({ type: 'residents', body, year, offset, count }); }
+  person(person: string, year: number) { return this.ask<Msg<'person'>>({ type: 'person', person, year }); }
+  residentAt(body: number, year: number, k: number) { return this.ask<Msg<'residentAt'>>({ type: 'residentAt', body, year, k }); }
   state(step: number) { return this.ask<StateMsg>({ type: 'state', step }); }
   history(body: number) { return this.ask<HistoryMsg>({ type: 'history', body }); }
   events(fromYear: number, toYear: number, body?: number, limit?: number) {

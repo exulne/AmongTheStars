@@ -5,6 +5,7 @@
 import { EV } from './catalog.ts';
 import { Engine, type SimState } from './engine.ts';
 import { HIST_FIELDS, NGM } from './metrics.ts';
+import { Lives, type Biography, type PersonBrief } from './lives.ts';
 import { buildWorld } from './world.ts';
 
 const SNAP_EVERY = 20;
@@ -15,25 +16,38 @@ export type ToWorker =
   | { type: 'run'; seed: number }
   | { type: 'state'; id: number; step: number }
   | { type: 'history'; id: number; body: number }
-  | { type: 'events'; id: number; fromYear: number; toYear: number; body?: number; limit?: number };
+  | { type: 'events'; id: number; fromYear: number; toYear: number; body?: number; limit?: number }
+  | { type: 'residents'; id: number; body: number; year: number; offset: number; count: number }
+  | { type: 'person'; id: number; person: string; year: number }
+  | { type: 'residentAt'; id: number; body: number; year: number; k: number };
 
 export type FromWorker =
   | { type: 'progress'; seed: number; step: number; years: number[]; series: Float64Array; done: boolean; ms: number }
   | { type: 'state'; id: number; step: number; S: Float64Array; techDone: Float64Array; ships: ReturnType<Engine['shipList']>; globals: ReturnType<Engine['globals']>; settled: Int32Array }
   | { type: 'history'; id: number; body: number; steps: number[]; cols: Record<string, number[]> }
-  | { type: 'events'; id: number; events: Engine['events'] };
+  | { type: 'events'; id: number; events: Engine['events'] }
+  | { type: 'residents'; id: number; pending?: boolean; total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] }
+  | { type: 'person'; id: number; pending?: boolean; bio: Biography | null }
+  | { type: 'residentAt'; id: number; pending?: boolean; person: string | null };
 
 const world = buildWorld();
 let main: Engine | null = null;
 let replay: Engine | null = null;
 let snaps: SimState[] = [];
 let runToken = 0;
+let lives: Lives | null = null;
+/** People need the whole ledger (and every event) of the run, so they wait for it to finish. */
+function people(): Lives | null {
+  if (!main || !main.done) return null;
+  return (lives ??= new Lives(main));
+}
 
 const post = (m: FromWorker, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage(m, transfer);
 
 function run(seed: number): void {
   const token = ++runToken;
   main = new Engine(world, seed);
+  lives = null;
   replay = new Engine(world, seed);
   replay.logEvents = false;
   snaps = [main.snapshot()];
@@ -87,6 +101,16 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
       HIST_FIELDS.forEach((f, k) => cols[f].push(main!.hist[i * w + 2 + k]));
     }
     post({ type: 'history', id: m.id, body: m.body, steps, cols });
+  } else if (m.type === 'residents') {
+    const L = people();
+    if (!L) post({ type: 'residents', id: m.id, pending: true, total: 0, asOf: m.year, offset: 0, people: [], pyramid: [] });
+    else post({ type: 'residents', id: m.id, ...L.residents(m.body, m.year, m.offset, m.count) });
+  } else if (m.type === 'person') {
+    const L = people();
+    post({ type: 'person', id: m.id, pending: !L, bio: L ? L.biography(m.person, m.year) : null });
+  } else if (m.type === 'residentAt') {
+    const L = people();
+    post({ type: 'residentAt', id: m.id, pending: !L, person: L ? L.residentAt(m.body, m.year, m.k) : null });
   } else if (m.type === 'events' && main) {
     const out: Engine['events'] = [];
     const limit = m.limit ?? 200;
