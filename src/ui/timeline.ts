@@ -34,7 +34,7 @@ export class Timeline {
         <div class="tl-ticks" aria-hidden="true"></div>
       </div>
       <div class="tl-eras" aria-label="Era colours">${eraLegend()}</div>`;
-    this.input = this.el.querySelector('input')!;
+    this.input = this.el.querySelector<HTMLInputElement>('input[type=range]')!;
     this.band = this.el.querySelector('canvas')!;
     this.yearEl = this.el.querySelector('.tl-big')!;
     this.subEl = this.el.querySelector('.tl-sub')!;
