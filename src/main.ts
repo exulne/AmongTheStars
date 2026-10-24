@@ -14,9 +14,14 @@ import { GALAXIES, buildWorld } from './sim/world.ts';
 import { ChartStrip, globalSeries, type Series } from './ui/charts.ts';
 import { fmtNum, fmtYear, parseCount } from './ui/format.ts';
 import { Inspector } from './ui/inspector.ts';
+import { installDataDesk } from './ui/dataDesk.ts';
+import { STAMP_CODE } from './ui/stamp.ts';
 import { Search, type Hit } from './ui/search.ts';
 import { NOTABLE, Ticker, describe } from './ui/ticker.ts';
 import { Timeline } from './ui/timeline.ts';
+import { LocalCalendar } from './ui/calendar.ts';
+import { EraBanner, eraRun, eraTitle } from './ui/eraBanner.ts';
+import { EraMood } from './view/eraMood.ts';
 import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionCss, stageLegend, type ColorMode } from './view/colorModes.ts';
 import { StreetView } from './view/street.ts';
 import { Picker } from './explain/picker.ts';
@@ -44,6 +49,8 @@ app.innerHTML = `
       <label for="seed">Future #</label><input id="seed" inputmode="numeric" value="1" size="6">
       <button id="reroll" class="link" type="button">Another future</button>
       <button id="chronicle" class="link" type="button">Chronicle</button>
+      <button id="data" class="link" type="button" aria-pressed="false">Data</button>
+      <a id="starship" class="link" href="ship.html" title="Fly there yourself in the Starship, in this year">Fly the Starship</a>
       <span class="status num" aria-live="polite"></span>
     </div>
   </header>
@@ -103,6 +110,9 @@ const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.7, 0.5, 0.55);
 composer.addPass(bloom);
+// the era tints the whole picture: grey and stuttering in a collapse, warm in a golden age
+const eraMood = new EraMood(bloom);
+composer.addPass(eraMood.pass);
 composer.addPass(new OutputPass());
 
 function resize(): void {
@@ -149,9 +159,19 @@ function govern(dt: number): void {
 
 const world = buildWorld();
 const sim = new SimClient();
+const eraBanner = new EraBanner();
+app.append(eraBanner.el);
+const calendar = new LocalCalendar(world, (a, b, c, d) => sim.events(a, b, c, d));
+timeline.local = (y) => calendar.text(y);
+calendar.onChange = () => timeline.refresh();
 const ctx: Ctx = { world, snap: null, year: 0, camera, controls, system: 0, body: world.mars, selected: null, t: 0, tm: 0, colorBy: 'stage', city: 0 };
 let events: SimEvent[] = [];
 let history: HistoryMsg | null = null;
+const dataPanel = installDataDesk({
+  app, scene: canvas, world, sim, ctx, view: () => views[level],
+  selectBody: (b) => select(asPick({ kind: 'body', id: b })),
+  showSeries: (key) => { if (charts.el.hidden) chartsToggle.click(); charts.show(key); },
+});
 
 const views: Record<Level, View> = {
   universe: new UniverseView(world),
@@ -710,7 +730,7 @@ function requestState(year: number): void {
     lastStep = m.step;
     ctx.snap = m;
     views[level].sync(ctx);
-    timeline.setEra(m.globals.era);
+    showEra(m);
     streetMood();
     renderHere();
     refreshPanels();
@@ -718,6 +738,14 @@ function requestState(year: number): void {
     if (wanted !== ask) requestState(sim.years[wanted]);
     else refreshEvents();
   });
+}
+
+/** The era now: its name (counted, "Third Expansion") on the timeline, its grade on the picture, a banner when it turns. */
+function showEra(m: StateMsg): void {
+  const r = eraRun(sim.years, (i) => sim.series[i * NGM + GM.era], m.step);
+  timeline.setEra(eraTitle(r));
+  eraMood.setEra(m.globals.era);
+  eraBanner.show(r);
 }
 
 let evTimer = 0;
@@ -759,7 +787,24 @@ function refreshForecast(): void {
 timeline.onToggle = (playing) => { if (!playing) refreshForecast(); };
 charts.setFan((key) => (fcOn && fc ? fanFor(fc, key) : null));
 
+/** The Starship link carries the selected real world (the ship knows the Solar System and the real
+ *  nearby stars) and the current year, as a spoken-style order in the hash. */
+const shipLink = app.querySelector<HTMLAnchorElement>('#starship');
+function updateShipLink(): void {
+  if (!shipLink) return;
+  const sel = ctx.selected;
+  let place = '';
+  if (sel?.kind === 'body') {
+    const b = world.bodies[sel.id], sys = world.systems[b.system];
+    place = sys.id === 0 ? b.name : sys.real ? sys.name : '';
+  } else if (sel?.kind === 'system' && world.systems[sel.id].real) place = world.systems[sel.id].name;
+  const yearCal = Math.round(2040 + ctx.year);
+  const order = place ? `take me to ${place} in the year ${yearCal}` : `go to the year ${yearCal}`;
+  shipLink.href = `ship.html#${order.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+}
+
 function refreshPanels(): void {
+  updateShipLink();
   const step = Math.max(0, sim.stepAt(ctx.year));
   const row = (col: number) => sim.series[step * NGM + col];
   inspector.render({
@@ -768,6 +813,9 @@ function refreshPanels(): void {
     forecast: fcOn && fc ? oddsHtml(fc, (k) => row(GM[k])) : undefined,
   });
   charts.setYear(ctx.year);
+  const sel = ctx.selected, place = sel?.kind === 'body' ? sel.id : sel?.kind === 'city' || level === 'planet' || level === 'street' ? ctx.body : -1;
+  calendar.place(ctx.snap, place, ctx.year, sim.years[sim.frontier] ?? 0);
+  dataPanel.refresh();
 }
 
 charts.setSource((key): Series | null => {
@@ -843,7 +891,7 @@ function writeHash(): void {
     const sel = ctx.selected;
     const parts = [`future${sim.seed}`, `y${Math.round(ctx.year)}`];
     if (sel) parts.push(sel.kind === 'city' ? `c${ctx.body}.${sel.id}` : sel.kind === 'thing' ? `x${sel.ex}.${sel.id}` : `${REF_CODE[sel.kind]}${sel.id}`);
-    parts.push(`l${level}`);
+    parts.push(`l${level}`, STAMP_CODE);
     // replaceState so scrubbing doesn't flood the back button
     try { window.history.replaceState(null, '', `#${parts.join('-')}`); } catch { /* sandboxed frames may refuse */ }
   }, 400);
@@ -876,6 +924,7 @@ function startRun(seed: number): void {
   resetShips();
   ctx.snap = null; lastStep = -1; wanted = -1; inFlight = false; events = []; history = null; fc = null;
   ticker.clear(); tickFrom = 0;
+  eraBanner.reset(); calendar.reset();
   sim.run(seed);
   timeline.set(0);
   ctx.year = 0;
@@ -1044,6 +1093,7 @@ function loop(now: number): void {
   }
   views[level].frame(ctx, dt);
   sky.position.copy(camera.position);
+  eraMood.frame(dt, ctx.t, camera.aspect);
   composer.render();
   hover(now);
   if (frame++ % 2 === 0) drawLabels();

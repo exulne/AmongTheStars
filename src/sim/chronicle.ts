@@ -13,6 +13,8 @@ import type { Engine, SimEvent } from './engine.ts';
 import { FLOW, isShipBody, periodOf } from './ledger.ts';
 import type { Lives } from './lives.ts';
 import { hash01 } from './rng.ts';
+import { FAITH_CAUSE, FC, HG, NFC, NWC, OUTCOME, TENET_TEXT, WAR_CAUSE, WAR_KIND, WC } from './civ.ts';
+import { megatons } from './polity.ts';
 
 export type Seg = string | { t: string; kind: 'person' | 'body'; id: string | number };
 export interface Entry { year: number; type: number; segs: Seg[]; people: string[]; places: number[]; weight: number }
@@ -21,14 +23,29 @@ const MAJOR = new Set([
   EV.Technology, EV['Colony founded'], EV['Ship launched'], EV['Ship arrived'], EV['Ship lost'], EV.Independence, EV.War,
   EV['New faith'], EV.Speciation, EV['Megastructure complete'], EV['Era change'], EV['First contact'], EV['Dark forest strike'],
   EV['Gamma-ray burst'], EV.Supernova, EV.Plague, EV['Asteroid strike'], EV.Collapse, EV['Mutiny in transit'], EV['AI schism'], EV['Kessler cascade'],
-  EV.Invention, EV['No-go theorem'],
+  EV.Invention, EV['No-go theorem'], EV.Schism, EV['Faith extinct'], EV['Faith spreads'], EV.Treaty, EV['Kinetic strike'],
 ]);
 const WEIGHT: Partial<Record<number, number>> = {
   [EV['First contact']]: 10, [EV['Dark forest strike']]: 10, [EV['Gamma-ray burst']]: 8, [EV.Supernova]: 8, [EV.Technology]: 7,
   [EV.Speciation]: 6, [EV.Independence]: 6, [EV.War]: 5, [EV['Colony founded']]: 5, [EV['Megastructure complete']]: 5,
-  [EV['No-go theorem']]: 6, [EV.Invention]: 2, [EV['Ship launched']]: 3, [EV['Ship arrived']]: 4, [EV['Ship lost']]: 4, [EV['New faith']]: 3, [EV['Era change']]: 2, [EV.Plague]: 2,
+  [EV['No-go theorem']]: 6, [EV.Invention]: 2, [EV['Ship launched']]: 3, [EV['Ship arrived']]: 4, [EV['Ship lost']]: 4, [EV['New faith']]: 3, [EV.Schism]: 3, [EV.Treaty]: 4, [EV['Kinetic strike']]: 8, [EV['Faith extinct']]: 3, [EV['Faith spreads']]: 2, [EV['Era change']]: 2, [EV.Plague]: 2,
 };
 const FAITH_FORM = ['the {X} Way', 'the Church of {X}', 'the {X} Covenant', 'the Fellowship of {X}', 'the {X} Reckoning', 'the Quiet of {X}', 'the {X} Return'];
+const SCHISM_FORM = ['the {X} Reform', 'the {X} Dissent', 'the Remnant of {X}', 'the {X} Awakening', 'the True {X}'];
+
+const ORD = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth', 'Ninth', 'Tenth', 'Eleventh', 'Twelfth', 'Thirteenth', 'Fourteenth', 'Fifteenth', 'Sixteenth', 'Seventeenth', 'Eighteenth', 'Nineteenth', 'Twentieth'];
+export const ordinal = (n: number) => ORD[n - 1] ?? `${n}${n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th'}`;
+const money = (x: number) => x >= 1e15 ? `$${(x / 1e15).toFixed(1)} quadrillion` : x >= 1e12 ? `$${(x / 1e12).toFixed(1)} trillion` : `$${(x / 1e9).toFixed(1)} billion`;
+const headcount = (x: number) => x >= 1e9 ? `${(x / 1e9).toFixed(1)} billion` : x >= 1e6 ? `${(x / 1e6).toFixed(1)} million` : x >= 1e4 ? `${Math.round(x / 1e3)} thousand` : `${Math.round(x)}`;
+
+/** "that the body is a draft, that Earth is a myth, and that machines are kin" */
+export function tenetClause(t: (axis: number) => number, only?: number): string {
+  const parts: string[] = [];
+  for (let a = 0; a < 5; a++) { if (only !== undefined && a !== only) continue; const v = t(a); if (v) parts.push(`that ${TENET_TEXT[a][v > 0 ? 0 : 1]}`); }
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0] ?? '';
+}
+
+const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
 export class Chronicle {
   private e: Engine;
@@ -37,11 +54,28 @@ export class Chronicle {
   private major: number[] = [];
   private genEvent = new Map<number, number>(); // generated invention → its event index
   private genNames = new Map<number, string>();
+  private faithEvent = new Map<number, number>(); // faith id → its founding (or schism) event index
+  private warNames: string[] = [];
+  private warEvent = new Map<number, number>();                 // war log row → "the Third TRAPPIST War"
 
   constructor(e: Engine, lives: Lives) {
     this.e = e; this.L = lives;
+    // wars are named after where they were fought, and numbered: the Third TRAPPIST War
+    const X = e.st.hx, count = new Map<string, number>();
+    for (let w = 0; w < X.hg[HG.nWar]; w++) {
+      const o = w * NWC, kin = X.war[o + WC.kind] === WAR_KIND.KINETIC;
+      const sys = e.world.systems[X.war[o + WC.sys]];
+      const short = (n: string) => n.replace(/[- ]?(\d+|[A-C])$/, '').replace(/^Sol$/, 'Solar');
+      const base = kin ? `${short(e.world.systems[X.war[o + WC.from]].name)}–${short(sys.name)} Kinetic War`
+        : sys.id === 0 ? `${e.world.bodies[X.war[o + WC.target]].name} War` : `${short(sys.name)} War`;
+      const k = (count.get(base) ?? 0) + 1;
+      count.set(base, k);
+      this.warNames.push(`the ${ordinal(k)} ${base}`);
+    }
     e.events.forEach((ev, i) => {
       if (ev.type === EV.Invention) this.genEvent.set(ev.a, i);
+      if (ev.type === EV['New faith'] || ev.type === EV.Schism) this.faithEvent.set(ev.a, i);
+      if (ev.type === EV.War) this.warEvent.set(ev.b, i);
       if (!MAJOR.has(ev.type)) return;
       if (ev.type === EV.Plague && ev.a < 0.08) return;
       this.major.push(i);
@@ -61,10 +95,27 @@ export class Chronicle {
   /** Someone aboard ledger flow `flow` (crew, ship, landing party), adult if possible. */
   private aboard(flow: number, salt: number): Id | null { return this.L.pickTraveller(flow, salt); }
 
-  faithName(b: number, n: number): string {
-    const root = this.L.coinedWord(b, n);
-    return FAITH_FORM[Math.floor(hash01(b, n, 17) * FAITH_FORM.length)].replace('{X}', root);
+  /** The name of faith f from the faith table: a word in its founding world's tongue. */
+  faithName(f: number): string {
+    const T = this.e.st.hx.faith, o = f * NFC;
+    const home = T[o + FC.home];
+    // a schism keeps its mother faith's word, so a family of faiths reads as one
+    let r = f;
+    for (let k = 0; k < 40 && T[r * NFC + FC.parent] >= 0; k++) r = T[r * NFC + FC.parent];
+    const root = this.L.coinedWord(T[r * NFC + FC.home], r + 7);
+    if (T[o + FC.parent] >= 0) return SCHISM_FORM[Math.floor(hash01(home, f, 19) * SCHISM_FORM.length)].replace('{X}', root);
+    return FAITH_FORM[Math.floor(hash01(home, f, 17) * FAITH_FORM.length)].replace('{X}', root);
   }
+  tenetsOf(f: number): string { const T = this.e.st.hx.faith; return tenetClause((a) => T[f * NFC + FC.t + a]); }
+  /** The prophet who founded faith f (or led its schism), as the Chronicle names them. */
+  faithFounder(f: number): Id | null {
+    const i = this.faithEvent.get(f);
+    if (i === undefined) return null;
+    const ev = this.e.events[i];
+    return this.pick(ev.body, ev.year, i, 18, 60);
+  }
+
+  warName(w: number): string { return this.warNames[w] ?? 'the war'; }
 
   /** Name of a technology: spine techs by catalog, generated ones after their inventor and place. */
   techName(t: number): string {
@@ -158,14 +209,72 @@ export class Chronicle {
         break;
       }
       case EV.War: {
+        const W = this.e.st.hx.war, o = ev.b * NWC;
+        const name = this.warName(ev.b);
+        if (W[o + WC.kind] === WAR_KIND.KINETIC) {
+          const d = this.L.distanceLy(ev.body, ev.a), beta = W[o + WC.speed], E = W[o + WC.energy];
+          const lead = this.pick(ev.body, y, i, 30, 80);
+          const replies = W[o + WC.end] > W[o + WC.start] + d / beta + 0.5;
+          segs.push(`${cap(name)}. `, at(ev.body), ' launches a relativistic kinetic strike at ', at(ev.a), `, ${d.toFixed(1)} light years away: ${Math.round(W[o + WC.mass]).toLocaleString('en-US')} tonnes at ${beta.toFixed(2)}c, ${E.toExponential(1)} joules, ${Math.round(megatons(E)).toLocaleString('en-US')} megatons. The order is given by `, who(lead),
+            `. It will land in ${Math.round(2040 + y + d / beta)}, and the light of the launch will reach `, at(ev.a), ` only ${(d / beta - d).toFixed(1)} years ahead of it. `,
+            replies ? 'The target holds other systems, and they can reply.' : 'The target holds no other system to reply from.');
+          break;
+        }
         const a = this.pick(ev.body, y, i, 30, 70), b = this.pick(ev.a, y, i + 1, 30, 70);
-        segs.push('War between ', at(ev.body), ' and ', at(ev.a), `${ev.b > 0 ? `, costing up to ${Math.round(ev.b * 100)}% of their people` : ''}. `, who(a), ' commands one side, ', who(b), ' the other.');
+        const cause = W[o + WC.cause];
+        const why = cause === WAR_CAUSE.FAITH && W[o + WC.fA] >= 0 && W[o + WC.fB] >= 0 ? `over faith: ${this.faithName(W[o + WC.fA])} against ${this.faithName(W[o + WC.fB])}`
+          : cause === WAR_CAUSE.INDEPENDENCE && W[o + WC.indep] > -1e8 ? `over an independence declared in ${Math.round(2040 + W[o + WC.indep])}`
+          : cause === WAR_CAUSE.GRUDGE ? 'over grudges older than anyone fighting' : 'over water, metal and air';
+        segs.push(`${cap(name)} begins: `, at(ev.body), ' against ', at(ev.a), `, ${why}. `, who(a), ' commands one side, ', who(b), ' the other.');
+        break;
+      }
+      case EV.Treaty: {
+        const W = this.e.st.hx.war, w = ev.a, o = w * NWC;
+        const name = this.warName(w), out = ev.b, yrs = Math.max(1, Math.round(y - W[o + WC.start]));
+        const win = W[o + WC.winner], lose = win === W[o + WC.a] ? W[o + WC.b] : W[o + WC.a];
+        const signer = this.pick(ev.body, y, i, 30, 85);
+        const killed = W[o + WC.killed];
+        segs.push(`${cap(name)} ends after ${yrs} year${yrs > 1 ? 's' : ''}${killed >= 1 ? `, having killed ${headcount(killed)}` : ''}. `);
+        if (out === OUTCOME.ANNEX) segs.push(at(lose), `'s settlements around ${this.e.world.systems[W[o + WC.sys]].name} now fly the flag of `, at(win), '.');
+        else if (out === OUTCOME.REPARATIONS) segs.push(at(lose), ` pays ${money(W[o + WC.energy])} in reparations to `, at(win), '.');
+        else segs.push(W[o + WC.kind] === WAR_KIND.KINETIC ? 'The strikes have landed; there is nothing left to fight over.' : 'Neither side can win; the old borders stand.');
+        segs.push(' The treaty is signed by ', who(signer), '.');
+        break;
+      }
+      case EV['Kinetic strike']: {
+        const W = this.e.st.hx.war, w = ev.b, o = w * NWC;
+        const from = W[o + WC.a] === ev.body ? W[o + WC.b] : W[o + WC.a];
+        const d = this.L.distanceLy(from, ev.body), beta = W[o + WC.speed];
+        segs.push(`A projectile launched from `, at(from), ` ${Math.round(d / beta)} years ago at ${beta.toFixed(2)} times the speed of light strikes `, at(ev.body), `. ${Math.round(ev.a * 100)}% of its people die in an instant (${this.warName(w)}).`);
         break;
       }
       case EV['New faith']: {
         const prophet = this.pick(ev.body, y, i, 18, 60);
-        segs.push(who(prophet), ' of ', at(ev.body), ` begins preaching ${this.faithName(ev.body, ev.a)}.`);
+        const T = this.e.st.hx.faith, cause = T[ev.a * NFC + FC.cause];
+        const far = Math.round(this.L.distanceLy(ev.body, this.e.world.earth));
+        const lead = cause === FAITH_CAUSE.PLAGUE ? 'In the years after the plague, ' : cause === FAITH_CAUSE.HUNGER ? 'In a hungry year, '
+          : cause === FAITH_CAUSE.FAR ? `${far} light years from Earth, ` : cause === FAITH_CAUSE.BODY ? 'Among people whose bodies have drifted far from Earth\'s, ' : '';
+        segs.push(lead, who(prophet), ' of ', at(ev.body), ` begins preaching ${this.faithName(ev.a)}: ${this.tenetsOf(ev.a)}.`);
         break;
+      }
+      case EV.Schism: {
+        const T = this.e.st.hx.faith, n = ev.a, p = ev.b;
+        let changed = -1;
+        for (let a = 0; a < 5; a++) if (T[n * NFC + FC.t + a] !== T[p * NFC + FC.t + a] && T[n * NFC + FC.t + a] !== 0) changed = a;
+        const leader = this.pick(ev.body, y, i, 20, 70);
+        segs.push('Schism on ', at(ev.body), ': ', who(leader), ` breaks with ${this.faithName(p)} and founds ${this.faithName(n)}`, changed >= 0 ? `, holding ${tenetClause((a) => T[n * NFC + FC.t + a], changed)}.` : '.');
+        break;
+      }
+      case EV['Faith extinct']: {
+        const T = this.e.st.hx.faith, f = ev.a;
+        const name = this.faithName(f);
+        segs.push(`The last followers of ${name}, first preached on `, at(ev.body), ` in ${Math.round(2040 + T[f * NFC + FC.year])}, are gone. ${ev.b > 1 ? `At its height it was held on ${ev.b} worlds.` : 'It never spread beyond its first world.'}`);
+        break;
+      }
+      case EV['Faith spreads']: {
+        const name = this.faithName(ev.a);
+        segs.push(`${name[0].toUpperCase()}${name.slice(1)}, born on `, at(ev.body), `, is now held on ${ev.b} worlds. It teaches ${this.tenetsOf(ev.a)}.`);
+        return { year: y, type: ev.type, segs, people, places, weight: ev.b >= 10 ? 4 : 2 };
       }
       case EV.Speciation: {
         const child = this.pick(ev.body, y, i, 0, 15);

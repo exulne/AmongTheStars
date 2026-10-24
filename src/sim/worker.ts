@@ -9,6 +9,8 @@ import { Chronicle, type Entry } from './chronicle.ts';
 import { Lives, type Biography, type PersonBrief } from './lives.ts';
 import { SocietyModel, type Society } from './society.ts';
 import { buildWorld } from './world.ts';
+import { periodOf } from './ledger.ts';
+import { handleData, isDataReq, type DataReq, type DataRes } from './dataApi.ts';
 
 const SNAP_EVERY = 20;
 // event types whose `a` is a second body (source, opponent, old capital); elsewhere it is a stage, tech or era index
@@ -25,6 +27,7 @@ export type ToWorker =
   | { type: 'chronicle'; id: number; from: number; to: number; body?: number; query?: string; limit?: number; minWeight?: number }
   | { type: 'inventions'; id: number }
   | { type: 'society'; id: number; body: number; step: number }
+  | DataReq
   | { type: 'ship'; id: number; from: number; to: number; depart: number };
 
 export type FromWorker =
@@ -38,6 +41,7 @@ export type FromWorker =
   | { type: 'chronicle'; id: number; pending?: boolean; entries: Entry[] }
   | { type: 'inventions'; id: number; pending?: boolean; list: { tech: number; year: number; entry: Entry | null }[] }
   | { type: 'society'; id: number; pending?: boolean; society: Society | null }
+  | DataRes
   | { type: 'ship'; id: number; pending?: boolean; ship: ShipInfo | null };
 
 /** A ship in transit, as the people model knows it: its name, who boarded, and the Chronicle's launch entry (with its captain). */
@@ -57,7 +61,13 @@ function people(): Lives | null {
   if (!lives) {
     lives = new Lives(main);
     const c = (chron = new Chronicle(main, lives));
-    society = new SocietyModel(main, (b, n) => c.faithName(b, n), (b, n) => lives!.coinedWord(b, n));
+    society = new SocietyModel(main, (b, n) => lives!.coinedWord(b, n));
+    society.faithInfo = (f) => ({ name: c.faithName(f), tenets: c.tenetsOf(f) });
+    const civ = main.civ;
+    lives.faithAt = (b, year, u) => {
+      for (const [f, sh] of civ.faithsAt(b, periodOf(year))) { if (u < sh) return c.faithName(f); u -= sh; }
+      return null;
+    };
     lives.deeds = (pid, stays) => c.deedsOf(pid, stays).map((en) => ({ year: en.year, text: en.segs.map((s) => (typeof s === 'string' ? s : s.t)).join('') }));
   }
   return lives;
@@ -103,9 +113,12 @@ function stateAt(step: number): Engine {
   return replay;
 }
 
+const dataEnv = { world, main: () => main, snaps: () => snaps, stateAt, post: (m: DataRes, t: Transferable[] = []) => post(m, t) };
+
 self.onmessage = (ev: MessageEvent<ToWorker>) => {
   const m = ev.data;
-  if (m.type === 'run') run(m.seed);
+  if (isDataReq(m)) handleData(m, dataEnv);
+  else if (m.type === 'run') run(m.seed);
   else if (m.type === 'state') {
     const e = stateAt(m.step);
     const S = e.st.S.slice();
@@ -140,7 +153,7 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
     if (!ok) post({ type: 'society', id: m.id, pending: true, society: null });
     else {
       const e = stateAt(m.step);
-      post({ type: 'society', id: m.id, society: society!.at(m.body, e.years[e.st.step], e.st.S, e.st.techDone, e.st.g[1]) });
+      post({ type: 'society', id: m.id, society: society!.at(m.body, e.years[e.st.step], e.st.S, e.st.techDone, e.st.g[1], e.st.hx) });
     }
   } else if (m.type === 'ship') {
     const L = people();

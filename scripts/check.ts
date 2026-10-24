@@ -4,12 +4,13 @@
 import { availableParallelism } from 'node:os';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { Engine, YEAR0, type SimState } from '../src/sim/engine.ts';
-import { ERAS, EVENT_NAMES, STAGE, TECHS } from '../src/sim/catalog.ts';
+import { ERAS, EVENT_NAMES, STAGE, TECHS, isAlive } from '../src/sim/catalog.ts';
 import { F, GM, NF, NGM } from '../src/sim/metrics.ts';
 import { buildWorld, type World } from '../src/sim/world.ts';
+import { civParts } from '../src/sim/civ.ts';
 
 const SNAP_EVERY = 20; // same as the worker
-const LIVING = (s: number) => s >= STAGE.OUTPOST && s <= STAGE.MEGA;
+const LIVING = isAlive;
 const techAt = (id: string) => TECHS.findIndex((t) => t.id === id);
 
 interface SeedResult {
@@ -34,8 +35,10 @@ function sameState(a: SimState, b: SimState): string | null {
   if (a.nSettled !== b.nSettled) return `nSettled ${a.nSettled} vs ${b.nSettled}`;
   const parts: [string, ArrayLike<number>, ArrayLike<number>][] = [
     ['S', a.S, b.S], ['g', a.g, b.g], ['techProg', a.techProg, b.techProg], ['techDone', a.techDone, b.techDone],
-    ['ships', a.ships, b.ships], ['shipRetry', a.shipRetry, b.shipRetry], ['settled', a.settled.subarray(0, a.nSettled), b.settled.subarray(0, b.nSettled)], ['rng', a.rng, b.rng],
+    ['ships', a.ships, b.ships], ['shipRetry', a.shipRetry, b.shipRetry], ['ages', a.ages, b.ages], ['settled', a.settled.subarray(0, a.nSettled), b.settled.subarray(0, b.nSettled)], ['rng', a.rng, b.rng],
   ];
+  const ca = civParts(a.hx), cb = civParts(b.hx);
+  ca.forEach(([name, x], k) => parts.push([name, x, cb[k][1]]));
   for (const [name, x, y] of parts) {
     const i = eq(x, y);
     if (i !== -1) return name === 'S' && i >= 0 ? `S[body ${Math.floor(i / NF)} field ${i % NF}] ${x[i]} vs ${y[i]}` : `${name}[${i}] ${x[i]} vs ${y[i]}`;

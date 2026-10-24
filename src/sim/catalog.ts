@@ -167,13 +167,24 @@ export const STAGE = {
   CITY: 5,
   HUB: 6,        // industrial / trade hub, exports ships
   MEGA: 7,       // megastructure: swarm, ring, world-city
-  ABANDONED: 8,
-  DEAD: 9,
+  // the far-future ladder (each gated by its technology plus people and power)
+  RING: 8,       // Ring world: Bishop rings spun up around the planet
+  SWARM: 9,      // Swarm-world: the system's Dyson swarm is mostly its habitats
+  BRAIN: 10,     // Brain-star: a Matrioshka shell around the star does the thinking
+  LIFTED: 11,    // Lifted star: the star itself is being mined
+  UPLOADED: 12,  // Uploaded: most of the people live as minds
+  ABANDONED: 13,
+  DEAD: 14,
 } as const;
 
-export const STAGE_NAMES = ['Survey', 'Outpost', 'Base', 'Colony', 'Town', 'City', 'Hub', 'Megastructure', 'Abandoned', 'Dead'];
+/** A settlement with people in it (Outpost through Uploaded). */
+export function isAlive(stage: number): boolean { return stage >= STAGE.OUTPOST && stage <= STAGE.UPLOADED; }
+
+export const STAGE_NAMES = ['Survey', 'Outpost', 'Base', 'Colony', 'Town', 'City', 'Hub', 'Megastructure', 'Ring world', 'Swarm-world', 'Brain-star', 'Lifted star', 'Uploaded', 'Abandoned', 'Dead'];
 /** Base population capacity per stage before habitability and tech. */
-export const STAGE_CAP = [0, 60, 2_000, 150_000, 3_000_000, 80_000_000, 1_000_000_000, 10_000_000_000, 0, 0];
+export const STAGE_CAP = [0, 60, 2_000, 150_000, 3_000_000, 80_000_000, 1_000_000_000, 10_000_000_000, 11_000_000_000, 12_000_000_000, 13_000_000_000, 14_000_000_000, 15_000_000_000, 0, 0];
+/** Technology that unlocks each stage above Megastructure. */
+export const STAGE_TECH: Partial<Record<number, string>> = { 8: 'bishopRings', 9: 'dyson2', 10: 'matrioshka', 11: 'starLifting', 12: 'mindUpload' };
 
 // ---------------------------------------------------------------------------
 // Technologies. cost = knowledge points. Effects compose multiplicatively
@@ -196,6 +207,10 @@ export interface Tech {
     hab: number; habHostile: number; reliability: number; war: number; secession: number;
     shipSpeed: number; voyage: number; fission: number; fusion: number; dyson: number;
     ftl: number; ftl2: number; probes: number; divergence: number;
+    /** Gompertz level B multiplier (ages.ts): genetic medicine shifts the ageing curve */
+    gompB: number;
+    /** Gompertz rate b (ages.ts): a gate, the slowest ageing rate any known tech allows */
+    gompb: number;
   }>;
   blurb: string;
 }
@@ -212,7 +227,7 @@ export const TECHS: Tech[] = [
   { id: 'robotics', name: 'Autonomous robotics', cost: 420, req: [], earliest: 2045, era: 1, fx: { extract: 1.3, productivity: 1.15 }, blurb: 'Mines and factories that run unattended.' },
   { id: 'radShield', name: 'Active radiation shielding', cost: 780, req: ['closedLoop'], earliest: 2065, era: 1, fx: { habHostile: 0.06, death: 0.92 }, blurb: 'Makes Jupiter\'s moons survivable.' },
   { id: 'quantumComp', name: 'Fault-tolerant quantum computing', cost: 900, req: [], earliest: 2045, era: 1, fx: { research: 1.25 }, blurb: 'Chemistry and materials solved by simulation.' },
-  { id: 'genMed', name: 'Genetic medicine', cost: 1020, req: [], earliest: 2060, era: 1, fx: { death: 0.85 }, blurb: 'Most hereditary disease and many cancers become curable.' },
+  { id: 'genMed', name: 'Genetic medicine', cost: 1020, req: [], earliest: 2060, era: 1, fx: { gompB: 0.13 }, blurb: 'Most hereditary disease and many cancers become curable.' },
   { id: 'asteroidMining', name: 'Asteroid mining', cost: 1260, req: ['isru', 'ntp'], earliest: 2060, era: 1, fx: { extract: 1.4 }, blurb: 'Metal-rich asteroids carved in place.' },
   { id: 'cloudCities', name: 'Venus aerostat cities', cost: 1560, req: ['closedLoop', 'regolith'], earliest: 2130, era: 1, fx: { hab: 0.02 }, blurb: 'Breathable air is a lifting gas 55 km above Venus.' },
   { id: 'starshot', name: 'Gram-scale starshot probes', cost: 1800, req: ['quantumComp'], earliest: 2075, era: 1, fx: { probes: 12 }, blurb: 'Laser-pushed chips survey the nearest stars at 0.2c.' },
@@ -235,7 +250,7 @@ export const TECHS: Tech[] = [
   { id: 'laserComms', name: 'Interstellar laser network', cost: 288000, req: ['starshot', 'fusion'], earliest: 2150, era: 2, fx: { secession: 0.7 }, blurb: 'News still travels at light speed, but it travels.' },
   { id: 'cryo', name: 'Cryogenic suspension', cost: 360000, req: ['genMed', 'neuralLace'], earliest: 2100, era: 2, fx: { voyage: 2, reliability: 0.08 }, blurb: 'Sleep through the voyage.' },
   { id: 'nanofab', name: 'Molecular nanofabrication', cost: 468000, req: ['agi', 'carbonNano'], earliest: 2150, era: 2, fx: { extract: 1.8, productivity: 1.6 }, blurb: 'Build anything atom by atom.' },
-  { id: 'lifeExt', name: 'Radical life extension', cost: 540000, req: ['genMed', 'nanofab'], earliest: 2090, era: 2, fx: { death: 0.6, growth: 0.85 }, blurb: 'People stop dying of age. They also stop having kids.' },
+  { id: 'lifeExt', name: 'Radical life extension', cost: 540000, req: ['genMed', 'nanofab'], earliest: 2090, era: 2, fx: { gompb: 0.045 }, blurb: 'Ageing runs at half speed: lives of two centuries.' },
 
   // Era 3: interstellar
   { id: 'terraform', name: 'Planetary terraforming', cost: 1.08e+06, req: ['paraterraform', 'he3Fusion', 'nanofab'], earliest: 2300, era: 3, fx: { hab: 0.18 }, blurb: 'Whole worlds made breathable over centuries.' },
@@ -295,6 +310,8 @@ export const EVENT_NAMES = [
   'Kessler cascade', 'Supernova', 'Gamma-ray burst', 'First contact', 'Dark forest strike',
   'Technology', 'Era change', 'Probe survey', 'Abandoned', 'Reactor accident', 'Baby boom',
   'AI schism', 'Megastructure complete', 'Ship launched', 'Ship arrived', 'Invention', 'No-go theorem',
+  // history that remembers (civ.ts)
+  'Schism', 'Faith extinct', 'Faith spreads', 'Treaty', 'Kinetic strike',
 ] as const;
 export type EventName = typeof EVENT_NAMES[number];
 export const EV = Object.fromEntries(EVENT_NAMES.map((n, i) => [n, i])) as Record<EventName, number>;

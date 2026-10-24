@@ -54,6 +54,14 @@ export class Ledger {
     return a;
   }
 
+  /** per body: the engine's mortality law per period, 4 numbers [A, B, b, under-5] (ages.ts) */
+  mortality = new Map<number, Float32Array>();
+  setMortality(body: number, p: number, A: number, B: number, b: number, inf: number): void {
+    let a = this.mortality.get(body);
+    if (!a) this.mortality.set(body, (a = new Float32Array(NPERIODS * 4).fill(-1)));
+    a[p * 4] = A; a[p * 4 + 1] = B; a[p * 4 + 2] = b; a[p * 4 + 3] = inf;
+  }
+
   addBirths(body: number, n: number): void { this.birthAcc.set(body, (this.birthAcc.get(body) ?? 0) + n); }
 
   migrate(src: number, dst: number, n: number): void {

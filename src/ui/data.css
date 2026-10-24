@@ -1,0 +1,11 @@
+/* data desk additions (kept out of style.css, which other builders edit) */
+.data-h { margin: 0.6rem 0 0; font-size: 0.95rem; font-weight: 400; border-bottom: 1px solid var(--faint); padding-bottom: 0.2rem; }
+.data-pane p { margin: 0; }
+.run-stamp { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 1rem; margin: 0; font-size: 0.8125rem; }
+.run-stamp dt { color: var(--quiet); }
+.run-stamp dd { margin: 0; }
+.data .tbl-scroll.short { flex: 0 1 auto; max-height: 40vh; }
+.stamp-warn { position: absolute; z-index: 21; left: 50%; top: max(12px, env(safe-area-inset-top, 0px)); transform: translateX(-50%); width: min(36rem, calc(100vw - 32px));
+  box-sizing: border-box; padding: 0.55rem 0.9rem; background: rgba(4, 4, 7, 0.96); border-top: 1px solid #ffc45c; border-bottom: 1px solid var(--faint); font-size: 0.8125rem; }
+.stamp-warn p { margin: 0; }
+.stamp-warn .link { margin-left: 0.5rem; }

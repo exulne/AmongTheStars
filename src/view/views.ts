@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { STAGE, STAGE_NAMES, TECHS } from '../sim/catalog.ts';
+import { STAGE, STAGE_NAMES, TECHS, isAlive } from '../sim/catalog.ts';
 import type { StateMsg } from '../sim/client.ts';
 import { F, NF } from '../sim/metrics.ts';
 import { Rng, hash01 } from '../sim/rng.ts';
@@ -14,6 +14,9 @@ import { ageColor, factionColor, heatColor, type ColorMode } from './colorModes.
 import { styleOf } from './epoch.ts';
 import { makeGalaxy } from './galaxyPoints.ts';
 import { atmosphereMaterial, planetMaterial } from './planetShader.ts';
+import { Orbitals, StarWorks, tierRank } from './orbitals.ts';
+import { BEAM, SCOOP, shipStyle } from './shipStyles.ts';
+import { REDUCED_MOTION, applyPlanetLook } from './timeLook.ts';
 import { STAGE_COLORS, flareTex, galaxySpriteTex, glowTex, pointsMaterial, specColor } from './textures.ts';
 import { explainGalaxy } from '../explain/galaxy.ts';
 import { addCpuSet, addGpuSet, nearestPoint, pxPerUnit } from '../explain/picker.ts';
@@ -21,7 +24,7 @@ import { pointWorld, registerExplainer } from '../explain/registry.ts';
 import { explainShips, shipId } from '../explain/ships.ts';
 import { explainSky, type Observer } from '../explain/sky.ts';
 import { explainBackground } from '../explain/universe.ts';
-import { explainBelt, type BeltInfo, explainElevators, explainHabitats, explainOrbits, explainRingWorld, explainRings, explainSats, explainSwarm } from '../explain/worlds.ts';
+import { explainBelt, type BeltInfo, explainElevators, explainOrbits, explainRings, explainSats, explainSwarm } from '../explain/worlds.ts';
 import { explainLocalRings } from '../explain/local.ts';
 
 export type Level = 'universe' | 'galaxy' | 'local' | 'system' | 'planet' | 'street';
@@ -82,7 +85,7 @@ export function stageOf(snap: StateMsg | null, b: number): number {
 export function popOf(snap: StateMsg | null, b: number): number {
   return snap ? snap.S[b * NF + F.pop] : 0;
 }
-export function alive(stage: number): boolean { return stage >= STAGE.OUTPOST && stage <= STAGE.MEGA; }
+export function alive(stage: number): boolean { return isAlive(stage); }
 
 /** Settlements drawn on a world: one capital plus more as it grows. */
 export function cityCount(stage: number, pop: number): number {
@@ -123,7 +126,7 @@ export function systemSummary(world: World, snap: StateMsg | null, sys: number):
       founded = Math.min(founded, snap!.S[b * NF + F.founded]);
     }
     else if (stage < 0) stage = s === STAGE.SURVEY ? STAGE.SURVEY : s;
-    else if (s === STAGE.SURVEY && stage > STAGE.MEGA) stage = STAGE.SURVEY;
+    else if (s === STAGE.SURVEY && stage >= STAGE.ABANDONED) stage = STAGE.SURVEY;
   }
   return { stage, pop, n, faction, founded };
 }
@@ -205,8 +208,6 @@ class Trails {
     dirty(this.heads.pts);
   }
 }
-const SHIP_C = new THREE.Color(0.55, 0.9, 1), FTL_C = new THREE.Color(0.8, 0.6, 1);
-const HAB_MAT = new THREE.MeshStandardMaterial({ color: 0x8a919b, metalness: 0.6, roughness: 0.55 });
 const ELEVATOR = TECHS.findIndex((t) => t.id === 'spaceElevator');
 const TETHER = 17; // counterweight radius; short enough to stay clear of the side panel
 const tv1 = new THREE.Vector3(), tv2 = new THREE.Vector3(), tv3 = new THREE.Vector3();
@@ -464,7 +465,7 @@ export class GalaxyView implements View {
       const a = w.systems[w.bodies[sh.from].system], b = w.systems[w.bodies[sh.to].system];
       const pa = toScene(a.x, a.y, a.z, this.U, GALACTIC_CENTRE[0]), pb = toScene(b.x, b.y, b.z, this.U, GALACTIC_CENTRE[0]);
       const f = Math.min(1, Math.max(0, (ctx.year - sh.depart) / Math.max(0.1, sh.arrive - sh.depart)));
-      const c = sh.kind === 1 ? FTL_C : SHIP_C;
+      const st = shipStyle(ctx.snap, sh), c = st.trail;
       const lift = sh.kind === 1 ? pa.distanceTo(pb) * 0.18 : 0;
       const N = sh.kind === 1 ? 32 : 1, id = shipId(sh);
       const at = (u: number, out: THREE.Vector3) => out.lerpVectors(pa, pb, u).setY(out.y + lift * 4 * u * (1 - u));
@@ -474,7 +475,11 @@ export class GalaxyView implements View {
         const w0 = u0 <= f ? 0.15 + 0.6 * Math.pow(u0 / Math.max(f, 1e-3), 3) : 0.07, w1 = u1 <= f ? 0.15 + 0.6 * Math.pow(u1 / Math.max(f, 1e-3), 3) : 0.07;
         t.seg(at(u0, tv1), at(u1, tv2), c, w0, w1, id);
       }
-      t.head(at(f, tv3), c, sh.kind === 1 ? 5 + Math.sin(ctx.t * 5) : 2.5, id);
+      at(f, tv3);
+      if (st.plume > 0 && sh.kind !== 1) t.seg(at(Math.max(0, f - 0.04), tv1), tv3, st.head, 0, st.plume, id);
+      if (st.beam) t.seg(pa, tv3, BEAM, 0.35, 0.08, id);
+      if (st.scoop) t.head(tv3, SCOOP, 6, id);
+      t.head(tv3, st.head, sh.kind === 1 ? 5 + Math.sin(ctx.t * 5) : 2.5 * st.headSize, id);
     }
     t.end();
   }
@@ -525,7 +530,8 @@ export class LocalView implements View {
   private sums: SystemSum[] = [];
   private ranked: Label[] = [];
   private rankedFor: SystemSum[] | null = null;
-  private shipIds: number[] = [];
+  private shipIds: number[] = [];      // ship id per line segment
+  private shipHeadIds: number[] = [];  // ship id per head point
   private shipAt = new Map<number, THREE.Vector3>();
 
   constructor(world: World) {
@@ -560,7 +566,7 @@ export class LocalView implements View {
     this.group.add(this.shipLines);
     this.shipHeads = pointCloud(4096, pointsMaterial({ minPx: 2 }));
     this.group.add(this.shipHeads.pts);
-    explainShips('shipl', { heads: this.shipHeads.pts, headIds: this.shipIds, lines: this.shipLines, segIds: this.shipIds, segCount: () => this.shipIds.length, at: this.shipAt });
+    explainShips('shipl', { heads: this.shipHeads.pts, headIds: this.shipHeadIds, lines: this.shipLines, segIds: this.shipIds, segCount: () => this.shipIds.length, at: this.shipAt });
     const sun = glowSprite(0xfff1d6, 1.6, 1, flareTex);
     this.group.add(sun);
   }
@@ -599,29 +605,53 @@ export class LocalView implements View {
     const pos = this.shipLines.geometry.attributes.position.array as Float32Array;
     const col = this.shipLines.geometry.attributes.color.array as Float32Array;
     let n = 0;
-    this.shipIds.length = 0;
+    this.shipIds.length = 0; this.shipHeadIds.length = 0;
     if (this.shipAt.size > 8192) this.shipAt.clear();
     if (snap) {
+      let h = 0;
       for (const sh of snap.ships) {
-        if (n >= 4096 || sh.kind === 1) continue;
-        const id = (this.shipIds[n] = shipId(sh));
+        if (n >= 4093 || h >= 4094 || sh.kind === 1) continue;
+        const id = shipId(sh);
         const a = ctx.world.systems[ctx.world.bodies[sh.from].system], b = ctx.world.systems[ctx.world.bodies[sh.to].system];
         const pa = toScene(a.x, a.y, a.z), pb = toScene(b.x, b.y, b.z);
+        // route and ship look follow the drive known when it left; generation ships trail amber
+        const st = shipStyle(snap, sh), tc = st.trail, hc = st.head;
         pos.set([pa.x, pa.y, pa.z, pb.x, pb.y, pb.z], n * 6);
-        col.set([0.1, 0.25, 0.35, 0.5, 0.9, 1], n * 6);
-        const f = Math.min(1, Math.max(0, (ctx.year - sh.depart) / (sh.arrive - sh.depart)));
-        const h = pa.lerp(pb, f);
-        (this.shipAt.get(id) ?? this.shipAt.set(id, new THREE.Vector3()).get(id)!).copy(h);
-        this.shipHeads.pos.set([h.x, h.y, h.z], n * 3);
-        this.shipHeads.col.set([0.7, 0.95, 1], n * 3);
-        this.shipHeads.size[n] = 1.6 + 0.4 * Math.sin(ctx.t * 4 + n);
+        col.set([tc.r * 0.2, tc.g * 0.2, tc.b * 0.2, tc.r * 0.8, tc.g * 0.8, tc.b * 0.8], n * 6);
+        this.shipIds[n] = id;
         n++;
+        const f = Math.min(1, Math.max(0, (ctx.year - sh.depart) / (sh.arrive - sh.depart)));
+        const hp = tv3.lerpVectors(pa, pb, f);
+        (this.shipAt.get(id) ?? this.shipAt.set(id, new THREE.Vector3()).get(id)!).copy(hp);
+        if (st.plume > 0) {
+          const tail = tv1.lerpVectors(pa, pb, Math.max(0, f - 0.12));
+          pos.set([tail.x, tail.y, tail.z, hp.x, hp.y, hp.z], n * 6);
+          col.set([0, 0, 0, hc.r * 2 * st.plume, hc.g * 2 * st.plume, hc.b * 2 * st.plume], n * 6);
+          this.shipIds[n] = id;
+          n++;
+        }
+        if (st.beam) {
+          pos.set([pa.x, pa.y, pa.z, hp.x, hp.y, hp.z], n * 6);
+          col.set([BEAM.r * 1.6, BEAM.g * 1.6, BEAM.b * 1.6, BEAM.r * 0.3, BEAM.g * 0.3, BEAM.b * 0.3], n * 6);
+          this.shipIds[n] = id;
+          n++;
+        }
+        if (st.scoop) {
+          this.shipHeadIds[h] = id;
+          this.shipHeads.pos.set([hp.x, hp.y, hp.z], h * 3);
+          this.shipHeads.col.set([SCOOP.r * 0.5, SCOOP.g * 0.5, SCOOP.b * 0.5], h * 3);
+          this.shipHeads.size[h++] = 5;
+        }
+        this.shipHeadIds[h] = id;
+        this.shipHeads.pos.set([hp.x, hp.y, hp.z], h * 3);
+        this.shipHeads.col.set([hc.r, hc.g, hc.b], h * 3);
+        this.shipHeads.size[h++] = (1.6 + 0.4 * Math.sin(ctx.t * 4 + n)) * st.headSize;
       }
-    }
+      this.shipHeads.pts.geometry.setDrawRange(0, h);
+    } else this.shipHeads.pts.geometry.setDrawRange(0, 0);
     this.shipLines.geometry.setDrawRange(0, n * 2);
     this.shipLines.geometry.attributes.position.needsUpdate = true;
     this.shipLines.geometry.attributes.color.needsUpdate = true;
-    this.shipHeads.pts.geometry.setDrawRange(0, n);
     dirty(this.shipHeads.pts);
   }
 
@@ -688,6 +718,7 @@ export class SystemView implements View {
   private star!: THREE.Group;
   private starR = 1;
   private swarm: ReturnType<typeof pointCloud> | null = null;
+  private works = new StarWorks();
   private trails = new Trails(512, 512, 1.8);
   private edge = 60;
   private rings: { mesh: THREE.Mesh; body: number }[] = [];
@@ -717,6 +748,7 @@ export class SystemView implements View {
     this.star.add(glowSprite(sc.getHex(), lumR * 9, 0.9));
     this.star.add(glowSprite(sc.getHex(), lumR * 26, 0.35, flareTex));
     this.group.add(this.star);
+    this.works.reset();
     this.group.add(makeSky(sys.id + 3, 9000, 'skys', () => ({ name: sys.name, x: sys.x, y: sys.y, z: sys.z, sol: sys.id === 0 })));
 
     const planets = sys.bodies.map((id) => ctx.world.bodies[id]).filter((b) => b.parent < 0).sort((a, b) => a.a - b.a);
@@ -789,18 +821,17 @@ export class SystemView implements View {
 
   sync(ctx: Ctx): void {
     this.build(ctx);
-    let mega = false;
+    let mega = false, top = -1;
     for (const v of this.vis) {
       const st = stageOf(ctx.snap, v.id);
       const m = v.marker.material as THREE.SpriteMaterial;
       if (alive(st)) {
         m.color.set(STAGE_COLORS[st]); m.opacity = 0.55;
         v.marker.scale.setScalar(v.visR * (3 + st * 0.6));
-        if (st === STAGE.MEGA) mega = true;
+        if (tierRank(st) >= 2) mega = true;
+        if (tierRank(st) > tierRank(top)) top = st;
       } else m.opacity = st === STAGE.SURVEY ? 0.15 : 0;
-      const mat = v.mesh.material as THREE.ShaderMaterial;
-      mat.uniforms.uLights.value = alive(st) ? cityLights(popOf(ctx.snap, v.id)) : 0;
-      mat.uniforms.uGreen.value = ctx.snap ? Math.min(1, ctx.snap.S[v.id * NF + F.terraform] * 2) : 0;
+      applyPlanetLook(v.mesh, ctx.snap, v.id, ctx.year, alive(st) ? cityLights(popOf(ctx.snap, v.id)) : 0);
     }
     // Dyson swarm: shimmer of collectors around a star with a megastructure
     if (mega && !this.swarm) {
@@ -815,6 +846,8 @@ export class SystemView implements View {
       this.group.add(this.swarm.pts);
       explainSwarm('swarm', this.swarm.pts, ctx.system, ctx.world);
     } else if (!mega && this.swarm) { this.group.remove(this.swarm.pts); this.swarm = null; }
+    this.works.sync(this.star, this.starR, top);
+    if (this.swarm) this.swarm.pts.visible = !this.works.brain;
   }
 
   frame(ctx: Ctx): void {
@@ -836,6 +869,7 @@ export class SystemView implements View {
       v.marker.position.copy(v.mesh.position);
     }
     if (this.swarm) this.swarm.pts.rotation.y = ctx.tm * 0.03;
+    this.works.frame(ctx.tm, REDUCED_MOTION);
     this.drawShips(ctx);
   }
 
@@ -858,13 +892,13 @@ export class SystemView implements View {
       dir.normalize();
       const body = v.mesh.position, far = tv1.copy(dir).multiplyScalar(Math.min(this.edge * 0.5, 22)).add(body);
       const a = out ? body : far, b = out ? far : body;
-      const c = sh.kind === 1 ? FTL_C : SHIP_C;
-      const id = shipId(sh);
+      const st = shipStyle(ctx.snap, sh), c = st.trail, id = shipId(sh);
       t.seg(a, b, c, out ? 0.22 : 0, out ? 0 : 0.22, id);
+      if (st.beam && out) t.seg(a, b, BEAM, 0.5, 0.1, id);
       for (let k = 0; k < 3; k++) {
-        const u = (ctx.t * 0.06 + k / 3 + hash01(i, 3)) % 1;
+        const u = (ctx.t * 0.06 * st.speed + k / 3 + hash01(i, 3)) % 1;
         const fade = out ? 1 - u : u;
-        t.head(tv2.lerpVectors(a, b, u), tmpC.copy(c).multiplyScalar(0.2 + 0.6 * fade), 0.4 + 0.7 * fade, id);
+        t.head(tv2.lerpVectors(a, b, u), tmpC.copy(k === 0 ? st.head : c).multiplyScalar(0.2 + 0.6 * fade), (0.4 + 0.7 * fade) * st.headSize, id);
       }
       i++;
     }
@@ -918,17 +952,17 @@ export class PlanetView implements View {
   private planet!: THREE.Mesh;
   private cities: ReturnType<typeof pointCloud> | null = null;
   private cityPos: THREE.Vector3[] = [];
-  private habitats: THREE.InstancedMesh[] = [];
-  private ringWorld: THREE.Mesh | null = null;
+  private works = new Orbitals();
+  private sun: THREE.Sprite | null = null;
+  private starCol = new THREE.Color();
   private pivot = new THREE.Group();
   private orbit = new THREE.Group();
   private sats: ReturnType<typeof pointCloud> | null = null;
   private elevators: THREE.Group[] = [];
   private elevSince = -1;
-  private cityKey = ''; private habKey = -1; private satKey = -1; private elevKey = -1; private archKey = '';
+  private cityKey = ''; private satKey = -1; private elevKey = -1; private archKey = '';
   private arch: THREE.InstancedMesh | null = null;
   private prings: { mesh: THREE.Mesh; body: number }[] = [];
-  private nTor = 0;
 
   enter(ctx: Ctx): void {
     this.build(ctx);
@@ -948,8 +982,10 @@ export class PlanetView implements View {
     this.planet = new THREE.Mesh(new THREE.SphereGeometry(R, 128, 96), mat);
     if (b.kind === 'asteroid') this.planet.scale.set(1, 0.72, 0.86);
     this.pivot.add(this.planet);
-    if (b.kind !== 'asteroid' && b.kind !== 'moon' && b.kind !== 'rocky' && b.kind !== 'dwarf') {
-      this.planet.add(new THREE.Mesh(new THREE.SphereGeometry(R * 1.05, 96, 64), atmosphereMaterial(b.kind === 'ocean' ? 0x5aa0ff : b.color)));
+    if (b.kind !== 'asteroid' && b.kind !== 'dwarf') {
+      // airless worlds get a black (invisible) shell that turns blue if they are ever terraformed
+      const airless = b.kind === 'moon' || b.kind === 'rocky';
+      this.planet.add(new THREE.Mesh(new THREE.SphereGeometry(R * 1.05, 96, 64), atmosphereMaterial(airless ? 0x000000 : b.kind === 'ocean' ? 0x5aa0ff : b.color)));
     }
     if (b.kind === 'gas' && (b.name === 'Saturn' || hash01(b.id, 5) < 0.4)) {
       const ring = new THREE.Mesh(new THREE.RingGeometry(R * 1.35, R * 2.3, 160), new THREE.MeshBasicMaterial({ color: 0xd8c39a, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }));
@@ -962,7 +998,8 @@ export class PlanetView implements View {
     const home = ctx.world.systems[b.system];
     this.group.add(makeSky(b.id, 9000, 'skyp', () => ({ name: b.name, x: home.x, y: home.y, z: home.z, sol: home.id === 0 })));
     const sys = ctx.world.systems[b.system];
-    const sun = glowSprite(specColor(sys.spec).getHex(), 60, 0.9, flareTex);
+    const sun = (this.sun = glowSprite(specColor(sys.spec).getHex(), 60, 0.9, flareTex));
+    this.starCol.copy(specColor(sys.spec));
     sun.position.set(400, 80, 120);
     this.group.add(sun);
     // the star in this world's sky is its system
@@ -980,20 +1017,16 @@ export class PlanetView implements View {
     this.group.add(light, new THREE.AmbientLight(0x404a5a, 0.35));
     this.orbit = new THREE.Group();
     this.group.add(this.orbit);
-    explainHabitats('hab', this.orbit, () => ({ meshes: this.habitats, nTor: this.nTor }), () => this.builtFor);
     explainElevators('elev', this.pivot, () => this.elevators, () => this.builtFor);
-    explainRingWorld('rworld', () => this.ringWorld, this.group, () => this.builtFor);
-    this.cities = null; this.habitats = []; this.ringWorld = null; this.sats = null; this.elevators = [];
-    this.cityKey = ''; this.habKey = -1; this.satKey = -1; this.elevKey = -1; this.archKey = ''; this.arch = null;
+    this.cities = null; this.works.reset(); this.sats = null; this.elevators = [];
+    this.cityKey = ''; this.satKey = -1; this.elevKey = -1; this.archKey = ''; this.arch = null;
   }
 
   sync(ctx: Ctx): void {
     this.build(ctx);
     const b = ctx.body;
     const st = stageOf(ctx.snap, b), pop = popOf(ctx.snap, b);
-    const mat = this.planet.material as THREE.ShaderMaterial;
-    mat.uniforms.uLights.value = alive(st) ? cityLights(pop) : 0;
-    mat.uniforms.uGreen.value = ctx.snap ? Math.min(1, ctx.snap.S[b * NF + F.terraform] * 2) : 0;
+    applyPlanetLook(this.planet, ctx.snap, b, ctx.year, alive(st) ? cityLights(pop) : 0);
     // cities: one marker per ~stage, positions stable per body
     const nCities = cityCount(st, pop);
     if (this.cityKey !== `${b}:${nCities}:${st}`) {
@@ -1046,29 +1079,9 @@ export class PlanetView implements View {
         this.pivot.add(im);
       }
     }
-    // orbital habitats for cities and up: O'Neill cylinders and Stanford tori, lit by the star
-    const nHab = st >= STAGE.CITY && on ? Math.min(400, Math.floor(Math.pow(st - 4, 2) * 18)) : 0;
-    if (this.habKey !== nHab) {
-      this.habKey = nHab;
-      this.orbit.remove(...this.habitats);
-      for (const h of this.habitats) h.geometry.dispose();
-      this.habitats = [];
-      if (nHab > 0) {
-        const r = new Rng(b * 13), m = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
-        const nTor = (this.nTor = Math.floor(nHab * 0.25));
-        const cyl = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.04, 0.04, 0.24, 12, 1), HAB_MAT, nHab - nTor);
-        const tor = new THREE.InstancedMesh(new THREE.TorusGeometry(0.1, 0.022, 8, 24), HAB_MAT, Math.max(1, nTor));
-        tor.count = nTor;
-        for (let i = 0; i < nHab; i++) {
-          const R = 14 + r.next() * 9, th = r.range(0, Math.PI * 2), inc = r.gauss() * 0.15;
-          q.setFromEuler(new THREE.Euler(r.next() * 3, r.next() * 3, 0));
-          m.compose(tv1.set(Math.cos(th) * R, Math.sin(inc) * R, Math.sin(th) * R), q, one);
-          if (i < nTor) tor.setMatrixAt(i, m); else cyl.setMatrixAt(i - nTor, m);
-        }
-        this.habitats = [cyl, tor];
-        this.orbit.add(cyl, tor);
-      }
-    }
+    // orbital works by age and stage: tori, O'Neill pairs, Bishop rings, swarm panels, ring worlds
+    this.works.sync(this.orbit, this.group, ctx.snap, ctx.year, b, st, on);
+    if (this.sun) { (this.sun.material as THREE.SpriteMaterial).opacity = 0.9 * this.works.starLight; (this.sun.material as THREE.SpriteMaterial).color.copy(this.starCol).multiply(this.works.starTint); }
     // satellites on a few inclined shells, more as the place grows
     const nSat = on ? Math.min(900, 30 + st * st * 22) : 0;
     if (this.satKey !== nSat) {
@@ -1089,12 +1102,6 @@ export class PlanetView implements View {
         this.orbit.add(this.sats.pts);
         explainSats('sat', this.sats.pts, () => this.builtFor);
       }
-    }
-    if (this.ringWorld && st !== STAGE.MEGA) { this.group.remove(this.ringWorld); this.ringWorld = null; }
-    if (!this.ringWorld && st === STAGE.MEGA) {
-      this.ringWorld = new THREE.Mesh(new THREE.TorusGeometry(17, 0.1, 12, 256), new THREE.MeshStandardMaterial({ color: 0xb8ad9e, metalness: 0.5, roughness: 0.5, transparent: true, opacity: 0.4, depthWrite: false }));
-      this.ringWorld.rotation.x = Math.PI / 2 + 0.2;
-      this.group.add(this.ringWorld);
     }
     // space elevators once the tech exists: tether from the equator to a counterweight past synchronous orbit
     const elev = ctx.snap && on && st >= STAGE.COLONY && ctx.snap.techDone[ELEVATOR] >= 0 ? (st >= STAGE.HUB ? 3 : 1) : 0;
@@ -1126,6 +1133,7 @@ export class PlanetView implements View {
     this.pivot.rotation.y = ctx.tm * 0.02;
     (this.planet.material as THREE.ShaderMaterial).uniforms.uTime.value = ctx.t;
     this.orbit.rotation.y = ctx.tm * 0.015;
+    this.works.frame(ctx.tm);
     if (this.sats) this.sats.pts.rotation.y = ctx.tm * 0.05;
     for (const g of this.elevators) {
       const c = g.userData.climber as THREE.Sprite;

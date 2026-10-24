@@ -3,7 +3,7 @@
 // the marks its fortunes have left (ruins, banners, monuments).
 
 import * as THREE from 'three';
-import { TECHS } from '../sim/catalog.ts';
+import { STAGE, TECHS, isAlive } from '../sim/catalog.ts';
 import type { StateMsg } from '../sim/client.ts';
 import { F, NF } from '../sim/metrics.ts';
 import { hash01 } from '../sim/rng.ts';
@@ -74,7 +74,7 @@ export function styleOf(world: World, snap: StateMsg | null, body: number, year:
     arcology: arch === 'towers' || arch === 'spires',
     skyways: arch === 'spires',
     mirrors: arch === 'light',
-    spinHabs: has(snap, 'bishopRings') || (has(snap, 'carbonNano') && v('stage') >= 6),
+    spinHabs: has(snap, 'bishopRings') || (has(snap, 'carbonNano') && v('stage') >= STAGE.HUB && isAlive(v('stage'))),
     open: terraform > 0.5,
     height: { huts: 0.2, warrens: 0.45, towers: 1, spires: 1.35, light: 1.2 }[arch] * (0.7 + 0.6 * wealth),
     grid: 3 + Math.floor(h1 * 3),
