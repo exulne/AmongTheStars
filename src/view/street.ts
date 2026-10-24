@@ -7,6 +7,7 @@
 // close up, streams of light from afar.
 
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { STAGE } from '../sim/catalog.ts';
 import type { PersonBrief } from '../sim/lives.ts';
 import { Rng, hash01 } from '../sim/rng.ts';
@@ -70,6 +71,67 @@ function blockMaterial(warm: THREE.Color): THREE.MeshStandardMaterial {
   return m;
 }
 
+/** A ribbed regolith hut with an airlock, base at y = 0, radius 1. */
+function hutGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [new THREE.SphereGeometry(1, 14, 7, 0, Math.PI * 2, 0, Math.PI / 2)];
+  for (let k = 0; k < 4; k++) parts.push(new THREE.TorusGeometry(1.01, 0.045, 4, 18, Math.PI).rotateY((k * Math.PI) / 4));
+  parts.push(new THREE.CylinderGeometry(0.24, 0.24, 0.5, 12).rotateZ(Math.PI / 2).translate(1.0, 0.22, 0));
+  parts.push(new THREE.CylinderGeometry(0.26, 0.26, 0.06, 12).rotateZ(Math.PI / 2).translate(1.26, 0.22, 0));
+  return mergeGeometries(parts.map((g) => g.toNonIndexed()))!;
+}
+
+/**
+ * A person: legs, torso, arms, head, feet at y = 0, facing +z. `part` tags
+ * vertices (±1 legs, ±2 arms, 3 head) so the shader can swing limbs.
+ */
+function personGeometry(): THREE.BufferGeometry {
+  const tag = (g: THREE.BufferGeometry, v: number) => {
+    const n = g.attributes.position.count;
+    g.setAttribute('part', new THREE.Float32BufferAttribute(new Array(n).fill(v), 1));
+    return g.toNonIndexed();
+  };
+  const parts = [
+    tag(new THREE.BoxGeometry(0.013, 0.055, 0.016).translate(-0.0105, 0.0275, 0), 1),
+    tag(new THREE.BoxGeometry(0.013, 0.055, 0.016).translate(0.0105, 0.0275, 0), -1),
+    tag(new THREE.CapsuleGeometry(0.017, 0.03, 2, 8).scale(1.15, 1, 0.75).translate(0, 0.081, 0), 0),
+    tag(new THREE.BoxGeometry(0.009, 0.044, 0.011).translate(-0.027, 0.083, 0), 2),
+    tag(new THREE.BoxGeometry(0.009, 0.044, 0.011).translate(0.027, 0.083, 0), -2),
+    tag(new THREE.SphereGeometry(0.0125, 10, 8).translate(0, 0.121, 0), 3),
+  ];
+  return mergeGeometries(parts)!;
+}
+
+/** Instanced people that walk: limbs swing by a per-instance phase and pace; heads get a skin tone. */
+function personMaterial(): THREE.MeshStandardMaterial {
+  const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.65, emissive: 0x1c1712 });
+  m.userData.time = { value: 0 };
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uTime = m.userData.time;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float part; attribute vec2 aWalk; uniform float uTime; varying float vHead; varying float vSkin;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        float sw = sin(uTime * 9.0 + aWalk.x * 6.283) * 0.6 * aWalk.y;
+        float ap = abs(part);
+        if (ap > 0.5 && ap < 1.5) {
+          float a = sw * sign(part); vec3 p = transformed - vec3(0.0, 0.055, 0.0);
+          transformed = vec3(p.x, p.y * cos(a) - p.z * sin(a), p.y * sin(a) + p.z * cos(a)) + vec3(0.0, 0.055, 0.0);
+        } else if (ap > 1.5 && ap < 2.5) {
+          float a = -sw * sign(part) * 0.8; vec3 p = transformed - vec3(0.0, 0.103, 0.0);
+          transformed = vec3(p.x, p.y * cos(a) - p.z * sin(a), p.y * sin(a) + p.z * cos(a)) + vec3(0.0, 0.103, 0.0);
+        }
+        transformed.y += abs(sw) * 0.004;
+        vHead = step(2.5, part); vSkin = fract(aWalk.x * 3.7);`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vHead; varying float vSkin;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        diffuseColor.rgb = mix(diffuseColor.rgb, mix(vec3(0.28, 0.17, 0.11), vec3(0.92, 0.76, 0.64), vSkin), vHead);`);
+  };
+  return m;
+}
+
+/** A building that moves from an old height to a new one when the city changes. */
+interface Grow { mesh: THREE.InstancedMesh; x: Float32Array; z: Float32Array; sx: Float32Array; sz: Float32Array; from: Float32Array; to: Float32Array; delay: Float32Array; q: THREE.Quaternion[]; centred: boolean }
+
 interface Vehicle { ring: number; phase: number; speed: number; hop: number; path?: [THREE.Vector3, THREE.Vector3] }
 
 export class StreetView implements View {
@@ -88,7 +150,13 @@ export class StreetView implements View {
   private hist: History = { independence: false, speciation: false, collapse: false };
   private changed = '';
   private changedAt = -1e9;
-  private rise = 1;
+  private heights = new Map<string, number>();
+  private growers: Grow[] = [];
+  private growT = 0;
+  private walk: THREE.InstancedBufferAttribute | null = null;
+  private prevX = new Float32Array(0);
+  private prevZ = new Float32Array(0);
+  private heading = new Float32Array(0);
   // people
   private agents: Agent[] = [];
   private pool: PersonBrief[] = [];
@@ -171,8 +239,11 @@ export class StreetView implements View {
     if (placeKey === this.placeKey && this.style) {
       this.changed = changes(this.style, st);
       if (this.changed) this.changedAt = performance.now();
-      this.rise = 0;
-    } else { this.changed = ''; this.rise = 1; }
+    } else { this.changed = ''; this.heights.clear(); }
+    const morph = placeKey === this.placeKey && this.heights.size > 0;
+    const prevHeights = this.heights;
+    this.heights = new Map();
+    this.growers = []; this.growT = 0;
     this.key = key; this.placeKey = placeKey; this.style = st;
     this.group.clear();
     this.city = new THREE.Group();
@@ -231,6 +302,7 @@ export class StreetView implements View {
     const fill = Math.min(1, pl.count / 40 / lots) * (0.75 + 0.25 * st.wealth);
     const n = Math.ceil(R / cell);
     const boxes: THREE.Matrix4[] = [], boxCol: THREE.Color[] = [], domes: THREE.Matrix4[] = [], domeCol: THREE.Color[] = [], spires: THREE.Matrix4[] = [], spireCol: THREE.Color[] = [];
+    const boxKey: string[] = [], domeKey: string[] = [], spireKey: string[] = [];
     const glass: THREE.Matrix4[] = [], parks: THREE.Matrix4[] = [];
     const beacons: number[] = [], lampPos: number[] = [], tall: THREE.Vector3[] = [], bannerAt: THREE.Vector3[] = [];
     const byDistrict: Record<District, THREE.Vector3[]> = { centre: [], homes: [], farms: [], industry: [], port: [] };
@@ -274,38 +346,50 @@ export class StreetView implements View {
       const pos = new THREE.Vector3(x + jx, h / 2, z + jz);
       // the era decides the building's shape
       if (st.arch === 'huts' && d !== 'industry') {
-        domes.push(new THREE.Matrix4().compose(pos.setY(0), q, new THREE.Vector3(wd * 0.6, Math.max(0.12, h * 1.2), dd * 0.6)));
-        domeCol.push(tmp.clone());
+        domes.push(new THREE.Matrix4().compose(pos.setY(0), q, new THREE.Vector3(wd * 0.42, Math.max(0.12, h * 1.2), wd * 0.42)));
+        domeCol.push(tmp.clone()); domeKey.push(`${i},${j}`);
       } else if ((st.arch === 'spires' || st.arch === 'light') && h > 1.2 && d !== 'industry') {
         spires.push(new THREE.Matrix4().compose(pos, q, new THREE.Vector3(wd * 1.05, h, wd * 1.05)));
-        spireCol.push(ruined ? tmp.clone() : tmp.clone().multiplyScalar(1.7));
+        spireCol.push(ruined ? tmp.clone() : tmp.clone().multiplyScalar(1.7)); spireKey.push(`${i},${j}`);
         if (!ruined) beacons.push(x + jx, h + 0.06, z + jz);
         if (!ruined && h > 2.2) tall.push(new THREE.Vector3(x + jx, h * 0.62, z + jz));
       } else if (st.quiet && d === 'centre' && h > 1 && hash01(i, j, 81) < 0.5) {
         // data-temples: dark monoliths
         boxes.push(new THREE.Matrix4().compose(pos, q, new THREE.Vector3(wd * 0.5, h, dd * 1.1)));
-        boxCol.push(new THREE.Color(0.03, 0.035, 0.05));
+        boxCol.push(new THREE.Color(0.03, 0.035, 0.05)); boxKey.push(`${i},${j}`);
       } else {
         boxes.push(new THREE.Matrix4().compose(pos, q, new THREE.Vector3(wd, h, dd)));
-        boxCol.push(tmp.clone());
+        boxCol.push(tmp.clone()); boxKey.push(`${i},${j}`);
       }
       if (d === 'port' && h > 1) beacons.push(x + jx, h + 0.05, z + jz);
       if (st.banners && d === 'centre' && h > 1 && hash01(i, j, 51) < 0.4) bannerAt.push(new THREE.Vector3(x + jx + wd * 0.52, h * 0.7, z + jz));
     }
     this.topH = topH;
     const boxGeo = new THREE.BoxGeometry(1, 1, 1);
-    const instanced = (geo: THREE.BufferGeometry, ms: THREE.Matrix4[], cs: THREE.Color[]) => {
+    // each lot remembers its height; on a change, buildings move from old to new height, the centre first
+    const instanced = (geo: THREE.BufferGeometry, ms: THREE.Matrix4[], cs: THREE.Color[], keys: string[], centred: boolean) => {
       if (!ms.length) return;
       const mat = blockMaterial(st.glow);
       this.blockMats.push(mat);
       const im = new THREE.InstancedMesh(geo, mat, ms.length);
-      ms.forEach((mm, k) => { im.setMatrixAt(k, mm); im.setColorAt(k, cs[k]); });
+      const n = ms.length, gr: Grow = { mesh: im, x: new Float32Array(n), z: new Float32Array(n), sx: new Float32Array(n), sz: new Float32Array(n), from: new Float32Array(n), to: new Float32Array(n), delay: new Float32Array(n), q: [], centred };
+      const pp = new THREE.Vector3(), qq = new THREE.Quaternion(), ss = new THREE.Vector3();
+      ms.forEach((mm, k) => {
+        im.setColorAt(k, cs[k]);
+        mm.decompose(pp, qq, ss);
+        this.heights.set(keys[k], ss.y);
+        gr.x[k] = pp.x; gr.z[k] = pp.z; gr.sx[k] = ss.x; gr.sz[k] = ss.z; gr.to[k] = ss.y; gr.q.push(qq.clone());
+        gr.from[k] = morph ? prevHeights.get(keys[k]) ?? 0 : ss.y;
+        gr.delay[k] = Math.hypot(pp.x, pp.z) / R * 1.1 + hash01(k, 91) * 0.35;
+      });
+      this.growers.push(gr);
+      applyGrow(gr, morph ? 0 : 99);
       this.city.add(im);
     };
-    instanced(boxGeo, boxes, boxCol);
-    instanced(new THREE.SphereGeometry(1, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), domes, domeCol);
-    // grown spires: tapered, with a crown
-    instanced(new THREE.CylinderGeometry(0.28, 0.5, 1, 10).translate(0, 0, 0), spires, spireCol);
+    instanced(boxGeo, boxes, boxCol, boxKey, true);
+    instanced(hutGeometry(), domes, domeCol, domeKey, false);
+    // grown spires: tapered
+    instanced(new THREE.CylinderGeometry(0.28, 0.5, 1, 10), spires, spireCol, spireKey, true);
     if (glass.length) {
       const farmMat = st.mirrors
         ? new THREE.MeshStandardMaterial({ color: 0x5a4a20, emissive: 0xffd27a, emissiveIntensity: 0.35, roughness: 0.2, metalness: 0.8 })
@@ -321,21 +405,29 @@ export class StreetView implements View {
     }
     // the civic heart: a dome, an arcology, or a data-temple
     if (st.arcology && big) {
-      const arc = new THREE.Group();
-      [[R * 0.16, R * 0.12], [R * 0.11, R * 0.22], [R * 0.06, R * 0.34]].forEach(([wd, h], k) => {
-        const m = new THREE.Mesh(boxGeo, blockMaterial(st.glow));
-        this.blockMats.push(m.material as THREE.MeshStandardMaterial);
-        m.scale.set(wd, h, wd);
-        m.position.y = [R * 0.06, R * 0.12 + R * 0.11, R * 0.34 + R * 0.17][k] - (k ? R * 0.06 : 0);
-        arc.add(m);
-      });
+      // a stepped arcology: each tier narrower, its roof a green terrace
+      const arc = new THREE.Group(), mat = blockMaterial(st.glow);
+      this.blockMats.push(mat);
+      const terrace = new THREE.MeshStandardMaterial({ color: 0x2c4a30, emissive: 0x1d3a22, emissiveIntensity: 0.4, roughness: 0.9 });
+      let y = 0;
+      for (let k = 0; k < 5; k++) {
+        const wd = R * (0.19 - k * 0.032), h = R * (0.05 + k * 0.012);
+        const m = new THREE.Mesh(boxGeo, mat);
+        m.scale.set(wd, h, wd); m.position.y = y + h / 2;
+        const t = new THREE.Mesh(boxGeo, terrace);
+        t.scale.set(wd * 1.02, 0.03, wd * 1.02); t.position.y = y + h + 0.015;
+        arc.add(m, t);
+        y += h;
+      }
+      arc.rotation.y = Math.PI / 4;
       this.city.add(arc);
-      this.topH = Math.max(this.topH, R * 0.55);
+      this.topH = Math.max(this.topH, y);
     } else {
       this.city.add(new THREE.Mesh(new THREE.SphereGeometry(R * 0.06 + 0.3, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: st.roof, roughness: 0.6, metalness: 0.1 })));
     }
     if (st.glassDomes) for (const v of byDistrict.homes.filter((_, k) => k % 7 === 0).slice(0, 8)) {
-      const gd = new THREE.Mesh(new THREE.SphereGeometry(cell * G * 0.7, 24, 10, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xbfe6ff, transparent: true, opacity: 0.12, roughness: 0.1, metalness: 0.6, depthWrite: false }));
+      // glass over a neighbourhood: faint ribs, no glare
+      const gd = new THREE.LineSegments(new THREE.WireframeGeometry(new THREE.SphereGeometry(cell * G * 0.7, 16, 6, 0, Math.PI * 2, 0, Math.PI / 2)), new THREE.LineBasicMaterial({ color: 0xbfe6ff, transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false }));
       gd.position.copy(v);
       this.city.add(gd);
     }
@@ -352,14 +444,19 @@ export class StreetView implements View {
       this.city.add(new THREE.LineSegments(sg, new THREE.LineBasicMaterial({ color: st.glow, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false })));
     }
     // light-farms: mirror canopies tilted to the star above the outer districts
-    if (st.mirrors) {
-      const nM = 60, mm = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({ color: 0xd9c08a, metalness: 1, roughness: 0.15, emissive: 0x3a2a10, side: THREE.DoubleSide }), nM);
-      for (let k = 0; k < nM; k++) {
-        const ang = hash01(k, 61) * Math.PI * 2, rr = R * (0.7 + hash01(k, 62) * 0.5);
-        q.setFromEuler(new THREE.Euler(-1.1, ang, 0));
-        mm.setMatrixAt(k, new THREE.Matrix4().compose(new THREE.Vector3(Math.cos(ang) * rr, topH * 0.8 + 1.5, Math.sin(ang) * rr), q, new THREE.Vector3(1.6, 1.0, 1)));
-      }
-      this.city.add(mm);
+    if (st.mirrors && glass.length) {
+      const spots = glass.filter((_, k) => k % 2 === 0).slice(0, 300);
+      const mm = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 0.04), new THREE.MeshStandardMaterial({ color: 0xeadcb8, metalness: 1, roughness: 0.06, emissive: 0x2a1e08 }), spots.length);
+      const posts = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.008, 0.008, 1, 4), new THREE.MeshStandardMaterial({ color: 0x55504a, metalness: 0.6, roughness: 0.5 }), spots.length);
+      const face = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0.88, -0.47).normalize());
+      const pp = new THREE.Vector3(), qq = new THREE.Quaternion(), ss = new THREE.Vector3();
+      spots.forEach((mm4, k) => {
+        mm4.decompose(pp, qq, ss);
+        const hgt = 0.55 + hash01(k, 63) * 0.15;
+        mm.setMatrixAt(k, new THREE.Matrix4().compose(new THREE.Vector3(pp.x, hgt, pp.z), face, new THREE.Vector3(ss.x * 0.9, ss.z * 0.6, 1)));
+        posts.setMatrixAt(k, new THREE.Matrix4().compose(new THREE.Vector3(pp.x, hgt / 2, pp.z), new THREE.Quaternion(), new THREE.Vector3(1, hgt, 1)));
+      });
+      this.city.add(mm, posts);
     }
     // solar fields outside the ring in the early years
     if (st.solar) {
@@ -442,13 +539,14 @@ export class StreetView implements View {
   /** Under ~300 people: a ring of habitat modules round a small dome, and a landing pad. */
   private buildOutpost(body: number, dome: boolean, st: Style): void {
     const mat = new THREE.MeshStandardMaterial({ color: st.body.clone().multiplyScalar(2.6), roughness: 0.6, metalness: 0.3 });
-    const geo = st.arch === 'huts' ? new THREE.SphereGeometry(0.32, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2) : new THREE.CylinderGeometry(0.22, 0.22, 0.75, 16);
+    const geo = st.arch === 'huts' ? hutGeometry().scale(0.32, 0.32, 0.32) : new THREE.CylinderGeometry(0.22, 0.22, 0.75, 16);
     const mods: THREE.Vector3[] = [];
     const win: number[] = [], col: number[] = [];
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2 + hash01(body, i) * 0.3, rr = 1 + (i % 2) * 0.55;
       const m = new THREE.Mesh(geo, mat);
-      if (st.arch !== 'huts') { m.rotation.z = Math.PI / 2; m.rotation.y = -a; m.position.y = 0.22; }
+      if (st.arch !== 'huts') { m.rotation.z = Math.PI / 2; m.position.y = 0.22; }
+      m.rotation.y = -a;
       m.position.x = Math.cos(a) * rr; m.position.z = Math.sin(a) * rr;
       this.city.add(m);
       win.push(m.position.x, 0.3, m.position.z);
@@ -498,7 +596,12 @@ export class StreetView implements View {
   }
 
   private buildPeople(): void {
-    this.figures = new THREE.InstancedMesh(new THREE.CapsuleGeometry(0.028, 0.07, 3, 8), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, emissive: 0x332a20 }), MAX_AGENTS);
+    const geo = personGeometry();
+    this.walk = new THREE.InstancedBufferAttribute(new Float32Array(MAX_AGENTS * 2), 2);
+    this.walk.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('aWalk', this.walk);
+    this.figures = new THREE.InstancedMesh(geo, personMaterial(), MAX_AGENTS);
+    this.prevX = new Float32Array(MAX_AGENTS); this.prevZ = new Float32Array(MAX_AGENTS); this.heading = new Float32Array(MAX_AGENTS);
     this.figures.count = 0;
     this.figures.frustumCulled = false;
     this.glows = dotCloud(MAX_AGENTS, 2, 9);
@@ -537,8 +640,8 @@ export class StreetView implements View {
   }
 
   frame(ctx: Ctx, dt: number): void {
-    // a city that has just changed rises into its new form
-    if (this.rise < 1) { this.rise = Math.min(1, this.rise + dt / 1.6); this.city.scale.y = 0.15 + 0.85 * (1 - (1 - this.rise) ** 3); }
+    // a city that has just changed grows into its new form, building by building
+    if (this.growers.length && this.growT < 2.4) { this.growT += dt; for (const g of this.growers) applyGrow(g, this.growT); }
     this.hour = ((ctx.t / DAY_SECONDS) * 24 + 7) % 24;
     const sunUp = Math.sin(((this.hour - 6) / 12) * Math.PI);
     const day = Math.max(0, sunUp), night = Math.min(1, Math.max(0, 0.35 - sunUp * 1.6));
@@ -581,7 +684,9 @@ export class StreetView implements View {
       const near = ctx.camera.position.distanceTo(ctx.controls.target) < Math.max(10, this.R * 0.6);
       const st = this.style;
       const tall = st?.figure.tall ?? 1, slim = st?.figure.slim ?? 1;
-      const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(slim, tall, slim), kidS = new THREE.Vector3(slim * 0.75, tall * 0.7, slim * 0.75), zero = new THREE.Vector3(0, 0, 0), p = new THREE.Vector3(), c = new THREE.Color();
+      const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(slim, tall, slim), kidS = new THREE.Vector3(slim * 0.75, tall * 0.7, slim * 0.75), zero = new THREE.Vector3(0, 0, 0), p = new THREE.Vector3(), c = new THREE.Color(), upv = new THREE.Vector3(0, 1, 0);
+      (this.figures.material as THREE.MeshStandardMaterial).userData.time.value = ctx.t;
+      const walk = this.walk!.array as Float32Array;
       if (ctx.t - this.lastCycle > 1.5 && this.pool.length) {
         this.lastCycle = ctx.t;
         for (let tries = 0; tries < 12 && this.pool.length; tries++) {
@@ -599,10 +704,17 @@ export class StreetView implements View {
         else if (this.mood.plague) c.setRGB(0.8, 0.95, 0.85);
         else if (kid) c.setRGB(0.75, 0.9, 1);
         else c.setRGB(1, 0.86, 0.68);
-        // clothes take on the culture's colours
-        if (st && !a.patrol) c.lerp(st.cloth, 0.35 + 0.3 * hash01(k, 71));
+        // clothes in the culture's colours, each person their own shade
+        if (st && !a.patrol) c.copy(st.cloth).offsetHSL((hash01(k, 71) - 0.5) * 0.3, (hash01(k, 72) - 0.5) * 0.3, (hash01(k, 73) - 0.5) * 0.35);
+        if (this.mood.plague && !a.patrol) c.lerp(new THREE.Color(0.85, 0.95, 0.88), 0.5);
         if (k === this.focus) c.setRGB(0.5, 0.92, 1);
-        m.compose(p.set(a.x, (kid ? 0.05 : 0.065) * tall, a.z), q, a.vis && near ? (kid ? kidS : s) : zero);
+        // face the way they're going; swing limbs when walking
+        const dx = a.x - this.prevX[k], dz = a.z - this.prevZ[k], moved = Math.hypot(dx, dz);
+        if (moved > 1e-4 && moved < 0.5) this.heading[k] = Math.atan2(dx, dz);
+        this.prevX[k] = a.x; this.prevZ[k] = a.z;
+        q.setFromAxisAngle(upv, this.heading[k]);
+        walk[k * 2] = hash01(k, 74); walk[k * 2 + 1] = moved > 1e-4 && moved < 0.5 ? 1 : 0;
+        m.compose(p.set(a.x, 0, a.z), q, a.vis && near ? (kid ? kidS : s) : zero);
         this.figures.setMatrixAt(k, m);
         this.figures.setColorAt(k, c);
         this.glows.pos.set([a.x, 0.09, a.z], k * 3);
@@ -610,6 +722,7 @@ export class StreetView implements View {
         this.glows.size[k] = a.vis ? (k === this.focus ? 2.6 + 0.6 * Math.sin(ctx.t * 4) : near ? 0.45 : 0.9) : 0;
       }
       this.figures.count = n;
+      this.walk!.needsUpdate = true;
       this.figures.instanceMatrix.needsUpdate = true;
       if (this.figures.instanceColor) this.figures.instanceColor.needsUpdate = true;
       this.glows.pts.geometry.setDrawRange(0, n);
@@ -659,6 +772,19 @@ export class StreetView implements View {
     if (f) out.push({ pos: this.w(new THREE.Vector3(f.x, 0.35, f.z)), text: f.p.name, sub: f.doing, strong: true, prio: 12 });
     return out;
   }
+}
+
+const gm = new THREE.Matrix4(), gp = new THREE.Vector3(), gs = new THREE.Vector3();
+/** Set each instance's height for `t` seconds into a change. */
+function applyGrow(g: Grow, t: number): void {
+  for (let k = 0; k < g.to.length; k++) {
+    const u = Math.min(1, Math.max(0, (t - g.delay[k]) / 0.7)), e = 1 - (1 - u) ** 3;
+    const h = g.from[k] + (g.to[k] - g.from[k]) * e;
+    gp.set(g.x[k], g.centred ? h / 2 : 0, g.z[k]);
+    gs.set(h > 1e-3 ? g.sx[k] : 0, Math.max(h, 1e-4), h > 1e-3 ? g.sz[k] : 0);
+    g.mesh.setMatrixAt(k, gm.compose(gp, g.q[k], gs));
+  }
+  g.mesh.instanceMatrix.needsUpdate = true;
 }
 
 function dotCloud(n: number, minPx = 2, maxPx = 9) {
