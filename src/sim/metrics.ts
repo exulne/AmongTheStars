@@ -52,7 +52,7 @@ export const SETTLEMENT_FIELDS = [
   'stage', 'pop', 'founded', 'parent', 'faction', 'energy', 'water', 'metals', 'volatiles', 'rare', 'he3',
   'food', 'capital', 'gdp', 'research', 'stability', 'happiness', 'gini', 'births', 'deaths', 'medianAge',
   'military', 'divergence', 'capacity', 'culture', 'imports', 'exports', 'energyRatio', 'shortage', 'robots',
-  'lastEvent', 'terraform',
+  'lastEvent', 'terraform', 'inbound',
 ] as const;
 export type SField = typeof SETTLEMENT_FIELDS[number];
 export const F = Object.fromEntries(SETTLEMENT_FIELDS.map((k, i) => [k, i])) as Record<SField, number>;

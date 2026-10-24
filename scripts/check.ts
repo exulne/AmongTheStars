@@ -34,7 +34,7 @@ function sameState(a: SimState, b: SimState): string | null {
   if (a.nSettled !== b.nSettled) return `nSettled ${a.nSettled} vs ${b.nSettled}`;
   const parts: [string, ArrayLike<number>, ArrayLike<number>][] = [
     ['S', a.S, b.S], ['g', a.g, b.g], ['techProg', a.techProg, b.techProg], ['techDone', a.techDone, b.techDone],
-    ['ships', a.ships, b.ships], ['settled', a.settled.subarray(0, a.nSettled), b.settled.subarray(0, b.nSettled)], ['rng', a.rng, b.rng],
+    ['ships', a.ships, b.ships], ['shipRetry', a.shipRetry, b.shipRetry], ['settled', a.settled.subarray(0, a.nSettled), b.settled.subarray(0, b.nSettled)], ['rng', a.rng, b.rng],
   ];
   for (const [name, x, y] of parts) {
     const i = eq(x, y);

@@ -42,6 +42,7 @@ export interface SimState {
   techDone: Float64Array;  // year unlocked, or -1
   ships: Float64Array;     // MAX_SHIPS × NSH
   settled: Int32Array;     // body ids with a settlement, in founding order
+  shipRetry: Float64Array; // per system: year before which a failed ship search is not retried
   nSettled: number;
   rng: RngState;
 }
@@ -79,7 +80,9 @@ export class Engine {
   // static per-body lookups
   private bSys: Int32Array; private bHab: Float64Array; private bFlux: Float64Array; private bG: Float64Array;
   private bRes: Float64Array; private bSettle: Uint8Array; private sysX: Float64Array; private sysY: Float64Array;
-  private sysZ: Float64Array; private sysRegion: Uint8Array; private grid = new Map<number, number[]>();
+  private sysZ: Float64Array; private sysRegion: Uint8Array; private nbr: Neighbours;
+  /** per system: neighbours before this index have nothing left to survey (a cache, rebuilt after restore) */
+  private surveyCursor: Int32Array;
   private sysBodies: number[][];
 
   constructor(world: World, seed: number) {
@@ -99,13 +102,9 @@ export class Engine {
     world.systems.forEach((s, i) => {
       this.sysX[i] = s.x; this.sysY[i] = s.y; this.sysZ[i] = s.z;
       this.sysRegion[i] = ({ sol: 0, local: 1, galaxy: 2, extra: 3 } as const)[s.region];
-      if (s.region === 'local' || s.region === 'sol') {
-        const key = this.cellKey(s.x, s.y, s.z);
-        let c = this.grid.get(key);
-        if (!c) this.grid.set(key, (c = []));
-        c.push(i);
-      }
     });
+    this.nbr = neighbours(world);
+    this.surveyCursor = this.nbr.start.slice();
 
     this.years = stepYears();
     this.series = new Float64Array(this.years.length * NGM);
@@ -124,11 +123,6 @@ export class Engine {
     this.recomputeFx();
   }
 
-  private static CELL = 20;
-  private cellKey(x: number, y: number, z: number): number {
-    const c = Engine.CELL;
-    return cellId(Math.floor(x / c), Math.floor(y / c), Math.floor(z / c));
-  }
 
   private initialState(rng: RngState): SimState {
     const nb = this.world.bodies.length;
@@ -137,7 +131,7 @@ export class Engine {
     const st: SimState = {
       step: 0, S, g: new Float64Array(NG), techProg: new Float64Array(TECHS.length),
       techDone: new Float64Array(TECHS.length).fill(-1), ships: new Float64Array(MAX_SHIPS * NSH),
-      settled: new Int32Array(nb), nSettled: 0, rng,
+      settled: new Int32Array(nb), nSettled: 0, rng, shipRetry: new Float64Array(this.world.systems.length),
     };
     st.g[G.era] = 0;
     st.g[G.launchCap] = 5000;
@@ -531,13 +525,16 @@ export class Engine {
         if (fx.ftl > 0 && stg >= STAGE.HUB && this.rand() < 0.25 * fx.ftl) {
           target = this.pickRemote(fx.ftl2 > 0 && this.rand() < 0.3 ? 3 : 2); ftlTrip = true;
         } else {
+          // a home with nothing left in range stops looking for a while
+          if (year < st.shipRetry[this.bSys[b]]) continue;
           target = this.pickTarget(b, fx.shipSpeed * 400 * fx.voyage, false);
+          if (target < 0) st.shipRetry[this.bSys[b]] = year + 50;
         }
         if (target < 0) continue;
         const d = this.dist(b, target);
         const travel = ftlTrip ? 3 + this.rand() * 10 : d / fx.shipSpeed + 4;
         const colonists = fx.reliability > 0.25 ? 300 + this.rand() * 2000 : 1000 + this.rand() * 5000;
-        this.launch(b, target, year, year + travel, colonists, ftlTrip ? 1 : 0);
+        if (!this.launch(b, target, year, year + travel, colonists, ftlTrip ? 1 : 0)) continue;
         S[o + F.capital] -= shipCost;
         S[o + F.pop] -= colonists;
       }
@@ -549,29 +546,27 @@ export class Engine {
     return Math.hypot(this.sysX[s1] - this.sysX[s2], this.sysY[s1] - this.sysY[s2], this.sysZ[s1] - this.sysZ[s2]);
   }
 
-  /** Best unsettled body in another system within range of `from`. */
+  /** Best unsettled body in another system within range of `from`. Looks at the nearest candidates only. */
   private pickTarget(from: number, range: number, survey: boolean): number {
-    const S = this.st.S, s0 = this.bSys[from];
-    const x = this.sysX[s0], y = this.sysY[s0], z = this.sysZ[s0];
-    const R = Math.min(range, 45), c = Engine.CELL;
-    const cx = Math.floor(x / c), cy = Math.floor(y / c), cz = Math.floor(z / c), k = Math.ceil(R / c);
-    let best = -1, bestScore = 0;
-    for (let i = -k; i <= k; i++) for (let j = -k; j <= k; j++) for (let l = -k; l <= k; l++) {
-      const cell = this.grid.get(cellId(cx + i, cy + j, cz + l));
-      if (!cell) continue;
-      for (const s of cell) {
-        if (s === s0) continue;
-        const d = Math.hypot(this.sysX[s] - x, this.sysY[s] - y, this.sysZ[s] - z);
-        if (d > R) continue;
-        for (const t of this.sysBodies[s]) {
-          const ts = S[t * NF + F.stage];
-          if (!this.bSettle[t]) continue;
-          if (survey ? ts !== STAGE.NONE : ts !== STAGE.NONE && ts !== STAGE.SURVEY && ts !== STAGE.ABANDONED) continue;
-          if (!survey && this.bHab[t] < 0.1 && this.fx.habHostile < 0.1) continue;
-          const sc = (this.bHab[t] + 0.1 * (this.bRes[t * 5] + this.bRes[t * 5 + 1]) + (ts === STAGE.SURVEY ? 0.15 : 0)) / Math.pow(d + 3, 1.3) * (0.6 + 0.8 * this.rand());
-          if (sc > bestScore) { bestScore = sc; best = t; }
-        }
+    const S = this.st.S, s0 = this.bSys[from], N = this.nbr;
+    const R = Math.min(range, MAX_HOP);
+    let best = -1, bestScore = 0, seen = 0, prefix = survey;
+    for (let i = survey ? this.surveyCursor[s0] : N.start[s0], end = N.start[s0 + 1]; i < end && seen < 40; i++) {
+      const d = N.d[i];
+      if (d > R) break;
+      const seen0 = seen;
+      for (const t of this.sysBodies[N.sys[i]]) {
+        const ts = S[t * NF + F.stage];
+        if (!this.bSettle[t]) continue;
+        if (survey ? ts !== STAGE.NONE : ts !== STAGE.NONE && ts !== STAGE.SURVEY && ts !== STAGE.ABANDONED) continue;
+        if (!survey && ((this.bHab[t] < 0.1 && this.fx.habHostile < 0.1) || S[t * NF + F.inbound] > 0)) continue;
+        seen++;
+        const sc = (this.bHab[t] + 0.1 * (this.bRes[t * 5] + this.bRes[t * 5 + 1]) + (ts === STAGE.SURVEY ? 0.15 : 0)) / Math.pow(d + 3, 1.3) * (0.6 + 0.8 * this.rand());
+        if (sc > bestScore) { bestScore = sc; best = t; }
       }
+      // surveyed systems never become unsurveyed, so skip them next time
+      if (prefix && seen === seen0) this.surveyCursor[s0] = i + 1;
+      else prefix = false;
     }
     return best;
   }
@@ -587,10 +582,10 @@ export class Engine {
     return -1;
   }
 
-  private launch(from: number, to: number, depart: number, arrive: number, colonists: number, kind: number): void {
+  private launch(from: number, to: number, depart: number, arrive: number, colonists: number, kind: number): boolean {
     const st = this.st;
     const n = st.g[G.nShips];
-    if (n >= MAX_SHIPS) return;
+    if (n >= MAX_SHIPS) return false;
     const o = n * NSH;
     st.ships[o + SH.from] = from; st.ships[o + SH.to] = to; st.ships[o + SH.depart] = depart;
     st.ships[o + SH.arrive] = arrive; st.ships[o + SH.colonists] = colonists; st.ships[o + SH.kind] = kind;
@@ -598,6 +593,8 @@ export class Engine {
     st.g[G.shipsLaunched]++;
     // reserve the target so two ships don't race for it
     if (st.S[to * NF + F.stage] === STAGE.NONE) this.found(st, to, STAGE.SURVEY, 0, from, depart);
+    st.S[to * NF + F.inbound]++;
+    return true;
   }
 
   private ships(year: number): void {
@@ -608,16 +605,19 @@ export class Engine {
       if (sh[o + SH.arrive] > year) continue;
       const from = sh[o + SH.from], to = sh[o + SH.to], colonists = sh[o + SH.colonists];
       const voyage = sh[o + SH.arrive] - sh[o + SH.depart];
+      st.S[to * NF + F.inbound]--;
       const pOk = Math.max(0.2, Math.min(0.97, 0.82 + fx.reliability - 0.12 * (voyage / 200)));
       if (this.rand() < pOk) {
         const ts = st.S[to * NF + F.stage];
-        if (ts >= STAGE.OUTPOST && ts <= STAGE.MEGA) st.S[to * NF + F.pop] += colonists;
+        // someone got there first (a local crew): the ship just adds people
+        const joined = ts >= STAGE.OUTPOST && ts <= STAGE.MEGA;
+        if (joined) st.S[to * NF + F.pop] += colonists;
         else {
           this.found(st, to, colonists > 2000 ? STAGE.COLONY : STAGE.BASE, colonists, from, year);
           st.S[to * NF + F.capital] = colonists * 3e5;
         }
         if (this.rand() < 0.08) { st.S[to * NF + F.stability] = 0.4; this.log(EV['Mutiny in transit'], to, from); }
-        this.log(EV['Colony founded'], to, from, 1);
+        if (!joined) this.log(EV['Colony founded'], to, from, 1);
       } else {
         st.g[G.shipsLost]++;
         if (st.S[to * NF + F.stage] === STAGE.SURVEY && st.S[to * NF + F.pop] === 0) st.S[to * NF + F.parent] = -1;
@@ -792,6 +792,7 @@ export class Engine {
     return {
       step: st.step, S: st.S.slice(), g: st.g.slice(), techProg: st.techProg.slice(), techDone: st.techDone.slice(),
       ships: st.ships.slice(0, st.g[G.nShips] * NSH), settled: st.settled.slice(0, st.nSettled), nSettled: st.nSettled, rng: st.rng.slice(),
+      shipRetry: st.shipRetry.slice(),
     };
   }
 
@@ -801,8 +802,9 @@ export class Engine {
     const settled = new Int32Array(nb); settled.set(s.settled);
     this.st = {
       step: s.step, S: s.S.slice(), g: s.g.slice(), techProg: s.techProg.slice(), techDone: s.techDone.slice(),
-      ships, settled, nSettled: s.nSettled, rng: s.rng.slice(),
+      ships, settled, nSettled: s.nSettled, rng: s.rng.slice(), shipRetry: s.shipRetry.slice(),
     };
+    this.surveyCursor = this.nbr.start.slice();
     this.recomputeFx();
   }
 
@@ -824,6 +826,47 @@ export class Engine {
 
 function cellId(i: number, j: number, k: number): number {
   return ((i + 512) * 1024 + (j + 512)) * 1024 + (k + 512);
+}
+
+// Static per-world neighbour lists (CSR, sorted by distance) for systems a ship
+// can reach in one hop. Built once per world and shared by every engine.
+const MAX_HOP = 45;
+interface Neighbours { start: Int32Array; sys: Int32Array; d: Float32Array }
+const NBR_CACHE = new WeakMap<World, Neighbours>();
+function neighbours(world: World): Neighbours {
+  const hit = NBR_CACHE.get(world);
+  if (hit) return hit;
+  const sys = world.systems, C = MAX_HOP;
+  const grid = new Map<number, number[]>();
+  const cell = (v: number) => Math.floor(v / C);
+  for (const s of sys) {
+    if (s.region !== 'local' && s.region !== 'sol') continue;
+    const k = cellId(cell(s.x), cell(s.y), cell(s.z));
+    let c = grid.get(k);
+    if (!c) grid.set(k, (c = []));
+    c.push(s.id);
+  }
+  const start = new Int32Array(sys.length + 1), ids: number[] = [], ds: number[] = [];
+  const near: [number, number][] = [];
+  for (const s of sys) {
+    start[s.id] = ids.length;
+    if (s.region !== 'local' && s.region !== 'sol') continue;
+    near.length = 0;
+    const cx = cell(s.x), cy = cell(s.y), cz = cell(s.z);
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (let l = -1; l <= 1; l++) {
+      for (const o of grid.get(cellId(cx + i, cy + j, cz + l)) ?? []) {
+        if (o === s.id) continue;
+        const d = Math.hypot(sys[o].x - s.x, sys[o].y - s.y, sys[o].z - s.z);
+        if (d <= C) near.push([d, o]);
+      }
+    }
+    near.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    for (const [d, o] of near) { ids.push(o); ds.push(d); }
+  }
+  start[sys.length] = ids.length;
+  const out = { start, sys: Int32Array.from(ids), d: Float32Array.from(ds) };
+  NBR_CACHE.set(world, out);
+  return out;
 }
 
 function clamp01(x: number): number { return x < 0 ? 0 : x > 1 ? 1 : x; }
