@@ -167,7 +167,7 @@ export class Politics {
     if (worlds < 0) { worlds = 0; for (let m = 0; m < this.e.st.nSettled; m++) { const c = this.e.st.settled[m]; if (S[c * NF + F.faction] === cap && LIVING(S[c * NF + F.stage])) worlds++; } }
     // the name's form follows from why and how it began; catalogue numbers make poor flags
     const h = (k: number) => (Math.imul(cap + 1, 2654435761) ^ Math.imul(n + k, 40503)) >>> 0;
-    const choice = worlds >= 5 ? [2] : ({ [GRIEV.TAXES]: [0, 9], [GRIEV.LAG]: [1, 7, 5], [GRIEV.STABILITY]: [6, 3], [GRIEV.FAITH]: [8], [GRIEV.SIZE]: [3, 2], [GRIEV.FAR]: [4, 7, 1] } as Record<number, number[]>)[griev] ?? [4];
+    const choice = worlds >= 5 ? [2] : ({ [GRIEV.TAXES]: [0, 9], [GRIEV.LAG]: [1, 7, 5], [GRIEV.STABILITY]: [6, 3], [GRIEV.FAITH]: [8], [GRIEV.SIZE]: [3, 2], [GRIEV.FAR]: [4, 7, 1], [GRIEV.IDENTITY]: [3, 4], [GRIEV.RESTORE]: [0, 3] } as Record<number, number[]>)[griev] ?? [4];
     let form = choice[h(1) % choice.length];
     if (POLITY_FORMS[form].includes('{B}') && /\d/.test(this.e.world.bodies[cap].name)) form = X_FORMS[h(2) % X_FORMS.length];
     P[o + PC.form] = form;
@@ -261,11 +261,15 @@ export class Politics {
     const ratio = S[o + F.pop] / Math.max(1, S[old * NF + F.pop]);
     const c: [number, number, number][] = [
       [GRIEV.LAG, lag / 3, lag],
-      [GRIEV.TAXES, (S[o + F.gini] - 0.3) * 8, S[o + F.gini]],
+      [GRIEV.TAXES, (S[o + F.gini] - 0.36) * 6, S[o + F.gini]],
+      [GRIEV.IDENTITY, Math.min(0.5, (this.e.year - S[o + F.founded]) / 300), (this.e.year - S[o + F.founded]) / 28],
+      [GRIEV.RESTORE, Hh[b * NH + H.indep] > -1e8 ? 1.3 : 0, Hh[b * NH + H.indep]],
       [GRIEV.STABILITY, (0.65 - S[o + F.stability]) * 4, S[o + F.stability]],
       [GRIEV.FAITH, fb >= 0 && fb !== fo ? 2 * Hh[b * NH + H.sh0] : 0, fb],
       [GRIEV.SIZE, Math.min(1.2, 3 * ratio), ratio],
     ];
+    // every declaration mixes motives; the loudest one, give or take, is the one remembered
+    for (const x of c) x[1] += (this.e.rand() - 0.5) * 0.5;
     c.sort((x, y) => y[1] - x[1] || x[0] - y[0]);
     return [c[0][0], c[0][2]];
   }

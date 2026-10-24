@@ -83,7 +83,7 @@ export const PC = {
 export const NPC = 16;
 export const MAX_POL = 2048;
 /** why it left (PC.griev) */
-export const GRIEV = { NONE: 0, LAG: 1, TAXES: 2, STABILITY: 3, FAR: 4, FAITH: 5, SIZE: 6 } as const;
+export const GRIEV = { NONE: 0, LAG: 1, TAXES: 2, STABILITY: 3, FAR: 4, FAITH: 5, SIZE: 6, IDENTITY: 7, RESTORE: 8 } as const;
 export const REGIME = { CHARTER: 0, ASSEMBLY: 1, JUNTA: 2, THEOCRACY: 3, CORPORATE: 4, TECHNOCRACY: 5, MACHINE: 6, COMMITTEE: 7 } as const;
 
 export interface CivState {

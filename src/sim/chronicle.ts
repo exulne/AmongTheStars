@@ -59,6 +59,8 @@ const REGIME_WHY = [
   'most of its minds now run on machines, and they vote continuously',
   'stability has collapsed and nothing else is left standing',
 ];
+const NUM = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+const numWord = (n: number) => NUM[n] ?? String(n);
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 
 /** which kinds of event can give each era its name */
@@ -118,6 +120,16 @@ export class Chronicle {
 
   private name(b: number): string { return this.L.placeName(b); }
   private place(b: number): Seg { return isShipBody(b) || b < 0 ? this.name(b) : { t: this.name(b), kind: 'body', id: b }; }
+  /** ", until the Second Ceres War took it": the war in which b's faction was annexed between two years. */
+  private lostIn(b: number, from: number, to: number): string {
+    const W = this.e.st.hx.war;
+    for (let w = this.e.st.hx.hg[HG.nWar] - 1; w >= 0; w--) {
+      const o = w * NWC;
+      if (W[o + WC.outcome] === OUTCOME.ANNEX && W[o + WC.end] >= from && W[o + WC.end] <= to && (W[o + WC.a] === b || W[o + WC.b] === b) && W[o + WC.winner] !== b)
+        return ` until ${this.warName(w)} took it`;
+    }
+    return '';
+  }
   /** A side in a war: its polity's name, linked to its capital. */
   private side(f: number, p: number, places: number[]): Seg {
     places.push(f);
@@ -355,6 +367,9 @@ export class Chronicle {
         const g = P[o + PC.griev], v = P[o + PC.gval];
         const why = g === GRIEV.LAG ? `A question sent to ${this.name(ev.a)} takes ${(2 * v).toFixed(1)} years to be answered, and nobody there has ever seen ${this.name(ev.body)}'s sky.`
           : g === GRIEV.TAXES ? `The grievance is money: the richest tenth hold far more than their share (inequality ${pct(v)}), and the tithe to ${this.name(ev.a)} is paid by everyone else.`
+          : g === GRIEV.RESTORE ? `It was free once, from ${Math.round(2040 + v)}${this.lostIn(ev.body, v, y)}, and it has not forgotten.`
+          : g === GRIEV.IDENTITY ? (v > 12 ? `People have lived on ${this.name(ev.body)} for ${Math.round(v * 28)} years; ${this.name(ev.a)} is a name in old stories, and its orders are no longer obeyed.`
+            : `${v >= 2 ? `${cap(numWord(Math.round(v)))} generations have` : 'A generation has'} been born on ${this.name(ev.body)}; few of them have ever seen ${this.name(ev.a)}, and they no longer take its orders.`)
           : g === GRIEV.FAITH && v >= 0 ? `Most here follow ${this.faithName(v)}, and ${this.name(ev.a)} does not.`
           : g === GRIEV.SIZE ? `It has outgrown being ruled from elsewhere: ${v >= 1 ? `it now has ${v.toFixed(1)} times as many people as ${this.name(ev.a)}` : `it has ${pct(v)} as many people as ${this.name(ev.a)}`}.`
           : `After years of disorder (stability ${pct(v)}), people stop believing ${this.name(ev.a)} can keep them safe.`;
@@ -515,7 +530,7 @@ export class Chronicle {
   /** The named things of this future, for the UI: ages, faiths, polities and wars, with their dates. */
   annals(): Annals {
     const X = this.e.st.hx, T = X.faith, P = X.pol, W = X.war;
-    const GR = ['founded', 'light-lag', 'taxes', 'disorder', 'founded beyond reach', 'faith', 'size'];
+    const GR = ['founded', 'light-lag', 'taxes', 'disorder', 'founded beyond reach', 'faith', 'size', 'identity', 'restoration'];
     const CAUSE = ['resources', 'faith', 'independence', 'grudges'];
     const OUT = ['stalemate', 'annexation', 'reparations'];
     const history = new Map<number, { year: number; regime: string }[]>();
