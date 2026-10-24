@@ -1051,12 +1051,15 @@ function scoreBodies(q: string): { h: Hit; s: number }[] {
 
 function find(raw: string): Hit[] {
   const q = raw.toLowerCase().replace(/\s+/g, ' ');
-  const res = q.match(/^(?:resident|person|citizen)?\s*#\s*([\d.,_]+\s*[kmbt]?)\s*(?:(?:of|on|in|at|from)\s+(.*))?$/) ?? q.match(/^(?:resident|person|citizen)\s+#?\s*([\d.,_]+\s*[kmbt]?)\s*(?:(?:of|on|in|at|from)\s+(.*))?$/);
+  // "resident 12 of Titan", "#12 on Titan", "#12 titan"
+  const res = q.match(/^(?:resident|person|citizen)?\s*#\s*([\d.,_]+\s*[kmbt]?)(?:\s+(?:(?:of|on|in|at|from)\s+)?(.*))?$/) ?? q.match(/^(?:resident|person|citizen)\s+#?\s*([\d.,_]+\s*[kmbt]?)(?:\s+(?:(?:of|on|in|at|from)\s+)?(.*))?$/);
   if (res) {
     const n = Math.max(1, parseCount(res[1]) || 1);
     const where = res[2]?.trim();
     const bodies = where ? findBodies(where, 6) : ctx.selected?.kind === 'body' ? [{ kind: 'body' as const, id: ctx.selected.id, name: '', sub: '' }] : [];
+    if (!where && !bodies.length) return [{ kind: 'note', id: -1, name: `Resident #${n.toLocaleString('en-US')} of which world?`, sub: 'try "resident 12 of Titan", or select a world first' }];
     const living = bodies.filter((b) => alive(stageOf(ctx.snap, b.id)));
+    if (!living.length && bodies.length) return [{ kind: 'note', id: bodies[0].id, name: `Nobody lives on ${world.bodies[bodies[0].id].name} in ${Math.round(2040 + ctx.year)}`, sub: 'try a later year' }];
     const fits = living.filter((b) => n <= popOf(ctx.snap, b.id));
     if (!fits.length && living.length) {
       const b = living[0].id;

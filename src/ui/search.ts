@@ -66,7 +66,7 @@ export class Search {
     this.input.setAttribute('aria-expanded', String(open));
     this.list.innerHTML = this.hits.length
       ? this.hits.map((h, i) => `<li id="hit-${i}" role="option" data-i="${i}" aria-selected="${i === this.active}"><b>${esc(h.name)}</b><span>${esc(h.sub)}</span></li>`).join('')
-      : '<li class="none">Nothing by that name.</li>';
+      : '<li class="none">Nothing by that name. People are found by their place: "resident 12 of Titan".</li>';
     if (this.hits.length) this.input.setAttribute('aria-activedescendant', `hit-${this.active}`);
     else this.input.removeAttribute('aria-activedescendant');
   }
