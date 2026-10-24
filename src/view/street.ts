@@ -745,7 +745,7 @@ export class StreetView implements View {
     const out: Pickable[] = [];
     this.agents.forEach((a, k) => {
       if (!a.vis) return;
-      out.push({ pos: this.w(new THREE.Vector3(a.x, 0.08, a.z)), kind: 'person', id: k, name: `${a.p.name}, ${a.p.age}, ${a.p.job} · ${a.doing}`, weight: k === this.focus ? 4 : 0 });
+      out.push({ pos: this.w(new THREE.Vector3(a.x, 0.08, a.z)), kind: 'person', id: k, name: `${a.p.name}, ${Math.floor(a.p.age)}, ${a.p.job} · ${a.doing}`, weight: k === this.focus ? 4 : 0 });
     });
     return out;
   }
