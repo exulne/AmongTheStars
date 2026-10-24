@@ -427,12 +427,18 @@ function drawLabels(): void {
       // estimated from glyph counts so placement never forces a layout
       e.w = 10 + Math.max(c.l.text.length * 6, (c.l.sub?.length ?? 0) * 6); e.h = c.l.sub ? 26 : 15;
     }
-    // .label draws from (x + 0, y - 0.6em)
-    const box = { x0: c.x - 4, y0: c.y - e.h * 0.45, x1: c.x + e.w, y1: c.y + e.h * 0.6 };
-    const ax = r.left + c.x, ay = r.top + c.y;
-    let ok = box.y0 > 4 && box.x1 < r.width - 4 && !occluders.some((o) => ax + e.w > o.left && ax - 4 < o.right && ay + e.h * 0.6 > o.top && ay - e.h * 0.45 < o.bottom);
-    if (ok) for (const q of placed) if (box.x0 < q.x1 && box.x1 > q.x0 && box.y0 < q.y1 && box.y1 > q.y0) { ok = false; break; }
-    if (!ok) continue;
+    // try the label to the right of its point, then to the left
+    const fits = (x0: number, x1: number) => {
+      const b = { x0, y0: c.y - e!.h * 0.45, x1, y1: c.y + e!.h * 0.6 };
+      if (b.y0 < 4 || b.x0 < 4 || b.x1 > r.width - 4) return null;
+      if (occluders.some((o) => r.left + b.x1 > o.left && r.left + b.x0 < o.right && r.top + b.y1 > o.top && r.top + b.y0 < o.bottom)) return null;
+      for (const q of placed) if (b.x0 < q.x1 && b.x1 > q.x0 && b.y0 < q.y1 && b.y1 > q.y0) return null;
+      return b;
+    };
+    const right = fits(c.x - 4, c.x + e.w);
+    const box = right ?? fits(c.x - e.w, c.x + 4);
+    if (!box) continue;
+    e.el.classList.toggle('left', !right);
     placed.push(box);
     used.add(c.key);
     e.el.classList.toggle('strong', !!c.l.strong);

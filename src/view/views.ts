@@ -167,23 +167,24 @@ export class UniverseView implements View {
 
   constructor() {
     const U = 1 / 10000; // 1 unit = 10,000 ly
+    const G = 3; // galaxies drawn at three times true size so the Local Group reads as a map
     for (const gal of GALAXIES) {
       const [x, y, z] = gal.name === 'Milky Way' ? GALACTIC_CENTRE : galToXYZ(gal.l, gal.b, gal.dist);
       const pos = toScene(x, y, z, U, GALACTIC_CENTRE[0] * 0 + 0).sub(toScene(GALACTIC_CENTRE[0], 0, 0, U));
       let obj: THREE.Object3D;
       if (gal.kind === 'spiral') {
-        const R = gal.radius * U;
-        obj = makeGalaxy({ seed: gal.name.length * 31, count: gal.name === 'Milky Way' ? 60000 : gal.name === 'Andromeda' ? 70000 : 18000, radius: R, arms: gal.name === 'Triangulum' ? 2 : 4, pitch: gal.name === 'Andromeda' ? 9 : 13, bar: gal.name === 'Milky Way' ? 0.25 : 0.1, thickness: 0.03, sizeScale: R * 0.012 });
+        const R = gal.radius * U * G;
+        obj = makeGalaxy({ seed: gal.name.length * 31, count: gal.name === 'Milky Way' ? 90000 : gal.name === 'Andromeda' ? 120000 : 30000, radius: R, arms: gal.name === 'Triangulum' ? 2 : 4, pitch: gal.name === 'Andromeda' ? 9 : 13, bar: gal.name === 'Milky Way' ? 0.25 : 0.1, thickness: 0.03, sizeScale: R * 0.006 });
         if (gal.name === 'Andromeda') obj.rotation.set(1.35, 0.6, 0.2);
         if (gal.name === 'Triangulum') obj.rotation.set(0.9, -0.4, 0);
       } else {
-        const R = gal.radius * U;
-        obj = makeGalaxy({ seed: gal.name.length * 7, count: 9000, radius: R, arms: 1, pitch: 30, bar: 0.4, thickness: 0.2, sizeScale: R * 0.02, brightness: 0.8 });
+        const R = gal.radius * U * G;
+        obj = makeGalaxy({ seed: gal.name.length * 7, count: 12000, radius: R, arms: 1, pitch: 30, bar: 0.4, thickness: 0.2, sizeScale: R * 0.012, brightness: 0.8, dust: 0.05 });
         obj.rotation.set(0.7, 0.3, 0.4);
       }
       obj.position.copy(pos);
       this.group.add(obj);
-      const glow = glowSprite(0x7fe3ff, gal.radius * U * 2.2, 0);
+      const glow = glowSprite(0x7fe3ff, gal.radius * U * G * 2.2, 0);
       glow.position.copy(pos);
       this.group.add(glow);
       this.centres.push({ name: gal.name, pos, glow });
@@ -204,8 +205,11 @@ export class UniverseView implements View {
   }
 
   enter(ctx: Ctx): void {
-    ctx.controls.target.set(0, 0, 0);
-    ctx.camera.position.set(60, 90, 300);
+    // frame the Milky Way and Andromeda together
+    const m31 = this.centres.find((c) => c.name === 'Andromeda')!.pos;
+    const mid = m31.clone().multiplyScalar(0.6); // a little past halfway: the inspector covers the right edge
+    ctx.controls.target.copy(mid);
+    ctx.camera.position.copy(mid).add(new THREE.Vector3(-m31.z, 0, m31.x).normalize().multiplyScalar(200)).add(new THREE.Vector3(0, 40, 0));
   }
 
   sync(ctx: Ctx): void {
@@ -242,7 +246,7 @@ export class UniverseView implements View {
   labels(): Label[] {
     return this.centres.map((c) => {
       const n = this.colonies.get(c.name) ?? 0;
-      return { pos: c.pos, text: c.name, sub: n ? `${fmtNum(n)} settlements` : 'untouched', strong: n > 0, ref: { kind: 'galaxy' as const, id: GALAXIES.findIndex((g) => g.name === c.name), name: c.name }, prio: c.name === 'Milky Way' ? 10 : 5 - c.pos.length() / 1000 };
+      return { pos: c.pos, text: c.name, sub: n ? `${fmtNum(n)} settlements` : 'untouched', strong: n > 0, ref: { kind: 'galaxy' as const, id: GALAXIES.findIndex((g) => g.name === c.name), name: c.name }, prio: c.name === 'Milky Way' ? 10 : c.name === 'Andromeda' ? 8 : 5 - c.pos.length() / 1000 };
     });
   }
 }
