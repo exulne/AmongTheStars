@@ -464,7 +464,7 @@ inspector.api = {
 };
 inspector.onAnnals = (a) => { timeline.setAges(a?.ages ?? []); calendar.annals = a; timeline.refresh(); };
 inspector.onSelect = (p) => select(p);
-setShipApi((f, t, d) => sim.ship(f, t, d), () => refreshPanels());
+setShipApi((f, t, d) => sim.ship(f, t, d), () => refreshPanels(), (b, y) => sim.residents(b, y, 0, 6));
 inspector.onYear = (y) => timeline.set(y, true);
 app.querySelector('#chronicle')!.addEventListener('click', () => {
   inspector.chronicleOpen = !inspector.chronicleOpen;

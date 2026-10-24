@@ -9,7 +9,7 @@ import { Chronicle, type Annals, type Entry } from './chronicle.ts';
 import { Lives, type Biography, type PersonBrief } from './lives.ts';
 import { SocietyModel, type Society } from './society.ts';
 import { buildWorld } from './world.ts';
-import { periodOf } from './ledger.ts';
+import { SHIP_BODY, periodOf, periodStart } from './ledger.ts';
 import { handleData, isDataReq, type DataReq, type DataRes } from './dataApi.ts';
 
 const SNAP_EVERY = 20;
@@ -50,7 +50,7 @@ export type FromWorker =
   | { type: 'annals'; id: number; pending?: boolean; annals: Annals | null };
 
 /** A ship in transit, as the people model knows it: its name, who boarded, and the Chronicle's launch entry (with its captain). */
-export interface ShipInfo { name: string; n: number; generation: boolean; launch: Entry | null }
+export interface ShipInfo { name: string; n: number; generation: boolean; launch: Entry | null; body: number; born: [number, number][] }
 
 const world = buildWorld();
 let main: Engine | null = null;
@@ -198,7 +198,11 @@ function shipInfo(L: Lives, from: number, to: number, depart: number): ShipInfo 
     const v = L.voyage(e.b);
     if (!v || main.ledger === null) return null;
     const fl = main.ledger.flows[v.flow];
-    return { name: L.shipName(fl), n: v.n, generation: v.generation, launch: chron ? chron.entry(i) : null };
+    // a generation ship is a place: its own residents, and children born aboard period by period
+    const body = v.generation ? SHIP_BODY + e.b : -1, born: [number, number][] = [];
+    const br = body >= 0 ? main.ledger.births.get(body) : undefined;
+    if (br) for (let p = periodOf(v.depart), sum = 0; p < br.length && periodStart(p) <= v.arrive; p++) { sum += Math.max(0, br[p]); born.push([Math.min(periodStart(p + 1), v.arrive), Math.round(sum)]); }
+    return { name: L.shipName(fl), n: v.n, generation: v.generation, launch: chron ? chron.entry(i) : null, body, born };
   }
   return null;
 }
