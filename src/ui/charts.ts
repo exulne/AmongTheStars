@@ -310,6 +310,8 @@ export class ChartStrip {
       g.beginPath(); g.moveTo(hx + 0.5, top); g.lineTo(hx + 0.5, bottom); g.stroke();
     }
     const v = s.values(shownIdx);
+    // a place's history starts when it was founded: before that there is no reading, not its first one
+    if (s.years[shownIdx] > shownYear) { c.value.textContent = `— · ${fmtYear(shownYear)}`; c.value.title = 'No record yet in this year'; return; }
     const rk = isEra || !band ? null : this.getRank(c.key, shownIdx, v);
     c.value.textContent = `${isEra ? ERAS[v] : fmtUnit(v, s.def.unit)} · ${fmtYear(shownYear)}`;
     c.value.title = rk === null ? '' : `Higher than ${Math.round(rk * 100)}% of other futures in ${fmtYear(shownYear)}. The faint band is the middle 80% of them, the hairline their median.`;

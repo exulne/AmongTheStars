@@ -6,7 +6,8 @@ const SUP = '⁰¹²³⁴⁵⁶⁷⁸⁹';
 
 /** 4.0 × 10²⁸ */
 export function fmtSci(x: number, digits = 2): string {
-  const e = Math.floor(Math.log10(Math.abs(x)));
+  let e = Math.floor(Math.log10(Math.abs(x)));
+  if (Math.abs(Number((x / 10 ** e).toPrecision(digits))) >= 10) e++; // 9.99 rounds to 10: one more power
   const m = x / 10 ** e;
   return `${m.toPrecision(digits)} × 10${String(e).replace('-', '⁻').replace(/\d/g, (d) => SUP[Number(d)])}`;
 }
@@ -16,16 +17,26 @@ export function fmtNum(x: number, digits = 3): string {
   const a = Math.abs(x);
   if (a < 1000) return a < 10 && a % 1 !== 0 ? x.toFixed(2) : Math.round(x).toLocaleString('en-US');
   if (a >= 1e15) return fmtSci(x);
-  const k = Math.floor(Math.log10(a) / 3);
-  return (x / 10 ** (k * 3)).toPrecision(digits) + SUFFIX[k];
+  let k = Math.floor(Math.log10(a) / 3);
+  // 999,700 rounds to 1000K: call it 1.00M
+  if (Math.abs(Number((x / 10 ** (k * 3)).toPrecision(digits))) >= 1000) k++;
+  if (k >= SUFFIX.length) return fmtSci(x);
+  return mantissa(x / 10 ** (k * 3), digits) + SUFFIX[k];
+}
+
+/** toPrecision without its exponent form: 100 at 2 digits is "100", not "1.0e+2". */
+function mantissa(m: number, digits: number): string {
+  const s = m.toPrecision(digits);
+  return s.includes('e+') ? String(Math.round(m)) : s;
 }
 
 const SI = ['', 'k', 'M', 'G', 'T'];
 export function fmtSI(x: number, unit: string): string {
   if (!isFinite(x) || x === 0) return `0 ${unit}`;
   if (Math.abs(x) >= 1e15) return `${fmtSci(x)} ${unit}`;
-  const k = Math.max(0, Math.min(SI.length - 1, Math.floor(Math.log10(Math.abs(x)) / 3)));
-  return `${(x / 10 ** (k * 3)).toPrecision(3)} ${SI[k]}${unit}`;
+  let k = Math.max(0, Math.min(SI.length - 1, Math.floor(Math.log10(Math.abs(x)) / 3)));
+  if (k < SI.length - 1 && Math.abs(Number((x / 10 ** (k * 3)).toPrecision(3))) >= 1000) k++;
+  return `${mantissa(x / 10 ** (k * 3), 3)} ${SI[k]}${unit}`;
 }
 
 const SUN_W = 3.828e26;

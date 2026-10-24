@@ -47,7 +47,7 @@ export function queryHelp(): string {
   const extra = PLACE_EXTRAS.map(([k, d]) => `<code title="${esc(d)}">${k}</code>`).join(' ');
   return `<details class="q-help"><summary>How to write a query</summary>
     <p>Compare fields with <code>&lt; &lt;= &gt; &gt;= == !=</code>, combine with <code>&amp;&amp; || !</code> (or <code>and or not</code>), do arithmetic with <code>+ - * / ^</code>. Numbers can be <code>1e6</code>, <code>2.5M</code>, <code>3B</code>. Text compares with <code>==</code> or <code>~</code> (contains): <code>system ~ "ceti"</code>. Functions: <code>abs sqrt log ln exp min max floor ceil round pow if(c,a,b)</code>.</p>
-    <p>Examples: <code>stability &lt; 0.3 &amp;&amp; pop &gt; 1M</code> · <code>dist &gt; 10 and stage &gt;= 5</code> · <code>gdp / pop &gt; 1e5</code> · <code>capital == "Mars"</code></p>
+    <p>Examples: <code>stability &lt; 0.3 &amp;&amp; pop &gt; 1M</code> · <code>dist &gt; 10 and stage &gt;= 5</code> · <code>gdp / pop &gt; 1e5</code> · <code>allegiance == "Mars"</code></p>
     <p>Fields: ${fields}</p><p>Also: ${extra}</p></details>`;
 }
 

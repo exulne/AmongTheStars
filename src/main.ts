@@ -101,6 +101,9 @@ chartsToggle.addEventListener('click', () => {
   chartsToggle.textContent = hide ? 'Show charts' : 'Hide charts';
   chartsToggle.setAttribute('aria-expanded', String(!hide));
 });
+// a phone has room for the scene or the charts, not both with a card open: start with the charts folded
+const phone = matchMedia('(max-width: 40rem)');
+if (phone.matches) chartsToggle.click();
 
 // ------------------------------------------------------------------ 3D
 
@@ -119,11 +122,12 @@ controls.zoomSpeed = 1.3;
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-// the Starship rides in its own layer over the sim (before bloom, so its engines glow)
-const voyage = new Voyage(renderer);
-composer.addPass(voyage.pass);
 const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.48, 0.45, 0.7);
 composer.addPass(bloom);
+// the Starship rides in its own layer over the sim, after bloom: star-field levels bloom from low
+// brightness, and a sunlit steel hull would melt into a white disc (its engines glow on their own)
+const voyage = new Voyage(renderer);
+composer.addPass(voyage.pass);
 // the era tints the whole picture: grey and stuttering in a collapse, warm in a golden age
 const eraMood = new EraMood(bloom, renderer);
 composer.addPass(eraMood.pass);
@@ -213,7 +217,9 @@ let lookAsked = ''; // body:step of the last society look asked for
 
 function enterLevel(next: Level): void {
   views[level].group.visible = false;
+  const up = LEVELS.indexOf(next) < LEVELS.indexOf(level);
   level = next;
+  tooltip.hidden = true; // the thing it named is in the level we left
   const v = views[level];
   v.group.visible = true;
   sky.visible = level === 'galaxy' || level === 'local';
@@ -231,9 +237,20 @@ function enterLevel(next: Level): void {
   if (level === 'street' && matchMedia('(max-width: 40rem)').matches) inspector.el.classList.remove('open');
   // things inside a body mean nothing once we've left it; above the Local Group, this future is the subject
   if (!isMicro(level) && ctx.selected?.kind === 'thing' && MICRO_KIND.test(ctx.selected.ex ?? '')) select(level === 'multiverse' ? { kind: 'thing', ex: 'futu', id: sim.seed, name: '', pos: new THREE.Vector3() } : null);
+  // back up inside a body (from an atom to the cell, say): the card is this level's, not the deeper thing's
+  if (up && isMicro(level) && ctx.selected?.kind === 'thing' && MICRO_KIND.test(ctx.selected.ex ?? '')) {
+    const ex = MICRO_SELECT[level];
+    if (ex) select({ kind: 'thing', ex, id: 0, name: '', pos: new THREE.Vector3() });
+    else { select(null); if (micro.pid) { inspector.openPerson(micro.pid); inspector.el.classList.add('open'); } }
+  }
   if (isMicro(level) || level === 'multiverse') refreshPanels();
 }
-micro.onChange = () => { if (!isMicro(level)) return; views[level].sync(ctx); renderCrumbs(); refreshPanels(); };
+// a deep link into a person: the levels above them become where they live, once their life is read
+let placeFromBio = false;
+micro.onChange = () => {
+  const w = micro.bio?.where;
+  if (placeFromBio && w && world.bodies[w.body]) { placeFromBio = false; ctx.body = w.body; ctx.system = world.bodies[w.body].system; ctx.city = 0; writeHash(); }
+  if (!isMicro(level)) return; views[level].sync(ctx); renderCrumbs(); refreshPanels(); };
 
 // ------------------------------------------------------------------ legend and colour modes
 
@@ -490,7 +507,7 @@ function dive(p: Ref): void {
   else if (p.kind === 'humanspace') setLevel('local', p);
   else if (p.kind === 'system') setLevel('system', p, () => { ctx.system = p.id; });
   else if (p.kind === 'body') setLevel('planet', p, () => { ctx.body = p.id; ctx.system = world.bodies[p.id].system; });
-  else if (p.kind === 'city' && level === 'planet') setLevel('street', p, () => { ctx.city = p.id; });
+  else if (p.kind === 'city' && !(level === 'street' && ctx.city === p.id)) setLevel('street', p, () => { ctx.city = p.id; ctx.system = world.bodies[ctx.body].system; });
 }
 
 function fetchHistory(): void {
@@ -502,6 +519,8 @@ function fetchHistory(): void {
 
 function select(p: Pickable | null): void {
   const changed = p?.kind !== ctx.selected?.kind || p?.id !== ctx.selected?.id;
+  // picking something new shows its card, not the polity, chronicle or life that was open over it
+  if (changed && p) { inspector.polityOpen = null; inspector.chronicleOpen = false; if (inspector.personId) inspector.openPerson(null); }
   ctx.selected = p;
   history = null;
   fetchHistory();
@@ -561,14 +580,31 @@ canvas.addEventListener('wheel', (e) => {
   }
   // within one gesture keep pulling the same thing even as it slides out from under the cursor
   const keep = pull && locateRef(v, pull) ? pull : null;
-  const sel = ctx.selected && locateRef(v, ctx.selected) ? ctx.selected : null;
+  const sel = ctx.selected && locateRef(v, ctx.selected) ? enterableRef(ctx.selected) : null;
   const p: Ref | null = (gesture && keep) || pickAt(e.clientX, e.clientY) || keep || sel;
   if (!p || (level === 'street' && p.kind !== 'person') || (level === 'planet' && p.kind !== 'city')) return;
   pull = p;
   const at = locateRef(v, p);
   const dd = level === 'street' ? 1.1 : v.diveDist(ctx, p);
   if (at && dd > 0 && camera.position.distanceTo(at) < Math.max(dd, v.limits[0] * 1.4)) { pull = null; if (p.kind !== 'person') select(asPick(p)); dive(p); }
-}, { passive: true });
+  // capture, so the pick sees the view before OrbitControls zooms it and slides the thing out from under the cursor
+}, { passive: true, capture: true });
+// a label sits over its own point: scrolling on it scrolls the scene
+labelsEl.addEventListener('wheel', (e) => { e.preventDefault(); canvas.dispatchEvent(new WheelEvent('wheel', e)); }, { passive: false });
+
+/**
+ * A selection made deeper down (a city, a world) seen from higher up: wheeling into it enters
+ * whatever holds it at this level, so the Milky Way from the Local Group, human space from the galaxy.
+ */
+function enterableRef(r: Ref): Ref {
+  if (r.kind !== 'system' && r.kind !== 'body' && r.kind !== 'city') return r;
+  const sys = r.kind === 'system' ? r.id : r.kind === 'body' ? world.bodies[r.id].system : world.bodies[ctx.body].system;
+  if (level === 'universe') { const name = world.systems[sys].galaxy; return { kind: 'galaxy', id: GALAXIES.findIndex((g) => g.name === name), name }; }
+  if (level === 'galaxy') return world.systems[sys].region === 'galaxy' ? { kind: 'system', id: sys } : { kind: 'humanspace', id: 0 };
+  if (level === 'local' && r.kind !== 'system') return { kind: 'system', id: sys };
+  if (level === 'system' && r.kind === 'city') return { kind: 'body', id: ctx.body };
+  return r;
+}
 canvas.addEventListener('pointerdown', () => { pull = null; });
 
 /** Where a selected thing sits in a view: explained things (stars, asteroids, ships…) know their own place. */
@@ -988,13 +1024,15 @@ sim.onProgress = () => {
 
 // ------------------------------------------------------------------ URL: #future3-y1360-b123-lplanet
 
-let pendingYear: number | null = null, hashTimer = 0;
+let pendingYear: number | null = null, hashTimer = 0, leaving = false;
 const REF_CODE: Record<string, string> = { body: 'b', system: 's', galaxy: 'g', humanspace: 'h', city: 'c' };
 function writeHash(): void {
   clearTimeout(hashTimer);
+  if (leaving) return;
   hashTimer = window.setTimeout(() => {
     const sel = ctx.selected;
-    const parts = [`future${sim.seed}`, `y${Math.round(ctx.year)}`];
+    // a linked year still waiting for the run to reach it stays in the link
+    const parts = [`future${sim.seed}`, `y${Math.round(pendingYear ?? ctx.year)}`];
     if (sel) parts.push(sel.kind === 'city' ? `c${ctx.body}.${sel.id}` : sel.kind === 'thing' ? `x${sel.ex}.${sel.id}` : `${REF_CODE[sel.kind]}${sel.id}`);
     if (isMicro(level) && micro.pid) parts.push(`p${micro.pid.replace(/-/g, '~')}`, micro.hash());
     parts.push(`l${level}`, STAMP_CODE);
@@ -1110,12 +1148,15 @@ function scoreBodies(q: string): { h: Hit; s: number }[] {
 
 function find(raw: string): Hit[] {
   const q = raw.toLowerCase().replace(/\s+/g, ' ');
-  const res = q.match(/^(?:resident|person|citizen)?\s*#\s*([\d.,_]+\s*[kmbt]?)\s*(?:(?:of|on|in|at|from)\s+(.*))?$/) ?? q.match(/^(?:resident|person|citizen)\s+#?\s*([\d.,_]+\s*[kmbt]?)\s*(?:(?:of|on|in|at|from)\s+(.*))?$/);
+  // "resident 12 of Titan", "#12 on Titan", "#12 titan"
+  const res = q.match(/^(?:resident|person|citizen)?\s*#\s*([\d.,_]+\s*[kmbt]?)(?:\s+(?:(?:of|on|in|at|from)\s+)?(.*))?$/) ?? q.match(/^(?:resident|person|citizen)\s+#?\s*([\d.,_]+\s*[kmbt]?)(?:\s+(?:(?:of|on|in|at|from)\s+)?(.*))?$/);
   if (res) {
     const n = Math.max(1, parseCount(res[1]) || 1);
     const where = res[2]?.trim();
     const bodies = where ? findBodies(where, 6) : ctx.selected?.kind === 'body' ? [{ kind: 'body' as const, id: ctx.selected.id, name: '', sub: '' }] : [];
+    if (!where && !bodies.length) return [{ kind: 'note', id: -1, name: `Resident #${n.toLocaleString('en-US')} of which world?`, sub: 'try "resident 12 of Titan", or select a world first' }];
     const living = bodies.filter((b) => alive(stageOf(ctx.snap, b.id)));
+    if (!living.length && bodies.length) return [{ kind: 'note', id: bodies[0].id, name: `Nobody lives on ${world.bodies[bodies[0].id].name} in ${Math.round(2040 + ctx.year)}`, sub: 'try a later year' }];
     const fits = living.filter((b) => n <= popOf(ctx.snap, b.id));
     if (!fits.length && living.length) {
       const b = living[0].id;
@@ -1234,6 +1275,8 @@ function board(on: boolean): void {
   boardBtn.textContent = on ? 'Leave the Starship' : 'Board the Starship';
   boardBtn.setAttribute('aria-pressed', String(on));
   document.body.classList.toggle('aboard', on);
+  // on a phone the console and the bottom sheet share the same strip: fold the sheet to show the console
+  if (on && phone.matches) inspector.el.classList.remove('open');
   if (on) shipConsole.open(); else shipConsole.close();
 }
 boardBtn.addEventListener('click', () => board(!voyage.boarded));
@@ -1251,10 +1294,15 @@ function shipLight(): void {
 
 // ------------------------------------------------------------------ go
 
+// the app only ever replaces the hash, so a change here is someone pasting or editing a link: go there
+// (and stop writing our own hash first, or the reload would land back where we were)
+window.addEventListener('hashchange', () => { leaving = true; clearTimeout(hashTimer); setTimeout(() => location.reload(), 0); });
 const fromHash = readHash();
 if (fromHash.seed) seedInput.value = String(fromHash.seed);
 if (fromHash.pid) { micro.setPerson(fromHash.pid); micro.readHash(location.hash.slice(1)); }
 startRun(fromHash.seed || 1);
+// (after startRun, which forgets the people of any previous future)
+if (fromHash.pid && fromHash.level && isMicro(fromHash.level)) { placeFromBio = true; inspector.openPerson(fromHash.pid); inspector.el.classList.add('open'); }
 if (fromHash.sel) {
   const b = fromHash.sel.kind === 'body' ? fromHash.sel.id : fromHash.sel.kind === 'city' ? ctx.body : -1;
   if (b >= 0) { ctx.body = b; ctx.system = world.bodies[b].system; }
@@ -1263,6 +1311,12 @@ if (fromHash.sel) {
 }
 setLevel(fromHash.level ?? 'system', null, undefined, false);
 pendingYear = fromHash.year;
+
+/** Report a time trip once the state for its year has arrived, so "where are we" reads that year's numbers. */
+function arrived(y: number, done: (y: number) => void, tries = 0): void {
+  if (tries > 100 || (!inFlight && lastStep === sim.stepAt(y))) done(y);
+  else setTimeout(() => arrived(y, done, tries + 1), 50);
+}
 
 let last = performance.now(), frame = 0, lastYear = 0;
 function loop(now: number): void {
@@ -1273,7 +1327,7 @@ function loop(now: number): void {
     c.t += wall;
     const k = Math.min(1, c.t / c.dur), e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
     timeline.set(c.from + (c.to - c.from) * e, true);
-    if (k >= 1) { chronoTrip = null; c.done(ctx.year); }
+    if (k >= 1) { chronoTrip = null; arrived(ctx.year, c.done); }
   }
   govern(dt);
   ctx.t += dt;

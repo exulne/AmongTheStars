@@ -165,6 +165,7 @@ export class Inspector {
       if (act === 'system') this.onSelect({ kind: 'system', id, name: this.last.world.systems[id].name, pos: null! });
       if (act === 'body') this.onSelect({ kind: 'body', id, name: this.last.world.bodies[id].name, pos: null! });
       if (act === 'dive-body') this.onDive({ kind: 'body', id, name: this.last.world.bodies[id].name, pos: null! });
+      if (act === 'dive-city') this.onDive({ kind: 'city', id, name: this.last.selected?.name ?? '', pos: null! });
       if (act === 'dive-system') this.onDive({ kind: 'system', id, name: this.last.world.systems[id].name, pos: null! });
       if (act === 'page') { this.peoplePage = Math.max(0, this.peoplePage + id); this.render(this.last); }
       if (act === 'open-person') this.openPerson(t.dataset.pid!);
@@ -227,7 +228,7 @@ export class Inspector {
       const e = s.ex ? explain(s.ex, s.id, { world: c.world, snap: c.snap, year: c.year }) : null;
       html = e ? explainHtml(e, segsHtml) : `<h2>${esc(s.name)}</h2><p class="muted">Not drawn in this view.</p>`;
     }
-    if (s && !this.personId && this.polityOpen === null) html = `<button class="insp-close" type="button" data-act="close" aria-label="Close and show all of humanity">×</button>${html}`;
+    if (s && !this.personId && !this.chronicleOpen && this.polityOpen === null) html = `<button class="insp-close" type="button" data-act="close" aria-label="Close and show all of humanity">×</button>${html}`;
     const scroll = this.el.scrollTop;
     this.body.innerHTML = html;
     this.el.scrollTop = scroll;
@@ -370,7 +371,7 @@ export class Inspector {
     const v = (f: SField) => (S ? S[id * NF + F[f]] : 0);
     const st = S ? v('stage') : -1;
     const pop = v('pop');
-    const fly = `<p class="act"><button class="link" data-act="dive-body" data-id="${id}" type="button">Fly to ${esc(b.name)}</button></p>`;
+    const fly = `<p class="act">${city === undefined ? '' : `<button class="link" data-act="dive-city" data-id="${city}" type="button">Walk its streets</button> · `}<button class="link" data-act="dive-body" data-id="${id}" type="button">Fly to ${esc(b.name)}</button></p>`;
     const own = names.local(id), shown = own ?? b.name; // a world by its own name, the catalogue's underneath
     const header = `<h2>${esc(city === undefined ? shown : city === 0 ? `${shown} capital` : `${shown} settlement ${city}`)}</h2>${own ? `<p class="muted catalogue-id">${esc(b.name)} in the catalogue</p>` : ''}
       <p class="lede">${st >= 0 ? `<span class="pill" style="--c:${STAGE_CSS[st]}">${STAGE_NAMES[st]}</span> ` : ''}${b.kind} world in ${esc(sys.name)}${st >= 0 && v('founded') >= 0 && st !== STAGE.SURVEY ? `, settled ${fmtYear(v('founded'))}` : ''}${v('parent') >= 0 && st > STAGE.SURVEY ? ` from ${esc(c.world.bodies[v('parent')]?.name ?? '')}` : ''}.</p>`;

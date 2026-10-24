@@ -323,7 +323,7 @@ export class UniverseView implements View {
     const m31 = this.centres.find((c) => c.name === 'Andromeda')!.pos;
     const mid = m31.clone().multiplyScalar(0.5);
     ctx.controls.target.copy(mid);
-    ctx.camera.position.copy(mid).add(new THREE.Vector3(-m31.z, 0, m31.x).normalize().multiplyScalar(200)).add(new THREE.Vector3(0, 40, 0));
+    ctx.camera.position.copy(mid).add(new THREE.Vector3(-m31.z, 0, m31.x).normalize().multiplyScalar(330)).add(new THREE.Vector3(0, 60, 0));
   }
 
   sync(ctx: Ctx): void {
