@@ -329,6 +329,11 @@ crumbsEl.addEventListener('click', (e) => {
 });
 
 function dive(p: Ref): void {
+  // whatever we go into becomes the selection, so a stale one (from the URL, say) can't linger
+  if (p.kind === 'city' && level === 'planet') {
+    const b = world.bodies[ctx.body].name;
+    if (ctx.selected?.kind !== 'city' || ctx.selected.id !== p.id) select({ kind: 'city', id: p.id, name: p.id === 0 ? `${b} capital` : `${b} settlement ${p.id}`, pos: new THREE.Vector3() });
+  } else if ((p.kind === 'body' || p.kind === 'system') && (ctx.selected?.kind !== p.kind || ctx.selected.id !== p.id)) select(asPick(p));
   if (p.kind === 'galaxy' && (p.name ?? GALAXIES[p.id]?.name) !== 'Milky Way') {
     // no deeper level for other galaxies yet: frame it in the Local Group
     const at = level === 'universe' ? views.universe.locate(ctx, p) : null;
