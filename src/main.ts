@@ -141,6 +141,7 @@ function enterLevel(next: Level): void {
   controls.maxDistance = v.limits[1];
   renderCrumbs();
   renderLegend();
+  writeHash();
 }
 
 // ------------------------------------------------------------------ legend and colour modes
@@ -309,6 +310,7 @@ function select(p: Pickable | null): void {
   refreshEvents();
   refreshPanels();
   if (changed) inspector.toTop();
+  writeHash();
 }
 inspector.onSelect = (p) => select(p);
 inspector.onClose = () => select(null);
@@ -596,6 +598,7 @@ ticker.onPick = (it) => {
 let panelsAt = 0;
 timeline.onChange = (y) => {
   ctx.year = y;
+  if (!timeline.playing) writeHash();
   refreshForecast();
   pollTicker(y);
   const now = performance.now();
@@ -611,7 +614,43 @@ sim.onProgress = () => {
   charts.draw();
   if (!ctx.snap) requestState(ctx.year);
   if (sim.done) refreshForecast();
+  // a year from the URL waits until the run has reached it
+  if (pendingYear !== null && (sim.done || sim.years[sim.frontier] >= pendingYear)) { const y = pendingYear; pendingYear = null; timeline.set(y, true); }
 };
+
+// ------------------------------------------------------------------ URL: #future3-y1360-b123-lplanet
+
+let pendingYear: number | null = null, hashTimer = 0;
+const REF_CODE: Record<string, string> = { body: 'b', system: 's', galaxy: 'g', humanspace: 'h', city: 'c' };
+function writeHash(): void {
+  clearTimeout(hashTimer);
+  hashTimer = window.setTimeout(() => {
+    const sel = ctx.selected;
+    const parts = [`future${sim.seed}`, `y${Math.round(ctx.year)}`];
+    if (sel) parts.push(sel.kind === 'city' ? `c${ctx.body}.${sel.id}` : `${REF_CODE[sel.kind]}${sel.id}`);
+    parts.push(`l${level}`);
+    // replaceState so scrubbing doesn't flood the back button
+    try { window.history.replaceState(null, '', `#${parts.join('-')}`); } catch { /* sandboxed frames may refuse */ }
+  }, 400);
+}
+
+function readHash(): { seed: number; year: number | null; sel: Pickable | null; level: Level | null } {
+  const h = location.hash.slice(1);
+  const seed = Number(h.match(/future(\d+)/)?.[1]) || 0;
+  const y = h.match(/(?:^|-)y(\d+)/);
+  const lv = h.match(/(?:^|-)l(universe|galaxy|local|system|planet)/)?.[1] as Level | undefined;
+  const r = h.match(/(?:^|-)([bsghc])(\d+)(?:\.(\d+))?(?=-|$)/);
+  let sel: Pickable | null = null;
+  if (r) {
+    const id = Number(r[2]);
+    if (r[1] === 'b' && world.bodies[id]) sel = asPick({ kind: 'body', id });
+    else if (r[1] === 's' && world.systems[id]) sel = asPick({ kind: 'system', id });
+    else if (r[1] === 'g' && GALAXIES[id]) sel = { kind: 'galaxy', id, name: GALAXIES[id].name, pos: new THREE.Vector3() };
+    else if (r[1] === 'h') sel = asPick({ kind: 'humanspace', id: 0 });
+    else if (r[1] === 'c' && world.bodies[id] && r[3]) { ctx.body = id; sel = { kind: 'city', id: Number(r[3]), name: `${world.bodies[id].name} settlement ${r[3]}`, pos: new THREE.Vector3() }; }
+  }
+  return { seed, year: y ? Math.min(10000, Number(y[1])) : null, sel, level: lv ?? null };
+}
 
 function startRun(seed: number): void {
   runGen++;
@@ -620,7 +659,7 @@ function startRun(seed: number): void {
   sim.run(seed);
   timeline.set(0);
   ctx.year = 0;
-  try { location.hash = `future${seed}`; } catch { /* sandboxed frames may refuse */ }
+  writeHash();
 }
 seedInput.addEventListener('change', () => startRun(Math.max(1, Math.floor(Number(seedInput.value)) || 1)));
 app.querySelector('#reroll')!.addEventListener('click', () => {
@@ -737,10 +776,17 @@ search.onPick = (h) => {
 
 // ------------------------------------------------------------------ go
 
-const fromHash = Number(location.hash.match(/future(\d+)/)?.[1]);
-if (fromHash) seedInput.value = String(fromHash);
-startRun(fromHash || 1);
-setLevel('system', null, undefined, false);
+const fromHash = readHash();
+if (fromHash.seed) seedInput.value = String(fromHash.seed);
+startRun(fromHash.seed || 1);
+if (fromHash.sel) {
+  const b = fromHash.sel.kind === 'body' ? fromHash.sel.id : fromHash.sel.kind === 'city' ? ctx.body : -1;
+  if (b >= 0) { ctx.body = b; ctx.system = world.bodies[b].system; }
+  if (fromHash.sel.kind === 'system') ctx.system = fromHash.sel.id;
+  select(fromHash.sel);
+}
+setLevel(fromHash.level ?? 'system', null, undefined, false);
+pendingYear = fromHash.year;
 
 let last = performance.now(), frame = 0;
 function loop(now: number): void {
