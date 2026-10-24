@@ -575,6 +575,14 @@ function streetMood(): void {
     const leisure = era === 'Golden Age' || era === 'Renaissance' ? 0.7 : 0.2 + 0.3 * happy;
     street.setMood({ activity, leisure, war, plague, queue: short, faith: S[o + F.culture] > 0 });
   });
+  // the place's whole past, for monuments and ruins
+  sim.events(0, ctx.year, b, 400).then((evs) => {
+    if (g !== runGen) return;
+    const ever = (n: string) => evs.some((e) => EVENT_NAMES[e.type] === n && e.body === b);
+    const recent = (n: string) => evs.some((e) => EVENT_NAMES[e.type] === n && e.body === b && e.year > ctx.year - 80);
+    street.setHistory({ independence: ever('Independence'), speciation: ever('Speciation'), collapse: recent('Collapse') || era === 'Collapse' });
+    street.sync(ctx);
+  });
 }
 
 // ------------------------------------------------------------------ selection ring
