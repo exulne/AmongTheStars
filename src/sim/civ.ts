@@ -22,6 +22,11 @@ export const H = {
   indep: 13,      // on a faction's capital: year it declared independence
   indepFrom: 14,  // ... and the faction it left
   lastWar: 15,    // year this settlement last saw fighting
+  pol: 16,        // on a faction's capital: its row in the polity table (-1 none)
+  dGini: 17,      // added to the settlement's inequality target (regime)
+  mMil: 18,       // multiplies its military spending (regime)
+  adapt: 19,      // share of its people engineered for their world
+  upl: 20,        // share of its minds running on machines
 } as const;
 export const NH = 40;
 
@@ -48,7 +53,7 @@ export const FAITH_CAUSE = { DRIFT: 0, PLAGUE: 1, FAR: 2, BODY: 3, HUNGER: 4, SC
 const MILESTONES = [3, 10, 30, 100, 300];
 
 // global slots
-export const HG = { nFaith: 0, living: 1, nWar: 2, nGrudge: 3, nPend: 4 } as const;
+export const HG = { nFaith: 0, living: 1, nWar: 2, nGrudge: 3, nPend: 4, nPol: 5 } as const;
 const NHG = 64;
 
 // ---------------------------------------------------------------- wars, grudges, effects in flight
@@ -57,8 +62,9 @@ const NHG = 64;
 export const WC = {
   a: 0, b: 1, sys: 2, start: 3, end: 4, cause: 5, kind: 6, outcome: 7, winner: 8, front: 9, target: 10,
   sev: 11, killed: 12, energy: 13, from: 14, speed: 15, mass: 16, fA: 17, fB: 18, indep: 19,
+  pA: 20, pB: 21, // polity rows of the two sides when it began
 } as const;
-export const NWC = 20;
+export const NWC = 24;
 export const MAX_WAR = 4096;
 export const WAR_CAUSE = { RESOURCES: 0, FAITH: 1, INDEPENDENCE: 2, GRUDGE: 3 } as const;
 export const WAR_KIND = { LOCAL: 0, KINETIC: 1 } as const;
@@ -67,6 +73,19 @@ export const MAX_GRUDGE = 1024; // rows of (factionA < factionB, value)
 export const MAX_PEND = 2048;   // rows of (year, body, kind, magnitude, war)
 export const PEND = { MOBILIZE: 0, STRIKE: 1 } as const;
 
+// ---------------------------------------------------------------- polities
+
+/** The polity table: one row per government that ever was (an independence, a colony beyond reach, Earth). */
+export const PC = {
+  cap: 0, from: 1, year: 2, end: 3, alive: 4, griev: 5, gval: 6, form: 7, regime: 8, since: 9,
+  target: 10, pressure: 11, peakPop: 12, peakWorlds: 13, wars: 14, fromPol: 15,
+} as const;
+export const NPC = 16;
+export const MAX_POL = 2048;
+/** why it left (PC.griev) */
+export const GRIEV = { NONE: 0, LAG: 1, TAXES: 2, STABILITY: 3, FAR: 4, FAITH: 5, SIZE: 6, IDENTITY: 7, RESTORE: 8 } as const;
+export const REGIME = { CHARTER: 0, ASSEMBLY: 1, JUNTA: 2, THEOCRACY: 3, CORPORATE: 4, TECHNOCRACY: 5, MACHINE: 6, COMMITTEE: 7 } as const;
+
 export interface CivState {
   H: Float64Array;
   faith: Float64Array;
@@ -74,14 +93,15 @@ export interface CivState {
   war: Float64Array;
   grudge: Float64Array;
   pend: Float64Array;
+  pol: Float64Array;
 }
 
 export function cloneCiv(s: CivState): CivState {
-  return { H: s.H.slice(), faith: s.faith.slice(), hg: s.hg.slice(), war: s.war.slice(), grudge: s.grudge.slice(), pend: s.pend.slice() };
+  return { H: s.H.slice(), faith: s.faith.slice(), hg: s.hg.slice(), war: s.war.slice(), grudge: s.grudge.slice(), pend: s.pend.slice(), pol: s.pol.slice() };
 }
 export function civParts(s: CivState): [string, ArrayLike<number>][] {
   return [['hx.H', s.H], ['hx.faith', s.faith.subarray(0, s.hg[HG.nFaith] * NFC)], ['hx.hg', s.hg],
-    ['hx.war', s.war.subarray(0, s.hg[HG.nWar] * NWC)], ['hx.grudge', s.grudge.subarray(0, s.hg[HG.nGrudge] * 3)], ['hx.pend', s.pend.subarray(0, s.hg[HG.nPend] * 5)]];
+    ['hx.war', s.war.subarray(0, s.hg[HG.nWar] * NWC)], ['hx.grudge', s.grudge.subarray(0, s.hg[HG.nGrudge] * 3)], ['hx.pend', s.pend.subarray(0, s.hg[HG.nPend] * 5)], ['hx.pol', s.pol.subarray(0, s.hg[HG.nPol] * NPC)]];
 }
 
 const TECH_INDEX = new Map(TECHS.map((t, i) => [t.id, i]));
@@ -91,6 +111,7 @@ export class Civ {
   e: Engine;
   log: (type: number, body: number, a?: number, b?: number) => void;
   bSys: Int32Array;
+  bG: Float64Array;
   sysDist: Float64Array;
   pol: Politics;
   private sx: Float64Array; private sy: Float64Array; private sz: Float64Array;
@@ -98,12 +119,13 @@ export class Civ {
   private worlds = new Float64Array(MAX_FAITH);
   private adher = new Float64Array(MAX_FAITH);
   /** main run only: per body, the faith slots at the end of every demography period */
-  faithHist = new Map<number, { f: Int16Array; s: Uint8Array }>();
+  faithHist = new Map<number, { f: Int16Array; s: Uint8Array; a: Uint8Array; u: Uint8Array }>();
 
   constructor(e: Engine, log: (type: number, body: number, a?: number, b?: number) => void) {
     this.e = e; this.log = log;
     const w = e.world;
     this.bSys = Int32Array.from(w.bodies, (b) => b.system);
+    this.bG = Float64Array.from(w.bodies, (b) => b.g);
     this.sysDist = Float64Array.from(w.systems, (s) => s.dist);
     this.sx = Float64Array.from(w.systems, (s) => s.x); this.sy = Float64Array.from(w.systems, (s) => s.y); this.sz = Float64Array.from(w.systems, (s) => s.z);
     this.pol = new Politics(this);
@@ -112,7 +134,7 @@ export class Civ {
   init(nb: number): CivState {
     const H0 = new Float64Array(nb * NH);
     for (let b = 0; b < nb; b++) this.blank(H0, b);
-    return { H: H0, faith: new Float64Array(MAX_FAITH * NFC), hg: new Float64Array(NHG), war: new Float64Array(MAX_WAR * NWC), grudge: new Float64Array(MAX_GRUDGE * 3), pend: new Float64Array(MAX_PEND * 5) };
+    return { H: H0, faith: new Float64Array(MAX_FAITH * NFC), hg: new Float64Array(NHG), war: new Float64Array(MAX_WAR * NWC), grudge: new Float64Array(MAX_GRUDGE * 3), pend: new Float64Array(MAX_PEND * 5), pol: new Float64Array(MAX_POL * NPC) };
   }
 
   private blank(Hh: Float64Array, b: number): void {
@@ -120,7 +142,8 @@ export class Civ {
     Hh.fill(0, o, o + NH);
     Hh[o + H.fa0] = Hh[o + H.fa1] = Hh[o + H.fa2] = -1;
     Hh[o + H.plague] = Hh[o + H.disaster] = Hh[o + H.indep] = Hh[o + H.lastWar] = -1e9;
-    Hh[o + H.indepFrom] = -1;
+    Hh[o + H.indepFrom] = Hh[o + H.pol] = -1;
+    Hh[o + H.mMil] = 1;
     Hh[o + H.mGrowth] = Hh[o + H.mLaunch] = Hh[o + H.mResearch] = Hh[o + H.mDiv] = Hh[o + H.mSecede] = 1;
   }
 
@@ -131,7 +154,7 @@ export class Civ {
     return Math.hypot(this.sx[s1] - this.sx[s2], this.sy[s1] - this.sy[s2], this.sz[s1] - this.sz[s2]);
   }
   /** how warlike a faction's government makes it (1 = neutral) */
-  warMul(f: number): number { void f; return 1; }
+  warMul(f: number): number { return this.pol.fx(f).war; }
   /** a per-settlement multiplier (column of H) for the engine */
   mul(b: number, col: number): number { return this.X.H[b * NH + col]; }
 
@@ -145,6 +168,7 @@ export class Civ {
     if (parent < 0) return;
     const o = body * NH, p = parent * NH;
     for (let k = 0; k < 6; k++) Hh[o + k] = Hh[p + k];
+    Hh[o + H.upl] = Hh[p + H.upl]; // minds travel as they are; bodies are remade for each world
   }
 
   /** A ship's people join an existing settlement: their faiths mix in by head-count. */
@@ -304,6 +328,7 @@ export class Civ {
     for (const [sy, m] of sysMix) { let bf = -1, bv = 0; for (const [f, v] of m) if (v > bv) { bv = v; bf = f; } top.set(sy, bf); }
 
     const worlds = this.worlds.fill(0), adher = this.adher.fill(0); // whole arrays: a restore can rewind nFaith
+    const bioAdapt = this.has('bioAdapt'), upload = this.has('mindUpload');
     for (let n = 0; n < st.nSettled; n++) {
       const b = st.settled[n], o = b * NF;
       if (!LIVING(S[o + F.stage]) || S[o + F.pop] <= 0) continue;
@@ -353,11 +378,21 @@ export class Civ {
         tb += s * this.tenet(f, 0); te += s * this.tenet(f, 1); tm += s * this.tenet(f, 2); tc += s * this.tenet(f, 3); tx += s * this.tenet(f, 4);
       }
       S[o + F.culture] = top1 + 1;
-      const h = b * NH;
+      const h = b * NH, rf = this.pol.fx(S[o + F.faction]);
       Hh[h + H.mGrowth] = (1 - 0.12 * tc) * (1 + 0.06 * tx);
       Hh[h + H.mLaunch] = Math.max(0.3, 1 + 0.6 * tx);
-      Hh[h + H.mSecede] = Math.max(0.3, 1 + 0.6 * te);
-      Hh[h + H.mResearch] = 1 + 0.1 * tm;
+      Hh[h + H.mSecede] = Math.max(0.3, 1 + 0.6 * te) * rf.secede;
+      Hh[h + H.mResearch] = (1 + 0.1 * tm) * rf.research;
+      Hh[h + H.dGini] = rf.gini; Hh[h + H.mMil] = rf.mil;
+      // 6. bodies and minds: adaptation and uploading spread where the technology exists and the faith allows
+      if (bioAdapt) {
+        const tgt = Math.max(0, Math.min(0.95, 0.1 + 0.6 * Math.min(1, Math.abs(1 - this.bG[b])) + 0.3 * tb + 0.2 * tc));
+        Hh[h + H.adapt] += (tgt - Hh[h + H.adapt]) * Math.min(1, 0.01 * dt);
+      }
+      if (upload) {
+        const tgt = Math.max(0, Math.min(0.9, 0.05 + 0.35 * tm + 0.25 * tb + (S[o + F.stage] >= STAGE.HUB ? 0.2 : 0)));
+        Hh[h + H.upl] += (tgt - Hh[h + H.upl]) * Math.min(1, 0.006 * dt);
+      }
       Hh[h + H.mDiv] = Math.max(0.2, 1 + 0.6 * tb + 0.3 * tc);
     }
     // 6. the faith table: spread milestones and extinctions
@@ -388,9 +423,18 @@ export class Civ {
       const b = st.settled[n];
       if (!LIVING(st.S[b * NF + F.stage])) continue;
       let r = this.faithHist.get(b);
-      if (!r) this.faithHist.set(b, (r = { f: new Int16Array(NPERIODS * 3).fill(-1), s: new Uint8Array(NPERIODS * 3) }));
+      if (!r) this.faithHist.set(b, (r = { f: new Int16Array(NPERIODS * 3).fill(-1), s: new Uint8Array(NPERIODS * 3), a: new Uint8Array(NPERIODS), u: new Uint8Array(NPERIODS) }));
+      r.a[p] = Math.round(Hh[b * NH + H.adapt] * 255); r.u[p] = Math.round(Hh[b * NH + H.upl] * 255);
       for (let k = 0; k < 3; k++) { r.f[p * 3 + k] = Hh[b * NH + 2 * k]; r.s[p * 3 + k] = Math.round(Hh[b * NH + 2 * k + 1] * 255); }
     }
+  }
+
+  /** Shares of b's people adapted to their world and uploaded, at the end of period p (main run history). */
+  bodiesAt(b: number, p: number): { adapted: number; uploaded: number } {
+    const r = this.faithHist.get(b);
+    if (!r || p < 0) return { adapted: 0, uploaded: 0 };
+    p = Math.min(p, NPERIODS - 1);
+    return { adapted: r.a[p] / 255, uploaded: r.u[p] / 255 };
   }
 
   /** Faith slots of b at the end of period p (main run history). */

@@ -62,6 +62,8 @@ export class SimClient {
   society(body: number, step: number) { return this.ask<Msg<'society'>>({ type: 'society', body, step }); }
   ship(from: number, to: number, depart: number) { return this.ask<Msg<'ship'>>({ type: 'ship', from, to, depart }); }
   inventions() { return this.ask<Msg<'inventions'>>({ type: 'inventions' }); }
+  /** ages, faiths, polities and wars of this future, with their names */
+  annals() { return this.ask<Msg<'annals'>>({ type: 'annals' }); }
   state(step: number) { return this.ask<StateMsg>({ type: 'state', step }); }
   /** every living settlement's full row at a step */
   table(step: number) { return this.ask<Msg<'table'>>({ type: 'table', step }); }

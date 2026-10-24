@@ -80,6 +80,8 @@ const REACH_OUTER = 1, REACH_RAD = 2, REACH_DEEP = 4;
 const MINOR = new Set([EV.Famine, EV['Rich deposit found'], EV['Baby boom'], EV.Revolt, EV['Habitat breach'], EV['Probe survey']]);
 const TECH_INDEX = new Map(TECHS.map((t, i) => [t.id, i]));
 const TECH_REQ: number[][] = TECHS.map((t) => t.req.map((r) => TECH_INDEX.get(r)!));
+// shortest an age lasts, in years (Expansion, Consolidation, Golden Age, Stagnation, War, Pandemic, Collapse, Renaissance)
+const ERA_MIN = [50, 50, 40, 50, 12, 8, 30, 30];
 const TECH_FLOOR = TECHS.map((t) => t.earliest - 0.25 * (t.earliest - 2040));
 
 export class Engine {
@@ -297,7 +299,9 @@ export class Engine {
     let leave = row.reduce((a, b) => a + b, 0);
     if (leave > 0.95) { for (let k = 0; k < row.length; k++) row[k] *= 0.95 / leave; leave = 0.95; }
     const pStay = Math.pow(1 - leave, dt / 10);
-    if (this.rand() > pStay) {
+    // hysteresis: an age lasts at least a few decades (longer as civilisation grows), so moods do not flicker
+    const settled = year - g[G.eraSince] >= ERA_MIN[era] * (1 + Math.min(1.5, year / 2000));
+    if (settled && this.rand() > pStay) {
       let x = this.rand() * leave;
       for (let k = 0; k < row.length; k++) {
         if (k === era) continue;
@@ -484,7 +488,7 @@ export class Engine {
       const gdp = pop * y0 * tfp * Math.sqrt(energyOk) * Math.pow(Math.max(kpc, 1000) / 60000, 0.3) * (1 - 0.6 * short) * (stg >= STAGE.HUB ? 1.3 : 1);
       S[o + F.gdp] = gdp;
       S[o + F.capital] = Math.max(0, S[o + F.capital] + (0.22 * gdp - 0.04 * S[o + F.capital]) * dt);
-      S[o + F.military] = gdp * (0.015 + (g[G.era] === 4 ? 0.08 : 0) + (S[o + F.faction] !== b || isEarth ? 0 : 0.03));
+      S[o + F.military] = gdp * (0.015 + (g[G.era] === 4 ? 0.08 : 0) + (S[o + F.faction] !== b || isEarth ? 0 : 0.03)) * this.civ.mul(b, H.mMil);
       S[o + F.robots] = S[o + F.capital] / 2e6 * (fx.productivity > 1.4 ? 3 : 1);
 
       // research
@@ -497,7 +501,7 @@ export class Engine {
       const stabTarget = 0.72 - 0.55 * short - 0.3 * Math.max(0, S[o + F.gini] - 0.35) + fx.stability + E.stab * 12 - (crowd > 1 ? 0.2 : 0) - Math.min(0.15, lag / 200);
       S[o + F.stability] = clamp01(S[o + F.stability] + (stabTarget - S[o + F.stability]) * Math.min(1, 0.08 * dt) + (this.rand() - 0.5) * 0.03 * Math.sqrt(dt));
       S[o + F.happiness] = clamp01(0.25 + 0.4 * S[o + F.stability] + 0.25 * Math.min(1, gdp / Math.max(pop, 1) / 60000) - 0.4 * short + (this.rand() - 0.5) * 0.02);
-      const giniT = 0.28 + (stg >= STAGE.CITY ? 0.12 : 0) + 0.15 * short + (isEarth ? 0.25 : 0) - fx.stability;
+      const giniT = 0.28 + (stg >= STAGE.CITY ? 0.12 : 0) + 0.15 * short + (isEarth ? 0.25 : 0) - fx.stability + this.civ.mul(b, H.dGini);
       S[o + F.gini] = clamp01(S[o + F.gini] + (giniT - S[o + F.gini]) * Math.min(1, 0.03 * dt));
       const div0 = S[o + F.divergence];
       S[o + F.divergence] += dt * 0.0006 * fx.divergence * this.civ.mul(b, H.mDiv) * Math.pow(Math.abs(1 - this.bG[b]), 1.5) * (this.bSys[b] === 0 ? 0.4 : 1) * (isEarth ? 0 : 1);
