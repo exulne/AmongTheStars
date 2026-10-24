@@ -13,6 +13,7 @@ import { ChartStrip, globalSeries, type Series } from './ui/charts.ts';
 import { fmtNum } from './ui/format.ts';
 import { Inspector } from './ui/inspector.ts';
 import { Search, type Hit } from './ui/search.ts';
+import { NOTABLE, Ticker, describe } from './ui/ticker.ts';
 import { Timeline } from './ui/timeline.ts';
 import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionCss, stageLegend, type ColorMode } from './view/colorModes.ts';
 import { GalaxyView, LocalView, LEVELS, PlanetView, SystemView, UniverseView, alive, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
@@ -61,6 +62,8 @@ app.append(inspector.el);
 const charts = new ChartStrip(['pop', 'energy', 'gdp', 'systems', 'era'], () =>
   ctx.selected?.kind === 'body' ? HIST_FIELDS.map((f) => ({ key: `s:${f}`, label: `${ctx.world.bodies[ctx.selected!.id].name}: ${SETTLEMENT_LABELS[f]![0]}` })) : []);
 bottom.prepend(timeline.el);
+const ticker = new Ticker();
+timeline.el.querySelector('.tl-row')!.append(ticker.el);
 bottom.append(charts.el);
 new ResizeObserver(() => app.style.setProperty('--bottom-h', `${bottom.offsetHeight}px`)).observe(bottom);
 const chartsToggle = app.querySelector<HTMLButtonElement>('.charts-toggle')!;
@@ -445,8 +448,32 @@ charts.setSource((key): Series | null => {
 });
 charts.onPickYear = (y) => timeline.set(y, true);
 
+// ticker: during playback, ask for what happened since the last look
+let tickFrom = 0, tickAsk = 0, tickBusy = false;
+function pollTicker(y: number): void {
+  if (!timeline.playing || y < tickFrom) { tickFrom = y; return; }
+  const now = performance.now();
+  if (tickBusy || now - tickAsk < 350) return;
+  tickAsk = now; tickBusy = true;
+  const from = tickFrom;
+  tickFrom = y;
+  sim.events(from, y, undefined, 60).then((evs) => {
+    tickBusy = false;
+    ticker.push(evs.filter((e) => NOTABLE.has(e.type)).reverse().map((e) => describe(world, e)));
+  });
+}
+setInterval(() => ticker.prune(), 250);
+ticker.onPick = (it) => {
+  const r = it.ref;
+  if (!r || r.kind !== 'body') { select(null); return; }
+  select(asPick(r));
+  const sys = world.bodies[r.id].system;
+  if (level !== 'system' || ctx.system !== sys) setLevel('system', { kind: 'system', id: sys }, () => { ctx.system = sys; });
+};
+
 timeline.onChange = (y) => {
   ctx.year = y;
+  pollTicker(y);
   requestState(y);
   charts.setYear(y);
 };
@@ -461,6 +488,7 @@ sim.onProgress = () => {
 
 function startRun(seed: number): void {
   ctx.snap = null; lastStep = -1; events = []; history = null;
+  ticker.clear(); tickFrom = 0;
   sim.run(seed);
   timeline.set(0);
   ctx.year = 0;
