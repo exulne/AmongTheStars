@@ -370,5 +370,7 @@ input.tl-big:focus { outline: none; border-bottom-color: var(--accent); }
 #board[aria-pressed="true"] { color: var(--accent); }
 .aboard .legend { display: none; }
 @media (max-width: 40rem) {
-  .ship-console { left: 0; right: 0; width: auto; max-height: 38vh; bottom: var(--bottom-h, 200px); }
+  /* sits on the folded sheet's title bar, which still opens the card; an open card takes the strip instead */
+  .ship-console { left: 0; right: 0; width: auto; max-height: 38vh; bottom: calc(var(--bottom-h, 200px) + 2.9rem); background: rgba(4, 4, 7, 0.95); }
+  .aboard .inspector.open ~ .ship-console { display: none; }
 }

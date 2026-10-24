@@ -95,6 +95,9 @@ chartsToggle.addEventListener('click', () => {
   chartsToggle.textContent = hide ? 'Show charts' : 'Hide charts';
   chartsToggle.setAttribute('aria-expanded', String(!hide));
 });
+// a phone has room for the scene or the charts, not both with a card open: start with the charts folded
+const phone = matchMedia('(max-width: 40rem)');
+if (phone.matches) chartsToggle.click();
 
 // ------------------------------------------------------------------ 3D
 
@@ -1169,6 +1172,8 @@ function board(on: boolean): void {
   boardBtn.textContent = on ? 'Leave the Starship' : 'Board the Starship';
   boardBtn.setAttribute('aria-pressed', String(on));
   document.body.classList.toggle('aboard', on);
+  // on a phone the console and the bottom sheet share the same strip: fold the sheet to show the console
+  if (on && phone.matches) inspector.el.classList.remove('open');
   if (on) shipConsole.open(); else shipConsole.close();
 }
 boardBtn.addEventListener('click', () => board(!voyage.boarded));
