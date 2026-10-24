@@ -117,6 +117,8 @@ export class Engine {
   /** body → index in st.settled (and its age bins), -1 if never settled; derived, rebuilt on restore */
   private pos: Int32Array;
   private mu = new Float64Array(NAGE);
+  /** mean Gompertz factor per bin for the current ageing rate b: μ_k = A + B·gk[k] (+ under-5) */
+  private gk = new Float64Array(NAGE);
   /** per body: this step's mortality law [A, B, b, under-5] for the people ledger (main run only) */
   private mort: Float64Array;
 
@@ -255,6 +257,7 @@ export class Engine {
       else fx[key] *= size;
     }
     this.fx = fx;
+    for (let k = 0; k < NAGE; k++) this.gk[k] = binHazard(k, { A: 0, B: 1, b: fx.gompb, inf: 0 });
   }
 
   rand(): number { return next(this.st.rng); }
@@ -427,9 +430,8 @@ export class Engine {
       // unshielded), in famine and when overcrowded; medicine lowers B; only life extension moves b
       const mA = GM_A0 * fx.death + 0.003 * (1 - h) + 0.04 * short * short + (crowd > 1 ? 0.02 * (crowd - 1) : 0);
       const mB = GM_B0 * fx.gompB * Math.max(0.5, fx.death), mb = fx.gompb, mInf = infantHazard(gdppc);
-      const law = { A: mA, B: mB, b: mb, inf: mInf };
-      const mu = this.mu;
-      for (let k = 0; k < NAGE; k++) mu[k] = binHazard(k, law) * E.death;
+      const mu = this.mu, gk = this.gk;
+      for (let k = 0; k < NAGE; k++) mu[k] = (mA + mB * gk[k] + (k === 0 ? mInf : 0)) * E.death;
       this.mort[b * 4] = mA * E.death; this.mort[b * 4 + 1] = mB * E.death; this.mort[b * 4 + 2] = mb; this.mort[b * 4 + 3] = mInf * E.death;
       // fertility: the transition (ages.ts) plus colonists who want children while there is room
       // (colonial America TFR ≈ 7; bible §7.3 frontier growth ≈ 2.7%/yr; at TFR 1.6 + 2.5·(1 − N/K)
@@ -470,7 +472,7 @@ export class Engine {
       const deaths = deathsDt / dt;
       void pop0;
       S[o + F.births] = births; S[o + F.deaths] = deaths; S[o + F.imports] = Math.max(0, immig / dt) * 10;
-      S[o + F.tfr] = tfr; S[o + F.lifeExp] = lifeExpectancyBins(mu); S[o + F.medianAge] = medianAge(N, ao);
+      S[o + F.tfr] = tfr; if (st.step % 4 === 0 || S[o + F.lifeExp] === 0) S[o + F.lifeExp] = lifeExpectancyBins(mu); // smooth: every 4th step is plenty S[o + F.medianAge] = medianAge(N, ao);
 
       // economy
       const kpc = pop > 0 ? S[o + F.capital] / pop : 0;
@@ -547,7 +549,7 @@ export class Engine {
           const b = st.settled[n];
           fn(b, Math.max(0, Math.round(S[b * NF + F.pop])));
           // the period's mortality law, so the census's deaths fall by age as the engine's did
-          if (S[b * NF + F.pop] > 0) this.ledger!.setMortality(b, p, this.mort[b * 4], this.mort[b * 4 + 1], this.mort[b * 4 + 2], this.mort[b * 4 + 3]);
+          if (S[b * NF + F.pop] > 0 && this.mort[b * 4 + 1] > 0) this.ledger!.setMortality(b, p, this.mort[b * 4], this.mort[b * 4 + 1], this.mort[b * 4 + 2], this.mort[b * 4 + 3]);
         }
       });
     }
