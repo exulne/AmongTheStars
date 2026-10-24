@@ -1,13 +1,13 @@
 // Small read-only questions explainers ask of the simulation state.
 
-import { STAGE, STAGE_NAMES } from '../sim/catalog.ts';
+import { STAGE, STAGE_NAMES, isAlive } from '../sim/catalog.ts';
 import type { StateMsg } from '../sim/client.ts';
 import { F, NF } from '../sim/metrics.ts';
 import type { World } from '../sim/world.ts';
 import { fmtNum } from '../ui/format.ts';
 import type { ExCtx, Fact } from './registry.ts';
 
-export const isAlive = (st: number) => st >= STAGE.OUTPOST && st <= STAGE.MEGA;
+export { isAlive };
 export const stageAt = (snap: StateMsg | null, b: number) => (snap ? snap.S[b * NF + F.stage] : -1);
 export const popAt = (snap: StateMsg | null, b: number) => (snap ? snap.S[b * NF + F.pop] : 0);
 export const fieldAt = (snap: StateMsg | null, b: number, f: keyof typeof F) => (snap ? snap.S[b * NF + F[f]] : 0);

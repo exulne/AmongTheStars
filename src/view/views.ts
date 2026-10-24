@@ -26,6 +26,7 @@ import { explainSky, type Observer } from '../explain/sky.ts';
 import { explainBackground } from '../explain/universe.ts';
 import { explainBelt, type BeltInfo, explainElevators, explainOrbits, explainRings, explainSats, explainSwarm } from '../explain/worlds.ts';
 import { explainLocalRings } from '../explain/local.ts';
+import { explainWorks } from '../explain/orbitals.ts';
 
 export type Level = 'universe' | 'galaxy' | 'local' | 'system' | 'planet' | 'street';
 export const LEVELS: Level[] = ['universe', 'galaxy', 'local', 'system', 'planet', 'street'];
@@ -782,6 +783,7 @@ export class SystemView implements View {
     this.edge = Math.max(40, ...this.vis.map((v) => v.orbitR)) * 1.35;
     this.trails.addTo(this.group);
     this.trails.explain('shipy');
+    explainWorks('starw', this.group, () => this.star.children, () => ({ body: -1, sys: this.builtFor }), 1);
   }
 
   private addBelt(world: World, R: number, seed: number, info: Omit<BeltInfo, 'centreR' | 'width'>, n = 1600, width = 2.2): void {
@@ -1018,6 +1020,7 @@ export class PlanetView implements View {
     this.orbit = new THREE.Group();
     this.group.add(this.orbit);
     explainElevators('elev', this.pivot, () => this.elevators, () => this.builtFor);
+    explainWorks('work', this.group, () => this.works.works, () => ({ body: this.builtFor, sys: ctx.world.bodies[this.builtFor].system }));
     this.cities = null; this.works.reset(); this.sats = null; this.elevators = [];
     this.cityKey = ''; this.satKey = -1; this.elevKey = -1; this.archKey = ''; this.arch = null;
   }

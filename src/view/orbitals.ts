@@ -69,6 +69,8 @@ export class Orbitals {
   summary = '';
 
   reset(): void { this.key = ''; this.held = []; this.fixed = []; this.spin = []; this.starLight = 1; this.summary = ''; }
+  /** everything built, each tagged `userData.work` (torus, oneill, bishop, panel, oring, ringworld, lattice) for src/explain */
+  get works(): readonly THREE.Object3D[] { return [...this.held, ...this.fixed]; }
 
   sync(orbit: THREE.Group, group: THREE.Group, snap: StateMsg | null, year: number, b: number, st: number, on: boolean): void {
     const rank = on ? tierRank(st) : -1;
@@ -97,6 +99,7 @@ export class Orbitals {
         q.setFromEuler(e.set(r.next() * 3, r.next() * 3, 0));
         m.compose(place(14, 23), q, s);
       }));
+      this.held[this.held.length - 1].userData.work = 'torus';
       parts.push(tech.oneill ? 'old Stanford tori' : 'Stanford tori');
     }
     // O'Neill cylinders fly in counter-rotating pairs
@@ -108,6 +111,7 @@ export class Orbitals {
         if (i % 2 === 0) { q.setFromEuler(e.set(r.next() * 3, r.next() * 3, 0)); place(14, 24); off.set(0.06, 0, 0).applyQuaternion(q); }
         m.compose(p.clone().addScaledVector(off, i % 2 ? 1 : -1), q, s);
       }));
+      this.held[this.held.length - 1].userData.work = 'oneill';
       parts.push("O'Neill cylinder pairs");
     }
     // Bishop rings: a few huge thin rings, land on the inside
@@ -118,6 +122,7 @@ export class Orbitals {
         const ring = new THREE.Mesh(new THREE.TorusGeometry(R, 0.04, 6, 96), RING_MAT);
         ring.position.copy(place(15, 26, 0.25));
         ring.rotation.set(r.next() * 3, r.next() * 3, 0);
+        ring.userData.work = 'bishop';
         this.held.push(ring); this.spin.push(ring);
       }
       parts.push('Bishop rings');
@@ -133,6 +138,7 @@ export class Orbitals {
         q.setFromUnitVectors(new THREE.Vector3(0, 0, 1), p.clone().normalize());
         m.compose(p, q, s);
       }));
+      this.held[this.held.length - 1].userData.work = 'panel';
       parts.push(swarmWorld ? 'a swarm closing round the world' : 'swarm collectors');
     }
     for (const o of this.held) orbit.add(o);
@@ -141,6 +147,7 @@ export class Orbitals {
     if (rank === 2) {
       const ring = new THREE.Mesh(new THREE.TorusGeometry(17, 0.1, 12, 256), new THREE.MeshStandardMaterial({ color: 0xb8ad9e, metalness: 0.5, roughness: 0.5, transparent: true, opacity: 0.4, depthWrite: false }));
       ring.rotation.x = Math.PI / 2 + 0.2;
+      ring.userData.work = 'oring';
       this.fixed.push(ring);
       parts.push('an orbital ring');
     }
@@ -148,12 +155,14 @@ export class Orbitals {
       landTex ??= ringLandTex();
       const band = new THREE.Mesh(new THREE.CylinderGeometry(19, 19, 1.6, 256, 1, true), new THREE.MeshStandardMaterial({ map: landTex, color: 0xffffff, metalness: 0.2, roughness: 0.8, side: THREE.DoubleSide, emissive: 0x0b1a10, emissiveIntensity: 0.5 }));
       band.rotation.set(0.22, 0, 0.12);
+      band.userData.work = 'ringworld';
       this.fixed.push(band); this.spin.push(band);
       parts.unshift('a ring world');
     }
     // an uploaded world: a faint lattice of thought wrapped round a dark planet
     if (isTier(st, 'Uploaded')) {
       const lat = new THREE.LineSegments(new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(10.6, 3)), new THREE.LineBasicMaterial({ color: 0x7fffe0, transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false }));
+      lat.userData.work = 'lattice';
       this.fixed.push(lat); this.spin.push(lat);
       parts.unshift('a lattice of uploaded minds');
     }
@@ -214,6 +223,7 @@ export class StarWorks {
         const shell = new THREE.Mesh(new THREE.IcosahedronGeometry(R, 3), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.16 - k * 0.025, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
         const wire = new THREE.LineSegments(new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(R, 2)), new THREE.LineBasicMaterial({ color: c, transparent: true, opacity: 0.55 - k * 0.08, blending: THREE.AdditiveBlending, depthWrite: false }));
         shell.add(wire);
+        shell.userData.work = 'shell'; shell.userData.k = k;
         this.parts.push(shell); this.shells.push(shell);
       });
     }
@@ -224,6 +234,7 @@ export class StarWorks {
         geo.translate(0, starR * 3.5, 0);
         const jet = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xffd8a0, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
         jet.rotation.z = sgn > 0 ? 0 : Math.PI;
+        jet.userData.work = 'jet';
         this.parts.push(jet); this.jets.push(jet);
       }
     }

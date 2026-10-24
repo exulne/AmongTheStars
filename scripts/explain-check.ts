@@ -22,7 +22,7 @@ const reg = await import('../src/explain/registry.ts');
 const { Lives } = await import('../src/sim/lives.ts');
 const { EV } = await import('../src/sim/catalog.ts');
 const { specColor } = await import('../src/view/textures.ts');
-const { STAGE } = await import('../src/sim/catalog.ts');
+const { STAGE, STAGE_NAMES } = await import('../src/sim/catalog.ts');
 
 const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const seed = Number(args[0] ?? 1), atYear = Number(args[1] ?? 2500);
@@ -190,11 +190,14 @@ const count = (p: any) => p.geometry.attributes.position.count;
 // ---- system: belts, swarm, orbits, rings, sky, ships — Sol and the busiest other system
 {
   const busiest = (() => {
+    // the system with the most developed world (brain-stars and lifted stars show their works), else the most people
     let best = 0, bp = -1;
-    for (const b of settled) { const s = world.bodies[b].system; if (s === 0) continue; const p = snap.S[b * NF + F.pop]; if (p > bp) { bp = p; best = s; } }
+    for (const b of settled) { const s = world.bodies[b].system; if (s === 0) continue; const st = snap.S[b * NF + F.stage]; const p = (st <= STAGE.UPLOADED ? st : 0) * 1e15 + snap.S[b * NF + F.pop]; if (p > bp) { bp = p; best = s; } }
     return best;
   })();
-  for (const sys of [0, busiest]) {
+  // and every system whose top world is a brain-star or a lifted star, for the star works
+  const special = [...new Set([...settled].filter((b) => snap.S[b * NF + F.stage] === STAGE.BRAIN || snap.S[b * NF + F.stage] === STAGE.LIFTED).map((b) => world.bodies[b].system))].slice(0, 2);
+  for (const sys of [0, busiest, ...special]) {
     ctx.system = sys;
     V.system.enter(ctx); V.system.sync(ctx); V.system.frame(ctx);
     let belts = 0;
@@ -211,16 +214,18 @@ const count = (p: any) => p.geometry.attributes.position.count;
     for (const rg of (V.system as any).rings) show(checkCard('pring', rg.body));
     for (let i = 0; i < 9000; i += 450) checkCard('skys', i);
     if ((V.system as any).swarm) { for (let i = 0; i < 9000; i += 900) checkCard('swarm', i); show(checkCard('swarm', 0)); }
+    const star = (V.system as any).star as any;
+    star.children.forEach((o: any, slot: number) => { if (o.userData.work) show(checkCard('starw', slot * 10000)); });
     const tr = (V.system as any).trails;
     for (const id of new Set<number>(tr.headIds)) if (id >= 0) checkCard('shipy', id);
-    console.log(`system ${world.systems[sys].name}: ${belts} belts, ${orb.length} orbits, ${(V.system as any).rings.length} ring systems, swarm ${!!(V.system as any).swarm}, ${new Set(tr.headIds).size} ships`);
+    console.log(`system ${world.systems[sys].name}: ${star.children.filter((o: any) => o.userData.work).length} star works, ${belts} belts, ${orb.length} orbits, ${(V.system as any).rings.length} ring systems, swarm ${!!(V.system as any).swarm}, ${new Set(tr.headIds).size} ships`);
   }
 }
 
 // ---- planet: the most developed world, and Earth
 {
   let best = world.earth, bs = -1;
-  for (const b of settled) { const s = snap.S[b * NF + F.stage]; if (s <= STAGE.MEGA && s > bs) { bs = s; best = b; } }
+  for (const b of settled) { const s = snap.S[b * NF + F.stage]; if (s <= STAGE.UPLOADED && s > bs) { bs = s; best = b; } }
   for (const body of [world.earth, best]) {
     ctx.body = body; ctx.system = world.bodies[body].system;
     V.planet.enter(ctx); V.planet.sync(ctx); V.planet.frame(ctx);
@@ -229,14 +234,17 @@ const count = (p: any) => p.geometry.attributes.position.count;
     const sat = P.sats ? count(P.sats.pts) : 0;
     for (let i = 0; i < sat; i += Math.ceil(sat / 30)) checkCard('sat', i);
     if (sat) show(checkCard('sat', 0));
-    const nh = P.habitats.reduce((s: number, m: any) => s + m.count, 0);
-    for (let i = 0; i < nh; i += Math.max(1, Math.ceil(nh / 30))) checkCard('hab', i);
-    if (nh) { show(checkCard('hab', 0)); show(checkCard('hab', nh - 1)); }
+    const works = P.works.works as any[];
+    const tally: string[] = [];
+    works.forEach((o, slot) => {
+      const n = o.isInstancedMesh ? o.count : 1;
+      tally.push(`${n} ${o.userData.work}`);
+      for (let k = 0; k < n; k += Math.max(1, Math.ceil(n / 12))) { const c = checkCard('work', slot * 10000 + k); if (k === 0) show(c); }
+    });
     for (let i = 0; i < P.elevators.length; i++) checkCard('elev', i);
     if (P.elevators.length) show(checkCard('elev', 0));
-    if (P.ringWorld) show(checkCard('rworld', 0));
     for (let i = 0; i < 9000; i += 900) checkCard('skyp', i);
-    console.log(`planet ${world.bodies[body].name}: ${sat} satellites, ${nh} habitats, ${P.elevators.length} elevators, ring world ${!!P.ringWorld}`);
+    console.log(`planet ${world.bodies[body].name} (${STAGE_NAMES[snap.S[body * NF + F.stage]]}): ${sat} satellites, ${P.elevators.length} elevators, works: ${tally.join(', ') || 'none'}`);
   }
 }
 
