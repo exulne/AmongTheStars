@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build && node scripts/artifact.mjs",
     "typecheck": "tsc --noEmit",
     "sim": "node --experimental-strip-types scripts/headless.ts",
-    "check": "node scripts/check.ts"
+    "check": "node scripts/check.ts && node scripts/people-check.ts",
+    "check:people": "node scripts/people-check.ts"
   },
   "devDependencies": {
     "@types/three": "^0.186.0",
