@@ -16,7 +16,17 @@ function quantile(xs: number[], q: number): number {
 }
 
 /** p10 / p50 / p90 band for one metric key, in the metric's own units. */
+// metrics the model doesn't predict directly but that follow from one it does
+const DERIVED: Record<string, [string, (v: number) => number]> = {
+  energy: ['kardashev', (k) => 10 ** (k * 10 + 6)],
+};
+
 export function fanFor(f: Forecast, key: string): Fan | null {
+  if (DERIVED[key]) {
+    const [src, fn] = DERIVED[key];
+    const base = fanFor(f, src);
+    return base && { years: base.years, lo: base.lo.map(fn), mid: base.mid.map(fn), hi: base.hi.map(fn) };
+  }
   const k = FORECAST_KEYS.indexOf(key);
   if (k < 0) return null;
   const fan: Fan = { years: [], lo: [], mid: [], hi: [] };
@@ -34,13 +44,11 @@ function eraWithin(f: Forecast, e: number, n: number): number {
 
 export function oddsHtml(f: Forecast, now: (key: string) => number): string {
   const end = f.years.length - 1;
-  const at = (key: string, t: number) => {
-    const fan = fanFor(f, key)!;
-    return { lo: fan.lo[t], mid: fan.mid[t], hi: fan.hi[t] };
-  };
   const line = (key: string, t: number) => {
     const d = GLOBAL_METRICS[GM[key]];
-    const v = at(key, t);
+    const fan = fanFor(f, key);
+    if (!fan) return '';
+    const v = { lo: fan.lo[t], mid: fan.mid[t], hi: fan.hi[t] };
     return `<dt>${d.label}, ${fmtYear(f.years[t])}</dt><dd class="num">${fmtUnit(v.mid, d.unit)}<span class="muted"> (${fmtUnit(v.lo, d.unit)} – ${fmtUnit(v.hi, d.unit)})</span></dd>`;
   };
   const growth = (key: string) => {
@@ -52,8 +60,8 @@ export function oddsHtml(f: Forecast, now: (key: string) => number): string {
   const likely = lastEra.indexOf(Math.max(...lastEra));
   const pct = (x: number) => `${Math.round(x * 100)}%`;
   return `
-    <p class="lede">A ${(f.meta.params / 1000).toFixed(0)}k-parameter transformer read the last 640 years of this future and imagined ${f.samples.length} ways the next ${f.years.length * 10} could go. It learned from 360 other futures and has never seen this one's dice.</p>
-    <dl class="kv">
+    <p class="lede">A ${(f.meta.params / 1000).toFixed(0)}k-parameter transformer read the last 640 years of this future and imagined ${f.samples.length} ways the next ${f.years.length * 10} could go. It learned from 360 other futures and has never seen this one's dice. Tested on 40 futures it never saw, it cut the error of a "nothing changes" guess by 71% for population 400 years out and 96% for energy, but it is no better than that guess at predicting stability.</p>
+    <dl class="odds">
       <dt>War breaks out within 100 years</dt><dd class="num">${pct(eraWithin(f, 4, 10))}</dd>
       <dt>Collapse within 300 years</dt><dd class="num">${pct(eraWithin(f, 6, 30))}</dd>
       <dt>Golden age within 100 years</dt><dd class="num">${pct(eraWithin(f, 2, 10))}</dd>

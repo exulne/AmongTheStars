@@ -130,7 +130,8 @@ button, select, input { font: inherit; color: inherit; }
 /* bottom: timeline and charts */
 .bottom { position: absolute; left: 0; right: 0; bottom: 0; padding: 0.6rem max(16px, env(safe-area-inset-right, 0px)) max(10px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
   background: linear-gradient(180deg, rgba(2,2,4,0) 0, var(--wash) 1.4rem); display: grid; gap: 0.5rem; }
-.charts-toggle { position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); top: 0.6rem; font-size: 0.75rem; }
+.charts-toggles { position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); top: 0.6rem; display: flex; gap: 1rem; font-size: 0.75rem; }
+.forecast-toggle[aria-pressed="true"] { color: var(--accent); }
 .timeline { display: grid; gap: 0.3rem; }
 .tl-row { display: flex; align-items: baseline; gap: 1rem; }
 .tl-play { background: none; border: 1px solid var(--rule); padding: 0.05rem 0.7rem; cursor: pointer; font-size: 0.8rem; min-width: 4.2rem; }
@@ -192,3 +193,7 @@ input.tl-big:focus { outline: none; border-bottom-color: var(--accent); }
   .charts .chart:nth-child(n + 3) { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .xfade { display: none; } .tick { animation: none; } .sel-ring i + i { animation: none; } }
+.odds { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.15rem 0.8rem; margin: 0; font-size: 0.8125rem; }
+.odds dt { color: var(--quiet); min-width: 0; }
+.odds dd { margin: 0; text-align: right; }
+.odds dd .muted { display: block; font-size: 0.9em; }

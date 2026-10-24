@@ -16,6 +16,7 @@ export interface InspectorCtx {
   snap: StateMsg | null;
   year: number;
   globalRow: (col: number) => number;
+  forecast?: string;
   selected: Pickable | null;
   body: number;
   events: SimEvent[];
@@ -117,6 +118,7 @@ export class Inspector {
       <h2>Humanity in ${fmtYear(c.year)}</h2>
       <p class="lede">${esc(c.snap?.globals.era ?? '')} era. ${fmtNum(g('pop'))} people in ${fmtNum(g('settlements'))} settlements across ${fmtNum(g('systems'))} star system${g('systems') === 1 ? '' : 's'}.</p>
       ${this.kv(['pop', 'offEarth', 'interstellarPop', 'energy', 'kardashev', 'gdp', 'knowledge', 'research', 'stability', 'factions', 'wars', 'shipsInTransit', 'reach', 'shortage'].map(row))}
+      ${c.forecast ? `<h3>Psychohistory forecast</h3>${c.forecast}` : ''}
       <h3>Technology <span class="muted num">${done.length} / ${TECHS.length}</span></h3>
       <ul class="techs">${done.slice(0, 8).map((x) => `<li><span class="num">${fmtYear(x.y)}</span> ${esc(x.t.name)}</li>`).join('')}</ul>
       ${next.length ? `<p class="muted">Researching: ${next.map((t) => esc(t.name)).join(', ')}</p>` : ''}

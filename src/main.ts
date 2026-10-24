@@ -6,6 +6,8 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import './style.css';
 import { STAGE_NAMES } from './sim/catalog.ts';
+import { forecast, type Forecast } from './ml/forecaster.ts';
+import { fanFor, oddsHtml } from './ui/psychohistory.ts';
 import { SimClient, type HistoryMsg, type SimEvent, type StateMsg } from './sim/client.ts';
 import { F, GM, HIST_FIELDS, NF, NGM, SETTLEMENT_LABELS } from './sim/metrics.ts';
 import { GALAXIES, buildWorld } from './sim/world.ts';
@@ -45,7 +47,7 @@ app.innerHTML = `
   <div class="sel-ring" aria-hidden="true" hidden><i></i><i></i></div>
   <div class="tooltip" hidden></div>
   <footer class="bottom">
-    <button class="charts-toggle link" type="button" aria-expanded="true">Hide charts</button>
+    <div class="charts-toggles"><button class="forecast-toggle link" type="button" aria-pressed="true" title="A transformer trained on 360 other futures guesses the next 400 years">Forecast on</button><button class="charts-toggle link" type="button" aria-expanded="true">Hide charts</button></div>
   </footer>`;
 
 const canvas = app.querySelector<HTMLCanvasElement>('canvas.scene')!;
@@ -514,11 +516,42 @@ function refreshEvents(): void {
   }, 120);
 }
 
+// ------------------------------------------------------------------ psychohistory forecast
+
+let fc: Forecast | null = null, fcOn = true, fcTimer = 0, fcGen = 0;
+const forecastToggle = app.querySelector<HTMLButtonElement>('.forecast-toggle')!;
+forecastToggle.addEventListener('click', () => {
+  fcOn = !fcOn;
+  forecastToggle.textContent = fcOn ? 'Forecast on' : 'Forecast off';
+  forecastToggle.setAttribute('aria-pressed', String(fcOn));
+  if (fcOn) refreshForecast(); else { charts.draw(); refreshPanels(); }
+});
+function refreshForecast(): void {
+  clearTimeout(fcTimer);
+  if (fc && Math.abs(fc.fromYear - ctx.year) >= 10) fc = null;
+  if (!fcOn || timeline.playing || !sim.years.length) return;
+  const gen = ++fcGen, run = runGen;
+  fcTimer = window.setTimeout(() => {
+    const steps = Math.min(40, Math.floor((10000 - ctx.year) / 10));
+    if (steps < 2 || ctx.year > (sim.done ? 10000 : sim.years[sim.frontier])) return;
+    forecast(sim.years, sim.series, ctx.year, { steps, samples: 16 }).then((f) => {
+      if (gen !== fcGen || run !== runGen) return;
+      fc = f;
+      charts.draw();
+      refreshPanels();
+    });
+  }, 300);
+}
+timeline.onToggle = (playing) => { if (!playing) refreshForecast(); };
+charts.setFan((key) => (fcOn && fc ? fanFor(fc, key) : null));
+
 function refreshPanels(): void {
   const step = Math.max(0, sim.stepAt(ctx.year));
+  const row = (col: number) => sim.series[step * NGM + col];
   inspector.render({
     world, snap: ctx.snap, year: ctx.year, selected: ctx.selected, body: ctx.body, events, history,
-    globalRow: (col) => sim.series[step * NGM + col],
+    globalRow: row,
+    forecast: fcOn && fc ? oddsHtml(fc, (k) => row(GM[k])) : undefined,
   });
   charts.setYear(ctx.year);
 }
@@ -562,6 +595,7 @@ ticker.onPick = (it) => {
 let panelsAt = 0;
 timeline.onChange = (y) => {
   ctx.year = y;
+  refreshForecast();
   pollTicker(y);
   const now = performance.now();
   if (!timeline.playing || now - panelsAt > 120) { panelsAt = now; refreshPanels(); }
@@ -575,11 +609,12 @@ sim.onProgress = () => {
   statusEl.textContent = sim.done ? `simulated in ${(sim.ms / 1000).toFixed(1)}s` : `simulating… year ${Math.round(sim.years[sim.frontier]).toLocaleString('en-US')}`;
   charts.draw();
   if (!ctx.snap) requestState(ctx.year);
+  if (sim.done) refreshForecast();
 };
 
 function startRun(seed: number): void {
   runGen++;
-  ctx.snap = null; lastStep = -1; wanted = -1; inFlight = false; events = []; history = null;
+  ctx.snap = null; lastStep = -1; wanted = -1; inFlight = false; events = []; history = null; fc = null;
   ticker.clear(); tickFrom = 0;
   sim.run(seed);
   timeline.set(0);

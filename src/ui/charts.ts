@@ -19,6 +19,7 @@ export class ChartStrip {
   el: HTMLElement;
   private charts: { wrap: HTMLElement; canvas: HTMLCanvasElement; select: HTMLSelectElement; value: HTMLElement; key: string; fill: () => void }[] = [];
   private getSeries: (key: string) => Series | null = () => null;
+  private getFan: (key: string) => { years: number[]; lo: number[]; mid: number[]; hi: number[] } | null = () => null;
   private year = 0;
   private hoverPos: number | null = null;
   onHoverYear: (y: number | null) => void = () => {};
@@ -78,6 +79,8 @@ export class ChartStrip {
   }
 
   setSource(fn: (key: string) => Series | null): void { this.getSeries = fn; }
+  /** Forecast band drawn ahead of the cursor (transformer rollouts). */
+  setFan(fn: ChartStrip['getFan']): void { this.getFan = fn; }
 
   /** Selection changed: relabel per-place options, and fall back to the default where they no longer apply. */
   refreshOptions(): void {
@@ -106,6 +109,12 @@ export class ChartStrip {
     let lo = Infinity, hi = -Infinity;
     for (let i = 0; i < s.n; i++) {
       const v = s.values(i);
+      if (log && v <= 0) continue;
+      const t = tf(v);
+      if (t < lo) lo = t; if (t > hi) hi = t;
+    }
+    const fan = isEra ? null : this.getFan(c.key);
+    if (fan) for (const arr of [fan.lo, fan.hi]) for (const v of arr) {
       if (log && v <= 0) continue;
       const t = tf(v);
       if (t < lo) lo = t; if (t > hi) hi = t;
@@ -155,6 +164,23 @@ export class ChartStrip {
       g.strokeStyle = 'rgba(242,242,242,0.85)';
       g.lineWidth = 1.2;
       g.stroke();
+    }
+
+    if (fan && fan.years.length > 1) {
+      const ok = (v: number) => !log || v > 0;
+      g.beginPath();
+      fan.years.forEach((y, i) => { if (ok(fan.hi[i])) g.lineTo(X(y), Y(fan.hi[i])); });
+      for (let i = fan.years.length - 1; i >= 0; i--) if (ok(fan.lo[i])) g.lineTo(X(fan.years[i]), Y(fan.lo[i]));
+      g.closePath();
+      g.fillStyle = 'rgba(127,227,255,0.14)';
+      g.fill();
+      g.beginPath();
+      fan.years.forEach((y, i) => { if (ok(fan.mid[i])) g.lineTo(X(y), Y(fan.mid[i])); });
+      g.setLineDash([3, 3]);
+      g.strokeStyle = 'rgba(127,227,255,0.9)';
+      g.lineWidth = 1;
+      g.stroke();
+      g.setLineDash([]);
     }
 
     // cursor: current year, and hover
