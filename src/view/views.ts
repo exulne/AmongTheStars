@@ -271,8 +271,8 @@ export class UniverseView implements View {
       if (gal.kind === 'spiral') {
         const R = gal.radius * U * G;
         // seen whole, each galaxy's stars pile up into a few hundred pixels (Andromeda nearly edge-on): keep each one faint
-        const bright = gal.name === 'Andromeda' ? 0.34 : gal.name === 'Milky Way' ? 0.45 : 0.6;
-        obj = makeGalaxy({ seed: gal.name.length * 31, count: gal.name === 'Milky Way' ? 90000 : gal.name === 'Andromeda' ? 120000 : 30000, radius: R, arms: gal.name === 'Triangulum' ? 2 : 4, pitch: gal.name === 'Andromeda' ? 9 : 13, bar: gal.name === 'Milky Way' ? 0.25 : 0.1, thickness: 0.03, sizeScale: R * 0.006, brightness: bright, core: 0.36 });
+        const bright = gal.name === 'Andromeda' ? 0.5 : gal.name === 'Milky Way' ? 0.55 : 0.65;
+        obj = makeGalaxy({ seed: gal.name.length * 31, count: gal.name === 'Milky Way' ? 90000 : gal.name === 'Andromeda' ? 120000 : 30000, radius: R, arms: gal.name === 'Triangulum' ? 2 : 4, pitch: gal.name === 'Andromeda' ? 9 : 13, bar: gal.name === 'Milky Way' ? 0.25 : 0.1, thickness: 0.03, sizeScale: R * 0.006, brightness: bright, core: 0.5 });
         if (gal.name === 'Andromeda') obj.rotation.set(1.35, 0.6, 0.2);
         if (gal.name === 'Triangulum') obj.rotation.set(0.9, -0.4, 0);
       } else {
@@ -762,8 +762,8 @@ export class SystemView implements View {
     this.starR = Math.max(0.6, lumR);
     const core = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.6, lumR), 48, 24), new THREE.MeshBasicMaterial({ color: sc.clone().multiplyScalar(2.2) }));
     this.star.add(core);
-    this.star.add(glowSprite(sc.getHex(), lumR * 9, 0.9));
-    this.star.add(glowSprite(sc.getHex(), lumR * 26, 0.35, flareTex));
+    this.star.add(glowSprite(sc.getHex(), lumR * 9, 0.6));
+    this.star.add(glowSprite(sc.getHex(), lumR * 26, 0.25, flareTex));
     this.group.add(this.star);
     this.works.reset();
     this.group.add(makeSky(sys.id + 3, 9000, 'skys', () => ({ name: sys.name, x: sys.x, y: sys.y, z: sys.z, sol: sys.id === 0 })));
