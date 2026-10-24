@@ -65,7 +65,7 @@ export function biographyHtml(b: Biography | null, year: number, loading: boolea
     : '<p class="muted">No known parents: one of the people already on Earth at the Landing.</p>';
   const d = b.descendants;
   const blood = d.total
-    ? `<p>${fmtNum(d.total)} descendants over ${d.generations} generation${d.generations === 1 ? '' : 's'} by ${yr(year)}${d.total >= 1500 ? ' (counting stops at 1,500)' : ''}; ${fmtNum(d.alive)} alive.</p>
+    ? `<p>${fmtNum(d.total)} descendant${d.total === 1 ? '' : 's'} over ${d.generations} generation${d.generations === 1 ? '' : 's'} by ${yr(year)}${d.total >= 1500 ? ' (counting stops at 1,500)' : ''}; ${fmtNum(d.alive)} alive.</p>
       ${d.places.length ? `<p class="muted">Living in ${d.places.map((p) => `<button class="link" data-act="goto-body" data-id="${p.body}" type="button">${esc(p.name)}</button> (${fmtNum(p.n)})`).join(', ')}.</p>` : ''}`
     : '<p class="muted">No descendants yet.</p>';
   const traits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Steadiness'];
