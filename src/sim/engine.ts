@@ -57,6 +57,7 @@ interface Fx {
 }
 const MULT_KEYS = new Set(['extract', 'habitat', 'lifeSupport', 'energy', 'launch', 'research', 'productivity', 'death', 'growth', 'war', 'secession', 'voyage', 'divergence']);
 
+const REACH_OUTER = 1, REACH_RAD = 2, REACH_DEEP = 4;
 const MINOR = new Set([EV.Famine, EV['Rich deposit found'], EV['Baby boom'], EV.Revolt, EV['Habitat breach'], EV['Probe survey']]);
 const TECH_INDEX = new Map(TECHS.map((t, i) => [t.id, i]));
 const TECH_REQ: number[][] = TECHS.map((t) => t.req.map((r) => TECH_INDEX.get(r)!));
@@ -79,7 +80,7 @@ export class Engine {
 
   // static per-body lookups
   private bSys: Int32Array; private bHab: Float64Array; private bFlux: Float64Array; private bG: Float64Array;
-  private bRes: Float64Array; private bSettle: Uint8Array; private sysX: Float64Array; private sysY: Float64Array;
+  private bRes: Float64Array; private bSettle: Uint8Array; private bReach: Uint8Array; private sysX: Float64Array; private sysY: Float64Array;
   private sysZ: Float64Array; private sysRegion: Uint8Array; private nbr: Neighbours;
   /** per system: neighbours before this index have nothing left to survey (a cache, rebuilt after restore) */
   private surveyCursor: Int32Array;
@@ -91,9 +92,14 @@ export class Engine {
     const nb = world.bodies.length, ns = world.systems.length;
     this.bSys = new Int32Array(nb); this.bHab = new Float64Array(nb); this.bFlux = new Float64Array(nb);
     this.bG = new Float64Array(nb); this.bRes = new Float64Array(nb * 5); this.bSettle = new Uint8Array(nb);
+    this.bReach = new Uint8Array(nb);
     world.bodies.forEach((b, i) => {
       this.bSys[i] = b.system; this.bHab[i] = b.hab; this.bFlux[i] = b.flux; this.bG[i] = b.g;
       this.bSettle[i] = b.settle ? 1 : 0;
+      // crewed reach: the belt and beyond need nuclear propulsion, the Kuiper belt a fusion
+      // drive, and Jupiter's radiation belts shielding
+      this.bReach[i] = (b.flux < 0.3 ? REACH_OUTER : 0) | (b.flux < 1e-3 ? REACH_DEEP : 0) |
+        (b.parent >= 0 && world.bodies[b.parent].name === 'Jupiter' ? REACH_RAD : 0);
       for (let k = 0; k < 5; k++) this.bRes[i * 5 + k] = b.res[k];
     });
     this.sysX = new Float64Array(ns); this.sysY = new Float64Array(ns); this.sysZ = new Float64Array(ns);
@@ -191,6 +197,7 @@ export class Engine {
   }
 
   rand(): number { return next(this.st.rng); }
+  private has(id: string): boolean { return this.st.techDone[TECH_INDEX.get(id)!] >= 0; }
 
   private log(type: number, body: number, a = 0, b = 0): void {
     // routine local trouble is only worth a log line for big places
@@ -509,8 +516,9 @@ export class Engine {
         for (const t of sysB) {
           const ts = S[t * NF + F.stage];
           if (!this.bSettle[t] || (ts !== STAGE.NONE && ts !== STAGE.SURVEY && ts !== STAGE.ABANDONED)) continue;
-          const need = this.bHab[t] < 0.1 ? fx.habHostile >= 0.06 : true;
-          if (!need) continue;
+          if (this.bHab[t] < 0.1 && fx.habHostile < 0.06) continue;
+          const rq = this.bReach[t];
+          if ((rq & REACH_OUTER && !this.has('ntp')) || (rq & REACH_DEEP && !this.has('fusionDrive')) || (rq & REACH_RAD && !this.has('radShield'))) continue;
           const sc = (this.bHab[t] + 0.15 * (this.bRes[t * 5] + this.bRes[t * 5 + 1])) * (0.5 + this.rand());
           if (sc > bestS) { bestS = sc; best = t; }
         }
