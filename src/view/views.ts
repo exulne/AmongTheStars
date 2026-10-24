@@ -16,6 +16,7 @@ import { makeGalaxy } from './galaxyPoints.ts';
 import { atmosphereMaterial, planetMaterial } from './planetShader.ts';
 import { Orbitals, StarWorks, tierRank } from './orbitals.ts';
 import { BEAM, SCOOP, shipStyle } from './shipStyles.ts';
+import { applyCultureLights, cultureLight, cultureSkin, lookKey, societyLook } from './societyLook.ts';
 import { REDUCED_MOTION, applyPlanetLook } from './timeLook.ts';
 import { STAGE_COLORS, flareTex, galaxySpriteTex, glowTex, pointsMaterial, specColor } from './textures.ts';
 import { explainGalaxy } from '../explain/galaxy.ts';
@@ -73,7 +74,7 @@ export interface View {
 
 // ---------------------------------------------------------------- helpers
 
-const tmpC = new THREE.Color();
+const tmpC = new THREE.Color(), cultC = new THREE.Color();
 
 /** galactic (Sun-centred, ly) → scene axes with y up */
 export function toScene(x: number, y: number, z: number, scale = 1, ox = 0): THREE.Vector3 {
@@ -1031,10 +1032,13 @@ export class PlanetView implements View {
     const b = ctx.body;
     const st = stageOf(ctx.snap, b), pop = popOf(ctx.snap, b);
     applyPlanetLook(this.planet, ctx.snap, b, ctx.year, alive(st) ? cityLights(pop) : 0);
+    // the society's architecture (from the worker, when it has one): its colour, height, curves, crowding and glow
+    const look = alive(st) ? societyLook(b) : null;
+    applyCultureLights(this.planet, look);
     // cities: one marker per ~stage, positions stable per body
     const nCities = cityCount(st, pop);
-    if (this.cityKey !== `${b}:${nCities}:${st}`) {
-      this.cityKey = `${b}:${nCities}:${st}`;
+    if (this.cityKey !== `${b}:${nCities}:${st}:${lookKey(look)}`) {
+      this.cityKey = `${b}:${nCities}:${st}:${lookKey(look)}`;
       if (this.cities) { this.pivot.remove(this.cities.pts); this.cities.pts.geometry.dispose(); }
       this.cities = pointCloud(Math.max(nCities, 1), pointsMaterial({ minPx: 2 }));
       this.cityPos = [];
@@ -1043,8 +1047,9 @@ export class PlanetView implements View {
         this.cityPos.push(p);
         this.cities.pos.set([p.x, p.y, p.z], i * 3);
         tmpC.set(STAGE_COLORS[Math.max(1, st)]);
+        if (look) tmpC.lerp(cultureLight(look, cultC), 0.6);
         this.cities.col.set([tmpC.r, tmpC.g, tmpC.b], i * 3);
-        this.cities.size[i] = i === 0 ? 1.3 : 0.6 + hash01(b, i, 3) * 0.5;
+        this.cities.size[i] = (i === 0 ? 1.3 : 0.6 + hash01(b, i, 3) * 0.5) * (look ? 0.75 + 0.6 * look.glow : 1);
       }
       dirty(this.cities.pts);
       this.pivot.add(this.cities.pts);
@@ -1052,16 +1057,22 @@ export class PlanetView implements View {
     const on = alive(st);
     // the cities' buildings, seen from orbit: domes early, towers and spires later, in the culture's colours
     const style = on ? styleOf(ctx.world, ctx.snap, b, ctx.year, { independence: false, speciation: false, collapse: false }) : null;
-    const archKey = style ? `${this.cityKey}:${style.arch}:${style.body.getHexString()}:${Math.round(style.height * 4)}` : '';
+    const archKey = style ? `${this.cityKey}:${style.arch}:${style.body.getHexString()}:${Math.round(style.height * 4)}` : ''; // cityKey carries the society's look
     if (archKey !== this.archKey) {
       this.archKey = archKey;
       if (this.arch) { this.pivot.remove(this.arch); this.arch.geometry.dispose(); }
       this.arch = null;
       if (style && this.cityPos.length) {
         const domes = style.arch === 'huts' || style.arch === 'warrens';
-        const per = Math.min(40, 6 + Math.round(Math.log10(1 + pop / this.cityPos.length) * 4));
-        const geo = domes ? new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2) : new THREE.CylinderGeometry(0.35, 0.5, 1, 6).translate(0, 0.5, 0);
-        const mat = new THREE.MeshStandardMaterial({ color: style.body.clone().multiplyScalar(2.4), roughness: 0.6, metalness: 0.3, emissive: style.glow, emissiveIntensity: 0.04 });
+        // a dense culture packs more, closer; a curved one builds rounder, tapering towers; a tall one, taller
+        const dens = look ? look.density : 0.5, curve = look ? look.curvature : 0.4;
+        const per = Math.min(64, Math.round((6 + Math.round(Math.log10(1 + pop / this.cityPos.length) * 4)) * (0.5 + dens)));
+        const spread = 1.25 - 0.5 * dens, tall = look ? 0.6 + 0.8 * look.height : 1;
+        const geo = domes ? new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2)
+          : new THREE.CylinderGeometry(0.5 * (1 - 0.75 * curve), 0.5, 1, curve > 0.55 ? 10 : curve > 0.35 ? 6 : 4).translate(0, 0.5, 0);
+        const skin = style.body.clone();
+        if (look) skin.lerp(cultureSkin(look, cultC), 0.6);
+        const mat = new THREE.MeshStandardMaterial({ color: skin.multiplyScalar(2.4), roughness: 0.6, metalness: 0.3, emissive: look ? cultureLight(look, cultC).clone() : style.glow, emissiveIntensity: look ? 0.04 + 0.28 * look.glow : 0.04 });
         const im = new THREE.InstancedMesh(geo, mat, this.cityPos.length * per);
         const m4 = new THREE.Matrix4(), qq = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), n = new THREE.Vector3(), p = new THREE.Vector3(), sc = new THREE.Vector3();
         let k = 0;
@@ -1069,10 +1080,10 @@ export class PlanetView implements View {
           n.copy(c).normalize();
           const t1 = new THREE.Vector3().crossVectors(n, up).normalize(), t2 = new THREE.Vector3().crossVectors(n, t1);
           for (let j = 0; j < per; j++) {
-            const a = hash01(b, ci, j) * Math.PI * 2, r = Math.sqrt(hash01(b, ci, j, 2)) * (ci === 0 ? 0.45 : 0.25);
+            const a = hash01(b, ci, j) * Math.PI * 2, r = Math.sqrt(hash01(b, ci, j, 2)) * (ci === 0 ? 0.45 : 0.25) * spread;
             p.copy(n).multiplyScalar(10).addScaledVector(t1, Math.cos(a) * r).addScaledVector(t2, Math.sin(a) * r).normalize().multiplyScalar(10);
             qq.setFromUnitVectors(up, p.clone().normalize());
-            const h = domes ? 0.025 + hash01(b, ci, j, 3) * 0.02 : (0.04 + Math.pow(hash01(b, ci, j, 3), 2) * 0.25) * style.height;
+            const h = domes ? 0.025 + hash01(b, ci, j, 3) * 0.02 : (0.04 + Math.pow(hash01(b, ci, j, 3), 2) * 0.25) * style.height * tall;
             const wd = domes ? 0.03 : 0.018;
             m4.compose(p, qq, sc.set(wd, h, wd));
             im.setMatrixAt(k++, m4);

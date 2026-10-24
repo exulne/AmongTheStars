@@ -53,6 +53,9 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number, haze
       uTime: { value: 0 },
       uDetail: { value: 1 },
       uHaze: { value: haze },
+      uCulture: { value: new THREE.Color(1, 1, 1) }, // the society's own light colour (society.architecture.hue)
+      uCultureMix: { value: 0 },  // 0..1 how far the night lights take it
+      uGlow: { value: 1 },        // brightness of the night lights (society.architecture.glow)
     },
     vertexShader: /* glsl */ `
       varying vec3 vPos; varying vec3 vNormal; varying vec3 vView;
@@ -67,7 +70,7 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number, haze
         #include <logdepthbuf_vertex>
       }`,
     fragmentShader: /* glsl */ `
-      uniform vec3 uColor, uSun; uniform float uStyle, uSeed, uLights, uGreen, uTime, uDetail, uHaze, uTerra, uEpoch, uDim, uFlicker;
+      uniform vec3 uColor, uSun, uCulture; uniform float uStyle, uSeed, uLights, uGreen, uTime, uDetail, uHaze, uTerra, uEpoch, uDim, uFlicker, uCultureMix, uGlow;
       varying vec3 vPos; varying vec3 vNormal; varying vec3 vView;
       #include <logdepthbuf_pars_fragment>
       ${NOISE}
@@ -178,6 +181,9 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number, haze
           // the old cities as faint ghosts under the beacons
           lights += w4 * (vec3(0.55, 1.0, 0.86) * beacon * pulse + vec3(0.5, 0.45, 0.8) * lace * smoothstep(0.45, 0.8, cityN) * 0.06);
         }
+        // each society lights itself in its own colour, keeping the brightness of the age's style
+        float lum = dot(lights, vec3(0.2126, 0.7152, 0.0722));
+        lights = mix(lights, uCulture * lum * 1.6, uCultureMix) * uGlow;
         // blackouts: whole regions go dark, the rest stutter
         float patchN = snoise(q * 1.25 + 7.0) * 0.5 + 0.5;
         float dark = smoothstep(1.0 - uDim, 1.0 - uDim + 0.18, patchN) * step(0.001, uDim);
