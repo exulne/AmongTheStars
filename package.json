@@ -1,0 +1,21 @@
+{
+  "name": "2soon2026",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build && node scripts/artifact.mjs",
+    "typecheck": "tsc --noEmit",
+    "sim": "node --experimental-strip-types scripts/headless.ts"
+  },
+  "devDependencies": {
+    "@types/three": "^0.186.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.5",
+    "vite-plugin-singlefile": "^2.3.4"
+  },
+  "dependencies": {
+    "three": "^0.186.1"
+  }
+}
