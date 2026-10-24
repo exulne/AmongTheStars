@@ -500,14 +500,31 @@ canvas.addEventListener('wheel', (e) => {
   }
   // within one gesture keep pulling the same thing even as it slides out from under the cursor
   const keep = pull && locateRef(v, pull) ? pull : null;
-  const sel = ctx.selected && locateRef(v, ctx.selected) ? ctx.selected : null;
+  const sel = ctx.selected && locateRef(v, ctx.selected) ? enterableRef(ctx.selected) : null;
   const p: Ref | null = (gesture && keep) || pickAt(e.clientX, e.clientY) || keep || sel;
   if (!p || level === 'street' || (level === 'planet' && p.kind !== 'city')) return;
   pull = p;
   const at = locateRef(v, p);
   const dd = v.diveDist(ctx, p);
   if (at && dd > 0 && camera.position.distanceTo(at) < Math.max(dd, v.limits[0] * 1.4)) { pull = null; select(asPick(p)); dive(p); }
-}, { passive: true });
+  // capture, so the pick sees the view before OrbitControls zooms it and slides the thing out from under the cursor
+}, { passive: true, capture: true });
+// a label sits over its own point: scrolling on it scrolls the scene
+labelsEl.addEventListener('wheel', (e) => { e.preventDefault(); canvas.dispatchEvent(new WheelEvent('wheel', e)); }, { passive: false });
+
+/**
+ * A selection made deeper down (a city, a world) seen from higher up: wheeling into it enters
+ * whatever holds it at this level, so the Milky Way from the Local Group, human space from the galaxy.
+ */
+function enterableRef(r: Ref): Ref {
+  if (r.kind === 'thing' || r.kind === 'humanspace' || r.kind === 'galaxy') return r;
+  const sys = r.kind === 'system' ? r.id : r.kind === 'body' ? world.bodies[r.id].system : world.bodies[ctx.body].system;
+  if (level === 'universe') { const name = world.systems[sys].galaxy; return { kind: 'galaxy', id: GALAXIES.findIndex((g) => g.name === name), name }; }
+  if (level === 'galaxy') return world.systems[sys].region === 'galaxy' ? { kind: 'system', id: sys } : { kind: 'humanspace', id: 0 };
+  if (level === 'local' && r.kind !== 'system') return { kind: 'system', id: sys };
+  if (level === 'system' && r.kind === 'city') return { kind: 'body', id: ctx.body };
+  return r;
+}
 canvas.addEventListener('pointerdown', () => { pull = null; });
 
 /** Where a selected thing sits in a view: explained things (stars, asteroids, ships…) know their own place. */
