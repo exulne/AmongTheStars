@@ -196,7 +196,7 @@ input.tl-big:focus { outline: none; border-bottom-color: var(--accent); }
 .tl-ages button.mute { color: transparent; }
 .tl-ages button { position: absolute; top: 0; height: 100%; padding: 0 0.3em; border: 0; border-left: 1px solid var(--faint); background: none; color: var(--quiet); font: italic 0.62rem/0.95rem var(--serif); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .tl-ages button:hover, .tl-ages button:focus-visible { color: var(--ink); }
-.events li.future, .annals li.future { opacity: 0.45; }
+.events li.future, .annals li.future, .kv dd .future { opacity: 0.45; }
 .annals { list-style: none; padding: 0; margin: 0.3rem 0 0.6rem; }
 .annals li { margin: 0.25rem 0; line-height: 1.4; }
 .charts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.9rem; }

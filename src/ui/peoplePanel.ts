@@ -58,6 +58,9 @@ export function biographyHtml(b: Biography | null, year: number, loading: boolea
     const linked = s.link?.kind === 'person' ? `<button class="link" data-act="open-person" data-pid="${s.link.id}" type="button">${t}</button>` : t;
     return `<li><span class="num ev-year">${yr(s.year)}</span> ${linked}</li>`;
   }).join('');
+  // people who only enter this life later are listed faintly, so a teenager's future family reads as future
+  const later = (label: string, list: PersonBrief[], note: (p: PersonBrief, i: number) => string, future: (p: PersonBrief, i: number) => boolean) => list.length
+    ? `<dt>${label}</dt><dd>${list.map((p, i) => `<span class="${future(p, i) ? 'future' : ''}">${briefLine(p, year)}${note(p, i)}</span>`).join('<br>')}</dd>` : '';
   const fam = (label: string, list: PersonBrief[], more = 0) => list.length ? `<dt>${label}</dt><dd>${list.map((p) => briefLine(p, year)).join('<br>')}${more > list.length ? `<br><span class="muted">and ${more - list.length} more</span>` : ''}</dd>` : '';
   const anc = b.ancestors.length
     ? `<ol class="lineage">${b.ancestors.slice(0, 12).map((a) => `<li><span class="muted num">${a.gen === 1 ? 'parent' : a.gen === 2 ? 'grandparent' : `${a.gen - 2}× great`}</span> ${briefLine(a.who, year)}</li>`).join('')}</ol>
@@ -81,8 +84,8 @@ export function biographyHtml(b: Biography | null, year: number, loading: boolea
     <dl class="family">
       <dt>Mother</dt><dd>${b.mother ? briefLine(b.mother, year) : '<span class="muted">unknown</span>'}</dd>
       <dt>Father</dt><dd>${b.father ? briefLine(b.father, year) : '<span class="muted">unknown</span>'}</dd>
-      ${fam('Partners', b.partners)}
-      ${fam('Children', b.children)}
+      ${later('Partners', b.partners, (p, i) => (b.partnerSince?.[i] ?? -Infinity) > year ? ` <span class="muted">(together from about ${yr(b.partnerSince![i] - 1)})</span>` : '', (p, i) => (b.partnerSince?.[i] ?? -Infinity) > year)}
+      ${later('Children', b.children, () => '', (p) => p.born > year)}
       ${fam('Siblings', b.siblings)}
     </dl>
     <h3>Ancestry</h3>${anc}
