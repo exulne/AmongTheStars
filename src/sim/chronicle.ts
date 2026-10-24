@@ -414,8 +414,9 @@ export class Chronicle {
         const killed = W[o + WC.killed];
         segs.push(`${cap(name)} ends after ${yrs} year${yrs > 1 ? 's' : ''}${killed >= 1 ? `, having killed ${headcount(killed)}` : ''}. `);
         const pw = win === W[o + WC.a] ? W[o + WC.pA] : W[o + WC.pB], pl = win === W[o + WC.a] ? W[o + WC.pB] : W[o + WC.pA];
-        if (out === OUTCOME.ANNEX) segs.push(this.side(lose, pl, places), `'s settlements around ${this.e.world.systems[W[o + WC.sys]].name} now fly the flag of `, this.side(win, pw, places), '.');
-        else if (out === OUTCOME.REPARATIONS) segs.push(this.side(lose, pl, places), ` pays ${money(W[o + WC.energy])} in reparations to `, this.side(win, pw, places), '.');
+        const Cap = (x: Seg): Seg => (typeof x === 'string' ? cap(x) : { ...x, t: cap(x.t) });
+        if (out === OUTCOME.ANNEX) segs.push(Cap(this.side(lose, pl, places)), `'s settlements around ${this.e.world.systems[W[o + WC.sys]].name} now fly the flag of `, this.side(win, pw, places), '.');
+        else if (out === OUTCOME.REPARATIONS) segs.push(Cap(this.side(lose, pl, places)), ` pays ${money(W[o + WC.energy])} in reparations to `, this.side(win, pw, places), '.');
         else segs.push(W[o + WC.kind] === WAR_KIND.KINETIC ? 'The strikes have landed; there is nothing left to fight over.' : 'Neither side can win; the old borders stand.');
         segs.push(' The treaty is signed by ', who(signer), '.');
         break;
