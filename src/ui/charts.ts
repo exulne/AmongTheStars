@@ -34,7 +34,7 @@ export class ChartStrip {
       const select = document.createElement('select');
       select.id = `chart-metric-${i}`;
       select.setAttribute('aria-label', `Chart ${i + 1} metric`);
-      const fill = () => {
+      const fill = (withExtra = true) => {
         const cur = select.value || key;
         select.innerHTML = '';
         let group = '';
@@ -43,15 +43,15 @@ export class ChartStrip {
           if (m.group !== group) { og = document.createElement('optgroup'); og.label = m.group; select.append(og); group = m.group; }
           og!.append(new Option(m.label, m.key));
         }
-        const extra = extraOptions();
+        const extra = withExtra ? extraOptions() : [];
         if (extra.length) {
           og = document.createElement('optgroup'); og.label = 'Selected place'; select.append(og);
           for (const e of extra) og.append(new Option(e.label, e.key));
         }
         select.value = [...select.options].some((o) => o.value === cur) ? cur : key;
       };
-      fill();
-      select.addEventListener('focus', fill);
+      fill(false);
+      select.addEventListener('focus', () => fill());
       const value = document.createElement('span');
       value.className = 'chart-value num';
       head.append(select, value);

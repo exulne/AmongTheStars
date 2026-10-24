@@ -241,7 +241,7 @@ Notes:
 | Power, mature colony | 5–10 kW/person (Earth average 2.3, US 10) | | |
 | Pressurized volume | ISS ≈55 m³/person; long-duration minimum ≈25 m³; comfortable ≥100–120 m³ | | |
 | Greenhouse area for 100% food | 40–60 m² per person (LED, high-yield); ≈200 m² low-intensity | | |
-| Food-growing power | ≈1–1.5 kW/m² LED → ≈30–60 kW/person if fully artificial light | [E] which is why food dominates the energy budget |
+| Food-growing power | ≈0.3–0.6 kW/m² LED (electrical) → ≈15–30 kW/person for 50 m² if fully artificial light | sunlight + mirrors cut this ×0.2 | [E] this is why food dominates the energy budget |
 
 **Resupply mass per person-year at t0:** ≈ 0.42+0.07+0.3+0.62+0.5 ≈ 1.9 kg/d ≈ **0.7 t/person/yr**. At 2,000 cr/kg to Mars, that is ≈1.4e6 cr/person/yr. This is the core economic driver for the ISRU and closed-loop techs.
 
@@ -792,4 +792,894 @@ Sagan's continuous formula: `K = (log10(P_watts) − 6) / 10`.
 **Interstellar launch rule** [D]: a polity may launch only if `E_mission ≤ 0.02 × civ_energy_W × 3.156e7 × build_years` (≤ 2% of annual energy for the build duration, build_years 10–50) and `capital_cost ≤ 0.05 × GDP × build_years`. Ships must also clear the "will" gate: regime ∈ {EXP, GOLD, SING} or an ideology event (E36 religion with an exodus doctrine).
 
 **Relativistic notes:** at 0.1c, γ = 1.005 (ignore). At 0.5c, γ = 1.155, so ship time is 13% shorter. Dust impact at 0.1c: a 1 µg grain carries 4.5e5 J (≈ 100 g TNT). Ships need a Whipple shield or ablative front, and per-voyage loss hazard is E28.
+
+---
+
+## 4. Settlement lifecycle Markov chain
+
+One chain per **site** (body, habitat site, or exoplanet). Population and economy are continuous variables (§7). The lifecycle state is a discrete label that **gates capabilities** (what can be built, whether births occur, whether the site can launch ships). Transitions happen when gates are satisfied, with a per-year probability that represents institutional and engineering lag.
+
+### 4.1 States
+
+| # | State | Pop range | Defining capability | Map color suggestion |
+|---|---|---|---|---|
+| S0 | UNEXPLORED | 0 | nothing known beyond catalog | dark grey |
+| S1 | SURVEYED | 0 | orbiter/flyby/telescope: resources and hidden truth partially revealed | grey-blue |
+| S2 | ROBOTIC_OUTPOST | 0 (+ robots) | ISRU pilot, beacons, prospecting; produces small exports | cyan |
+| S3 | CREWED_OUTPOST | 1–99, rotating crews | no births; fully import-dependent (SSI < 0.3) | teal |
+| S4 | COLONY | 100–9,999, permanent | births occur; local food/ISRU; SSI 0.2–0.6 | green |
+| S5 | CITY | 1e4–1e6 | local manufacturing; universities (research_share up); can found S2/S3 nearby | yellow |
+| S6 | INDUSTRIAL_HUB | ≥ 1e6 and SSI ≥ 0.9 | shipyards; exports; can launch colony ships and interstellar missions | orange |
+| S7 | CORE_WORLD | ≥ 1e8 (or ≥ 1e7 on a terraformed world) | planetary civilization; full tech tree locally | gold |
+| S8 | MEGASTRUCTURE | any (usually ≥ 1e9) | system-scale works: Dyson phase ≥ 2, O'Neill cluster ≥ 100, terraform complete | white / magenta |
+| X1 | DECLINING | any | pop shrinking ≥ 1%/yr for 5 consecutive yrs, or lost its supply line | red outline |
+| X2 | ABANDONED | 0 | evacuated; infrastructure intact; re-settle at 3× the rate and 0.3× the cost | brown |
+| X3 | DEAD | 0 | catastrophic loss with casualties; ruins (infrastructure 10–50% salvageable) | black |
+| X4 | QUARANTINED | any | interdicted (plague, native biosphere protection, rogue AI, nanoplague); no trade | purple |
+
+**Political flags (orthogonal to state):** `polity_id`, `independent` (bool), `contested` (in a war zone), `capital` (bool), `clade` (human sub-species label).
+
+**Initial states at 2040:** Earth S7. Moon S3 (8–20 crew; p=0.3 that it starts at S2 if programs slipped). Mars S3 (premise landing). Earth orbit stations S3. All other Solar System bodies in §2.2 start at S1 (all major bodies have been visited by orbiters or flybys, except Haumea, Makemake, Quaoar, Gonggong, Eris and Sedna, which are telescope-only S1). Stars listed in §2.4 start at S1 (partial truth: masses and orbits known, habitability hidden). All others start at S0.
+
+### 4.2 Upward transitions (per-year probability once gates pass)
+
+`p_up = base × f_hab × f_res × f_cost × f_parent × f_regime × f_tech × f_strategic`, clamped to [0, 0.5].
+
+| From → To | Base p/yr | Hard gates (all required) | Typical time in state (median) |
+|---|---|---|---|
+| S0 → S1 | 0.05 if within survey reach, else 0 | Solar System: any S5+ settlement in the polity. Stars: N28 probe arrival, M20 probe arrival, or M30 telescope pointing | – |
+| S1 → S2 | 0.03 | Δv from nearest S5+ ≤ the polity's affordable Δv; a launch window; landing tech for bodies with g > 0.1 | 10–30 yr |
+| S2 → S3 | 0.02 | T02; crew transport available; radiation dose with shielding < 0.3 Sv/yr | 5–20 yr |
+| S3 → S4 | 0.03 | pop ≥ 100 permanent residents; local water + O2 production ≥ 50% of need; `lowg_fertility_mult ≥ 0.5` or N29; for Mars specifically N01 | 10–30 yr |
+| S4 → S5 | 0.10 | pop ≥ 1e4; SSI ≥ 0.5; energy ≥ 5 kW/person | 30–80 yr |
+| S5 → S6 | 0.05 | pop ≥ 1e6; SSI ≥ 0.9; N20 shipyard locally or in the system | 50–150 yr |
+| S6 → S7 | 0.05 | pop ≥ 1e8, or pop ≥ 1e7 with terraforming stage ≥ 2 | 100–500 yr |
+| S7 → S8 | 0.02 | system owns Dyson phase ≥ M16, or ≥ 100 O'Neill-class habitats, or terraforming complete (M29/M28) | 200–1,000 yr |
+| X2 → S2/S3 (re-settle) | 3× the matching up rate | same gates; cost ×0.3 | – |
+| X3 → S1 (ruins surveyed) | 0.05 | any S5+ within reach | – |
+| X1 → previous state (recovery) | 0.10 | the cause is removed (supply restored, SSI back above gate, regime not COLL) | – |
+| X4 → previous state | 0.05 | cure / alignment fix / quarantine lifted (event-specific) | – |
+
+**Modifier definitions:**
+
+| Modifier | Formula | Range |
+|---|---|---|
+| f_hab | `0.2 + 0.8 × H` (H from §2.2, tech-adjusted) | 0.2–1.0 |
+| f_res | `0.5 + (0.35 water + 0.2 metals + 0.15 volatiles + 0.3 energy)` | 0.5–1.5 |
+| f_cost | `clamp((2,000 / cost_per_kg_to_site)^0.5, 0.2, 3)` | 0.2–3 |
+| f_parent | `clamp(parent_investable_surplus / required_investment, 0, 2)`, where required_investment = 1e10 cr (S2), 1e11 (S3), 1e12 (S4), and so on | 0–2 |
+| f_regime (of the parent polity) | EXP 1.5, GOLD 1.3, CON 0.9, STAG 0.5, WAR 0.6 (×1.5 for military outposts), PAND 0.4, COLL 0.05, SEC 0.7, SING 2.0 | 0.05–2 |
+| f_tech | `1 + 0.1 × (# relevant techs beyond the gate)` | 1–2 |
+| f_strategic | 1.3 for chokepoints (Phobos, Ceres, Callisto, Titan, L4/L5, gas-giant scoop orbits), else 1 | 1–1.3 |
+
+### 4.3 Downward transitions and failure (per year, independent of the event catalog)
+
+`p_fail_base(state)` is listed below. Then apply: `× (1 / (0.3 + 0.7 × H)) × ls_failure_hazard × (1 − 0.5 × redundancy)`, where redundancy = min(1, habitat_modules / 10).
+
+| From | → X1 DECLINING (onset) | → X2 ABANDONED | → X3 DEAD (catastrophic total loss) | Notes / historical anchor |
+|---|---|---|---|---|
+| S2 robotic | – | 0.03 (funding cut); ×3 if the parent is in STAG, ×10 in COLL | 0.01 (hardware failure) | Mars landers ≈ 50% mission failure historically, but outposts are redundant |
+| S3 crewed outpost | 0.02 | 0.02 base; ×3 if parent STAG/WAR, ×10 if COLL (cap 0.5) | 0.008 × exp(−age/20) + 0.002 | Apollo was cancelled after 6 landings; Skylab/Mir were abandoned; Antarctic stations persist. Spaceflight fatality ≈ 1–2% per crewed flight in the Shuttle era |
+| S4 colony | 0.03 if SSI < 0.3, else 0.01 | 0.05 if SSI < 0.3 and the parent is in crisis, else 0.002 | 0.004 × exp(−age/50) + 0.0005 | early European colonies, 1520–1700: ≈ 1/3 failed within 10 yr (Roanoke, Popham, Fort Caroline, Charlesfort, Darien); Jamestown lost ≈ 80% in 1609–10 |
+| S5 city | 0.005 | 0.0002 | 3e-4 | Norse Greenland: 985–≈1450 (≈ 450 yr), lost through climate cooling plus severed trade |
+| S6 hub | 0.002 | 1e-5 | 5e-5 | |
+| S7 core world | 0.001 | 0 | 1e-6 (outside events) | |
+| S8 megastructure | 0.0005 | 0 | 1e-7 | |
+| X1 declining | – | 0.05 if pop < 100 or SSI < 0.3, else 0.01 | 0.002 | "Aurora effect" for isolated colonies |
+
+**Self-sufficiency index (SSI)** (0–1, central to failure, independence, and lifecycle):
+```
+SSI = 0.30 × ls_local_share + 0.20 × food_local_share + 0.20 × energy_local_share + 0.30 × mfg_local_share
+mfg_local_share ≤ SSI_cap(pop) = min(1, log10(pop × ssi_automation_mult) / 6)
+```
+Without automation, 1e6 people reach SSI_cap = 1 and 1e4 reach 0.67. With AGI (×100), 1e4 people reach 1.0.
+
+**Supply-cut shock:** if imports drop by more than 50% (war blockade, parent collapse, Kessler cascade), then `pop_loss_per_yr = (1 − SSI)² × 0.5` until SSI ≥ 0.8 or supply resumes. That gives 50% per year at SSI 0 and 2% at SSI 0.8.
+
+### 4.4 Interstellar arrivals
+
+On arrival, a ship sets the target system:
+- **Probe flyby** (N28/M20): S0 → S1 and reveals truth with P = 0.5 (flyby) or 1.0 (orbiter).
+- **Seed/embryo ship** (M23): S2 for `t_settle = 20–40 yr` (robots build habitat, decant embryos), then S4 with pop = embryo count × 0.8 survival.
+- **Generation ship** (M22): S3 or S4 directly (pop = survivors). Apply the hidden-truth roll:
+  - `habitable == true and biochem_compatible`: K = planet-scale; growth r = 0.03 (frontier).
+  - `habitable == true and native biosphere incompatible` (Aurora/prion case): extra mortality 5%/yr for 20 yr, p(colony death) ≈ 0.5. The colony may relocate to habitats.
+  - `habitable == false`: habitat-limited K (asteroid/moon mining in the system). Growth r ≤ 0.01 until N21/M01-class habitats are built locally. Ships carry the tech, but the build needs ≥ 1e4 pop.
+- `t_settle` (arrival → able to launch the next interstellar ship) = 300–1,000 yr for biological colonies, 50–200 yr for F03 digital seeds. This is the main term in the expansion front speed (§9).
+
+---
+
+## 5. Civilization regime chain
+
+Runs per **polity** (Earth blocs, each independent colony polity, each interstellar colony). Optionally run one "Earth" chain plus one per independent polity. Roll every 10 sim-years with the decade matrix, or annualize per §0.2.
+
+### 5.1 Regime definitions and effects
+
+| id | Regime | GDP growth add (per yr) | research_mult | expansion_mult (launch + settlement rates) | fertility_mult | mortality_mult | Other |
+|---|---|---|---|---|---|---|---|
+| EXP | Expansion | +1.0% | 1.1 | 1.5 | 1.05 | 1.0 | colony ship launches ×2; emigration incentives |
+| CON | Consolidation | 0 | 1.0 | 0.9 | 1.0 | 1.0 | infrastructure build ×1.3 |
+| GOLD | Golden age | +1.5% | 1.3 | 1.3 | 0.95 | 0.95 | culture/religion founding ×0.5; art metrics up |
+| STAG | Stagnation | −0.5% | 0.7 | 0.5 | 0.9 | 1.05 | outpost abandonment ×3 |
+| WAR | War | −3% (military output +50%) | 0.6 (military tech ×1.5) | 0.6 (military outposts 1.5) | 0.9 | 1.0 + war deaths (E63/E21) | trade with the enemy = 0; embargo |
+| PAND | Pandemic / plague | −5% in yr 1, then −1% | 0.7 | 0.4 | 0.95 | + pandemic deaths | travel ×0.3; quarantines (X4) |
+| COLL | Collapse / dark age | −10%/yr for 3 yr, then −1% | 0.1 | 0.05 | 0.8 (yr 1–5) then 1.2 | 1.5 | knowledge loss (§3.1); colonies cut off |
+| SEC | Secession crisis | −1% | 0.8 | 0.7 | 1.0 | 1.0 | independence rolls (§5.4) |
+| SING | AI transition ("singularity-ish") | +5% (variance ×3) | 3.0 | 2.0 | 0.8 | 0.8 | outcome roll at exit (§5.5) |
+
+### 5.2 Decade transition matrix (base; rows sum to 1)
+
+| from \ to | EXP | CON | GOLD | STAG | WAR | PAND | COLL | SEC | SING |
+|---|---|---|---|---|---|---|---|---|---|
+| **EXP** | 0.55 | 0.20 | 0.08 | 0.04 | 0.05 | 0.02 | 0.01 | 0.04 | 0.01 |
+| **CON** | 0.20 | 0.45 | 0.12 | 0.10 | 0.04 | 0.02 | 0.01 | 0.05 | 0.01 |
+| **GOLD** | 0.20 | 0.15 | 0.45 | 0.10 | 0.03 | 0.02 | 0.01 | 0.02 | 0.02 |
+| **STAG** | 0.08 | 0.14 | 0.03 | 0.50 | 0.08 | 0.03 | 0.04 | 0.09 | 0.01 |
+| **WAR** | 0.05 | 0.27 | 0.02 | 0.15 | 0.35 | 0.04 | 0.07 | 0.05 | 0.00 |
+| **PAND** | 0.03 | 0.30 | 0.01 | 0.25 | 0.06 | 0.25 | 0.07 | 0.03 | 0.00 |
+| **COLL** | 0.01 | 0.05 | 0.00 | 0.17 | 0.05 | 0.01 | 0.70 | 0.01 | 0.00 |
+| **SEC** | 0.10 | 0.30 | 0.02 | 0.10 | 0.20 | 0.01 | 0.02 | 0.25 | 0.00 |
+| **SING** | 0.30 | 0.10 | 0.30 | 0.02 | 0.05 | 0.00 | 0.08 | 0.05 | 0.10 |
+
+**Stationary distribution (base, unmodified)** [computed]: EXP 22.0%, CON 25.0%, GOLD 10.7%, STAG 16.6%, WAR 8.5%, PAND 2.8%, COLL 7.4%, SEC 6.0%, SING 0.9%. Mean stay per entry (decades): EXP 2.2, CON 1.8, GOLD 1.8, STAG 2.0, WAR 1.5, PAND 1.3, COLL 3.3, SEC 1.3, SING 1.1.
+
+Historical sanity: great-power war share of years since 1500 ≈ 10–25% (Levy). Dark ages run 200–400 yr (Greek 1100–750 BCE; post-Roman West ≈ 500–800 CE). Those long ones come from repeated COLL↔STAG cycling under the modifiers below (low energy and low knowledge keep COLL sticky). The SING column is zero until N14 is known (§5.3).
+
+**Annualized matrix** (if ticking yearly): off-diagonal = decade value / 10, diagonal = 1 − Σ. Example EXP row: [0.955, 0.020, 0.008, 0.004, 0.005, 0.002, 0.001, 0.004, 0.001].
+
+### 5.3 Modifiers (multiply the target column's off-diagonal entry, then renormalize per §0.2)
+
+| Target | Multiplier formula | Notes |
+|---|---|---|
+| → WAR | `(1 + 2 × max(0, Gini − 0.35)) × (1 + scarcity) × (1 + 0.2 × n_rivals_in_reach) × (1 + 5 × mil_share_gdp) × deterrence` | scarcity = max(0, 1 − resource_supply/demand); deterrence 0.7 if mutually assured (nukes, RKVs); n_rivals = polities with lag < 1 day |
+| → COLL | `(1 + 3 × energy_deficit) × (1 + 2 × (1 − SSI)) × (1 + debt_ratio) × (1 + 0.5 × recent_catastrophe) × (0.6 if M25 adopted)` | energy_deficit = max(0, 1 − supply/demand); COLL self-transition × (1 + 2 × knowledge_loss_fraction) |
+| → GOLD | `(1 + techs_completed_last_decade / 5) × (1 + 0.5 × trade_growth) × (1 + 0.5 × new_frontier)` | |
+| → EXP | `(1 + 0.5 × new_frontier) × (1 + resource_per_capita_growth) × (1 + 0.5 × pop_pressure)` | new_frontier = 1 if a new body class was unlocked last decade; pop_pressure = N/K |
+| → STAG | `(median_age / 40) × (1 + max(0, −tfr_gap)) × (1 + 0.5 × (no tech in 20 yr))` | |
+| → PAND | `(1 + log10(1 + daily_transits / 1e4)) × (density / 1,000 per km²)^0.3 × (1 + 2 × biotech_misuse_level)` | |
+| → SEC | `1 + 3 × mean_grievance_of_subunits (§5.4)` | only for polities spanning > 1 settlement |
+| → SING | 0 before N14; ×1 after N14; ×5 after M13 | |
+| All off-diagonal | × `volatility` (scenario dial, default 1) | |
+
+### 5.4 Secession and independence
+
+For each settlement (or group of settlements) in a polity with a different capital:
+```
+G (grievance, 0–1) = 0.30 × tax_norm + 0.20 × min(1, lag_minutes / 60) + 0.20 × cultural_divergence
+                   + 0.15 × (1 − representation) + 0.15 × recent_crisis
+tax_norm = min(1, net_transfer_to_capital / local_GDP / 0.3)
+p_independence_bid/yr = (0.001 + 0.02 × G² × SSI) × [pop ≥ 1e4] × [SSI ≥ 0.6]
+```
+Outcome of a bid:
+- **Peaceful** (dominion/federation path) with probability `0.6 if parent ∈ {CON, GOLD} and G < 0.5, else 0.25`.
+- Otherwise **war of independence** (event E21). `P(win) = sigmoid(2 × ln(local_military / (parent_military × projection_factor)))`, where `projection_factor = exp(−transit_time_days / 200)`. At 26-month windows and 6-month transits, projection ≈ 0.4.
+- **Interstellar colonies** are de facto independent from founding (lag ≥ 4 yr). Set `independent = true` on arrival.
+
+Historical anchors for calibration (founding → independence): the 13 American colonies took 169 yr (1607–1776), Spanish America ≈ 300 yr, Brazil 322 yr (1500–1822), Australia 113 yr (1788–1901, peaceful), Canada 1867 dominion (peaceful). Target median ≈ 150 yr from S4 to independence for Mars-like colonies at SSI ≈ 0.8.
+
+### 5.5 SING (AI transition) exit outcome table
+
+Roll once when leaving SING (or once per SING episode):
+
+| Outcome | p | Effect |
+|---|---|---|
+| Aligned acceleration | 0.55 | ai_mult permanent ×3 on top; next regime GOLD; capital_growth_max ×2 |
+| Fizzle / regulated plateau | 0.20 | AI capped (ai_mult ×1 extra); next STAG or CON |
+| Disruptive transition (labor shock, unrest) | 0.12 | Gini +0.15; next WAR or SEC |
+| Partial loss of control (rogue AI faction) | 0.08 | spawns an AI polity owning 5–30% of capital; next WAR; settlements may go X4 |
+| Catastrophe | 0.03 (dial: 0–0.2) | civilization-wide COLL; pop −10–90% in affected polities |
+| Transcendence / mass upload | 0.02 | requires F02; a share of the population (10–90%) becomes digital |
+
+---
+
+## 6. Event catalog
+
+Scopes: **G** = global/civilization, **P** = polity, **S** = settlement, **E** = Earth only, **Sh** = ship in transit, **Sy** = star system. `p` is the annual probability per scope instance unless noted. Severity draws: `U(a,b)` uniform, `LN(m,s)` lognormal, `Par(xm,α)` Pareto. All effects are multipliers or one-shot deltas on §3.2 and §10 variables. Each fired event is logged with (year, scope, params, outcome) for the data viewer.
+
+### 6.1 Natural and astrophysical
+
+| id | Event | Scope | Trigger / conditions | p (per yr) | Effects | Basis |
+|---|---|---|---|---|---|---|
+| E01 | Major solar particle event | S (non-Earth), Sh | heliocentric distance < 10 AU | `0.15 × (1 + 0.8 sin(2π(t − 2025)/11))` | unsheltered dose 0.1–1 Sv; deaths = exposed_pop × 0.05 × dose × (1 − shield); exposed_pop = 2% of S3–S4 pop, 100% of a ship without a storm shelter | Aug 1972 SPE, 1989 event |
+| E02 | Carrington-class geomagnetic storm | E | – | 0.012 | Earth GDP −1% for 1 yr; satellites −5%; grid outage in 10% of regions | Riley 2012: ≈ 12%/decade |
+| E05 | Mars global dust storm | S (Mars) | – | 0.18 | solar output ×0.1 for 0.3 yr; energy deficit → LS strain if fission share < 30% | ≈ one per 3 Mars years (2001, 2007, 2018) |
+| E07 | Tunguska-class impact (≈50 m) | body | – | Earth 0.003; other bodies × (R/R⊕)² × atmos factor | ≈ 10 Mt; if it hits a settled zone (p = area_settled/area): settlement pop −1–20% | Tunguska 1908; Chelyabinsk 2013 (20 m) |
+| E08 | 1 km impact | body | – | 2e-6 × impact_prob_mult | Earth: pop −1–10%, GDP −20%, regime → COLL p = 0.3; any other settled body is destroyed locally | ≈ 1 per 500 kyr |
+| E09 | 10 km impact (extinction-class) | body | – | 1e-8 × impact_prob_mult | Earth: pop −50–95%, K ×0.3 for 50 yr, COLL; off-world settlements survive and become the "Earth ark" | Chicxulub |
+| E10 | Supervolcano (VEI 8) | E | – | 1.5e-5 | food −30% for 5–10 yr; pop −5–15%; regime → COLL p = 0.3 | Toba 74 ka |
+| E11 | VEI-7 eruption | E | – | 1.5e-3 | food −5% for 2 yr ("year without summer"); GDP −1% | Tambora 1815 |
+| E12 | Nearby supernova (< 50 ly) | Sy | – | 1e-8 | ozone −50% for 10 yr on planets; radiation +; Earth crop −20% | |
+| E13 | Gamma-ray burst (beamed, < 2 kpc) | Sy | – | 2e-9 | ozone collapse; surface pop −30%; habitats fine | Ordovician hypothesis |
+| E45 | Stellar flyby / comet shower | Sy | – | 1e-6 | impact rates ×3 for 1e5 yr; comet volatile bonanza | Gliese 710 passes 0.05 pc in ≈1.3 Myr |
+| E46 | M-dwarf superflare | S (M-star systems) | settled planet/hab around M star | 0.3 (flare stars 1.0) | unshielded infrastructure −10%; surface deaths 0–2% of pop; atmospheric erosion flag | Proxima superflare 2016 (×68 brightening) |
+| E47 | Climate tipping cascade | E | year < 2150, warming > 2 °C | 0.01 | Earth K −3%; GDP −2%; emigration desire ×2 for 20 yr | IPCC tipping elements |
+| E72 | Rogue planet / interstellar object capture | Sy | – | 1e-6 | new body with random resources added to the system catalog | 'Oumuamua, Borisov |
+| E73 | Naked-eye supernova (e.g. Betelgeuse, 550 ly) | G | – | 1e-5 | no harm; religion founding ×2 for 10 yr; astronomy research +5% | Betelgeuse: within ≈ 100 kyr |
+
+### 6.2 Technological accidents and infrastructure
+
+| id | Event | Scope | Trigger / conditions | p (per yr) | Effects | Basis |
+|---|---|---|---|---|---|---|
+| E03 | Habitat breach / decompression | S | S3–S6 | S3/S4: 0.02; S5: 0.01; rotating habitats 0.005; × (1 − maintenance) | deaths: pop × U(0, 0.02) (S3: a whole module, 2–10 people); repair 0.1 yr | ISS leaks; Apollo 1; Soyuz 11 |
+| E04 | Life-support cascade failure | S, Sh | S3–S4, ships | 0.01 × ls_failure_hazard | if spares stock < 1 yr: pop −10–100%; else −0–5% | Apollo 13; Biosphere 2 O2 crash |
+| E06 | Kessler cascade | E orbit | tracked objects > 1e5 | `0.002 × (debris_objects / 1e6)²` (≈0.0045 at t0) | launch_cost_LEO ×3 for 20–50 yr; launch rate ×0.3; satellite services GDP −0.5% | Kessler & Cour-Palais 1978 |
+| E17 | Closed-ecosystem crop blight | S | food_closure > 0.8 and crop species < 50 | 0.02 (×0.5 with M11) | food output −30–100% for 1 yr; famine if reserves < 1 yr | Irish famine monoculture; Biosphere 2 |
+| E18 | Biome drift / microbiome collapse (Aurora) | S, Sh | closed system isolated > 50 yr | `0.001 × years_isolated/100` (×0.2 with M12) | fertility ×0.8; mortality +0.5%/yr for 20 yr; cognitive decline flag | KSR *Aurora*; island dwarfism and microbial evolution |
+| E19 | Fusion breakthrough | P | N15 or N17 ≥ 50% researched | 0.01 | completes that tech immediately | wildcard |
+| E20 | Research breakthrough | P | ≥ 1 S5+ settlement | 0.05 | +25% progress on a random active tech | |
+| E41 | Reactor accident | S | per reactor | fission 2e-4/reactor-yr; fusion 5e-5 | local deaths 0–1%; energy −; nuclear research ×0.8 for 10 yr (politics) | ≈ 3 major accidents in ≈ 18,000 reactor-yr |
+| E42 | Antimatter containment failure | S | M19 facility or stored antimatter | 1e-4 per facility-yr | yield = 1.8e17 J/kg of stored antimatter; ≥ 1 g → settlement −10–100% | |
+| E48 | Space elevator / skyhook failure | S | per elevator | 5e-4 | ribbon falls; ground track damage; launch cost reverts for 10 yr | |
+| E54 | Ship lost in transit (interplanetary) | Sh | per voyage | 0.005 at t0; ×0.5 per N06, N18; floor 1e-4 | all aboard lost | Shuttle: 2 losses in 135 flights |
+| E71 | Torpor failure | Sh | N23 in use | 0.001 per person-yr | individual deaths | |
+| E40 | Grey goo / nanotech runaway | S | F04 known | 1e-4 per S5+ settlement | settlement → X3 (p = 0.3) or X4 contained (p = 0.7) | Drexler 1986 |
+| E60 | Nanoplague (Melding Plague) | S, spreads | F04 and implant prevalence > 0.5 | 1e-4 | augmented pop mortality 30%; settlement loses 2 tiers of infrastructure; spreads via ships p = 0.3 per contact | *Revelation Space* |
+
+### 6.3 Biological and demographic
+
+| id | Event | Scope | Trigger / conditions | p (per yr) | Effects | Basis |
+|---|---|---|---|---|---|---|
+| E14 | Major pandemic (COVID-class) | trade network | connectivity-based | 0.02 × §5.3 PAND modifier | deaths 0.05–0.5% of pop; GDP −3–6%; transits ×0.3 for 2 yr; regime → PAND p = 0.5 | Marani et al. 2021 (PNAS): ≈ 2%/yr |
+| E15 | Severe plague (≥ 10% mortality) | network | – | 0.001 | deaths Par(0.1, 1.5) capped at 0.6; COLL p = 0.3 | Black Death 1347–51 (30–50% of Europe) |
+| E16 | Engineered pathogen release | network | biotech level ≥ 2 | 2e-4 × biotech_level | deaths 1–50%; X4 quarantines | |
+| E49 | Baby boom / pronatalist movement | P | – | 0.01 | fertility ×1.3 for 20 yr | post-1945 |
+| E50 | Demographic collapse | P | GDPpc > 5e4 and regime GOLD/STAG | 0.01 | fertility ×0.7 for 30 yr | East Asia 2020s (TFR 0.7–1.0) |
+| E52 | Famine | S | food_stock < 0 (deterministic) | – | mortality = shortfall × 0.5 per yr; stability −0.3 | |
+| E53 | Mass emigration wave | E/P | home regime ∈ {COLL, WAR, PAND} or E47 | 0.5 when triggered | emigration demand ×5 (capacity-limited) for 10 yr | Irish 1845–55, Europe 1880–1914 |
+| E34 | Human speciation (new clade) | pair of pops | divergence index ≥ 0.5 (§7.9) | 0.02 | new clade label; clade tension +0.2; interbreeding fertility ×0.5 | Belters (*Expanse*), *2312* |
+| E35 | Low-g native generation | S | 20 yr after first births where g < 0.4 | deterministic | "native" flag: cannot live at g > 0.6 without N11; height +5–10%; bone density −20%; divergence +0.05 | *The Expanse* |
+
+### 6.4 Political, economic and military
+
+| id | Event | Scope | Trigger / conditions | p (per yr) | Effects | Basis |
+|---|---|---|---|---|---|---|
+| E21 | War of independence | S/P | failed peaceful bid (§5.4) | from §5.4 | war 2–15 yr; deaths 0.5–5% of colony pop; win → `independent = true`; loss → grievance +0.3, tax ×1.5 | American Revolution; *Red Mars* 2061 |
+| E22 | Peaceful independence / dominion | S/P | successful bid (§5.4) | from §5.4 | independent = true; trade preserved at 80% | Canada 1867; Australia 1901 |
+| E23 | Belt cartel | P (belt) | ≥ 3 belt S4+ control > 50% of a commodity to the inner system | 0.03 | export prices ×1.5–3; war tension with inner polities +0.2; may form a "Belt polity" | OPEC 1973; OPA (*Expanse*) |
+| E24 | Piracy / raiding | lanes | lag > 30 min from any navy and Gini > 0.4 | 0.01 × lanes | cargo loss 1–5%; insurance cost +20% | Caribbean 1650–1720 |
+| E25 | Kinetic bombardment | S | WAR, attacker owns a mass driver or asteroid tug | 0.05 per hostile pair | planets: pop −1–30%; habitats destroyed (p = 0.3) | *The Moon Is a Harsh Mistress*; *Expanse* |
+| E26 | Relativistic kill vehicle strike | Sy | interstellar WAR, attacker has M26/F01 | 0.01 per hostile pair (arrives after d/v yr) | target planet settlements → X3 (p = 0.5); habitats −30% | *Revelation Space*; RKV literature |
+| E43 | Economic crash | trade network | – | 0.03 | GDP −5–15%; expansion ×0.5 for 5 yr | recessions ≈ every 8–10 yr |
+| E51 | Sabotage / terrorism | S | S5+ and (Gini > 0.45 or clade tension > 0.3) | 0.005 | deaths 0–0.1%; stability −0.1 | |
+| E55 | Labor / water strike | S | S3–S5 with Gini > 0.4 or corporate-owned | `0.02 × (1 + 2 × (Gini − 0.4)⁺) × (1 + corp)` | output −30% for 0.5 yr; grievance +0.1 | Ceres water riots (*Expanse*); *Red Mars* |
+| E56 | Corporate charter colony | S | at founding of S3/S4 | 0.3 per founding | corporate-owned: tax_norm 0.8, representation 0.2; faster funding (f_parent ×1.5) | Virginia Company; Weyland-Yutani (*Alien*) |
+| E57 | Resource bonanza | S1+ body | resource score > 0.5 | 0.01 | +0.2 on one resource score; EXP modifier +0.5; migration rush | California 1849; Klondike |
+| E63 | Great-power war (Earth) | E | regime WAR among Earth blocs | in WAR | deaths 0.1–2%/yr; space launches ×0.5; E64 risk | WWI/WWII |
+| E64 | Nuclear exchange | E | during E63 | 0.01 per war-yr | pop −5–50%; K ×0.8 for 50 yr; COLL p = 0.6; off-world colonies lose supply (§4.3 supply-cut) | |
+| E65 | Water/air rationing riot | S | water or O2 stock < 0.5 yr of consumption | 0.2 | stability −0.2; possible regime → SEC | *Total Recall*; *Expanse* |
+| E66 | Space treaty / moratorium | P/G | regime CON/GOLD; per issue (Orion launches, AI, planetary protection, germline editing) | 0.02 per issue | bans or unbans the tech's use; enforcement only within lag < 1 day | Outer Space Treaty 1967; PTBT 1963 |
+| E67 | Life discovered in the Solar System | body | surveys active on Mars subsurface, Europa, Enceladus, Titan | 0.01 (one-off; cap 0.4 total by 2200) | planetary protection lock (X4 for that body unless E66 repeals); research +10%; religion events ×2 | |
+| E68 | Ark exodus | E | E08/E09/E10/E64, or Earth K falling > 20% | 1.0 when triggered (if launch capacity exists) | emergency launch ×10 for 5 yr; ark fleet survival 0.5–0.9 | *Seveneves*; *Interstellar* |
+
+### 6.5 Culture, AI, contact and interstellar voyages
+
+| id | Event | Scope | Trigger / conditions | p (per yr) | Effects | Basis |
+|---|---|---|---|---|---|---|
+| E27 | Generation ship mutiny | Sh | gen ship in transit | `0.003 × (1 + 0.5 × max(0, generations − 1)) × crowding × (1 + scarcity)` | governance reset (0.6); deaths 5–30% (0.3); course change / stop at a nearer star (0.1) | *Orphans of the Sky*; *Aurora* |
+| E28 | Interstellar ship lost (dust, hull, systems) | Sh | in transit | `3e-4 × (1 + (v / 0.05c)²) × shield_mult` | total loss | 1 µg grain at 0.1c ≈ 4.5e5 J |
+| E29 | Arrival disappointment | Sy | arrival; hidden truth `habitable == false` | per arrival | choose: settle habitats (0.7), move on (0.2), return (0.1) | *Aurora* |
+| E30 | Native biosphere incompatible (prions, toxins) | S | arrival on a habitable world with a biosphere | 0.3 per arrival (0.7 if `biochem_compatible == false`) | mortality +5%/yr for 20 yr; p(colony death) 0.5 | *Aurora*; *Avatar* |
+| E70 | Generation ship schism | Sh | gen ship, pop ≥ 1,000 | 0.002 | ship splits; one faction may detach toward a nearer target | *Seveneves* epilogue; *Aurora* |
+| E58 | Seed-ship AI goal drift | Sh | M23 ship in transit | 0.001 | colony culture divergence +0.3, or AI refuses to decant (colony fails, p = 0.2) | *2001*; *Revelation Space* |
+| E31 | SETI signal detected | G | – | 1e-5 (slider up to 1e-2) | research +10% for 50 yr; religion founding ×5; METI debate (E66) | *Contact*; *Three-Body Problem* |
+| E32 | Alien artifact / probe found | S1+ body | – | 1e-6 | random techs −50% cost; X4 on the discovery site p = 0.3 | *2001*; *Rendezvous with Rama* |
+| E61 | Alien biohazard (protomolecule / xenomorph) | S | exo-site with a biosphere or an artifact | 1e-7 | X4 quarantine; deaths 10–100% of the site | *Expanse*; *Alien* |
+| E33 | Dark-forest strike | Sy | `dark_forest_mode = on` (default off; λ = 1e-6) | `λ × detectability`, with detectability = max(0, K − 1)² × (1 + 10 × METI_broadcasts), and only after our light front reaches the attacker | star system sterilized: all settlements X3 | *Three-Body Problem* (Liu Cixin) |
+| E36 | Religion / ideology founding | S | S5+ (pop ≥ 1e4) | `0.002 × (1 + crisis) × (1 + 5 × SETI_detected)` | cohesion +0.1; inter-settlement tension +0.05; 10% exodus doctrine (passes the interstellar "will" gate); 5% anti-tech (research ×0.8) | Mormon trek 1846; Puritans 1630 |
+| E37 | Charismatic leader ("the Mule") | P | – | 0.001 | regime forced to a weighted-random state (WAR 0.4, EXP 0.3, SEC 0.2, GOLD 0.1) for 10–40 yr; breaks the psychohistory Plan | *Foundation and Empire* |
+| E38 | AI misalignment incident | P | N14 known | `0.005 × ai_level` (1 after N14, 3 after M13) | GDP −1–10%; X4 on 1 settlement (p = 0.2) | |
+| E39 | ASI takeoff | G/P | M13 completed | 1.0 (once) | regime → SING | Vinge 1993 |
+| E59 | Seldon crisis | P | M25 adopted; every 50–150 yr | scheduled | if Plan adherence > 0.5: COLL/WAR transitions ×0.6 this decade; 2% chance a "Mule" (E37) breaks the Plan | *Foundation* |
+| E62 | Uplifted species emergence | S | seeded biosphere + M27 program for > 500 yr | 1e-4 | a new sapient polity appears (non-human); contact/war dynamics | *Children of Time* |
+| E69 | Moon disruption ("Agent") | E | easter egg, default off | 1e-9 | Earth uninhabitable in 2 yr ("Hard Rain"); forces E68 | *Seveneves* |
+
+**Event count: 72** (E01–E73). E44 is intentionally unused because knowledge loss is the rule in §3.1.
+
+---
+
+## 7. Economy and resources
+
+### 7.1 Resource types
+
+| id | Resource | Unit | Main sources | Main sinks | Per-capita need (baseline) | Stock or flow |
+|---|---|---|---|---|---|---|
+| R01 | Water | t | ice mining, Earth import, recycling | drinking, agriculture, electrolysis (propellant, O2), shielding | 0.1 t/yr make-up at 2040 ECLSS; 1–5 t/yr with agriculture losses | stock |
+| R02 | Oxygen | t | electrolysis, MOXIE/regolith reduction, plants | breathing, oxidizer (≈78% of methalox mass) | 0.31 t/yr (0.84 kg/d) gross | stock |
+| R03 | Food | t (dry) | agriculture (CEA), imports | people | 0.23 t/yr (0.62 kg/d) | stock (spoils 10%/yr) |
+| R04 | Volatiles (C, N, CO2, CH4, NH3) | t | Mars air, Titan, Ceres, comets | atmosphere make-up (N2 buffer gas), fertilizer, plastics, terraforming | 0.01 t/yr leakage make-up + industry | stock |
+| R05 | Ferrous metals (Fe, Ni, Co) | t | regolith reduction, M/S asteroids | structure, machines | – (via capital) | stock |
+| R06 | Light metals + construction (Al, Ti, Mg, Si, regolith, glass) | t | regolith, basalt | habitat build, PV, shielding | – | stock |
+| R07 | Rare elements (PGM, REE, Cu, P) | kg | M-asteroids, KREEP, Earth | electronics, catalysts, fertilizer (P is a hidden bottleneck) | P: ≈ 0.5 kg/yr diet, 1–3 kg/yr with agricultural losses (recycle it!) | stock |
+| R08 | Fissile (U, Th) | kg | Earth, KREEP | fission reactors | ≈ 180 kg natural U per MWe·yr (LWR, once-through); ≈ 1.2 kg per MWe·yr (breeder, full burn) | stock |
+| R09 | Helium-3 | kg | lunar regolith, gas-giant scooping | D-He3 fusion | ≈ 54 kg per GW·yr thermal (5.85e14 J/kg) | stock |
+| R10 | Deuterium | kg | water (156 ppm D/H on Earth), Venus (D/H ≈ 120× Earth) | fusion, D2O | – | stock |
+| R11 | Propellant | t | ISRU (methalox, hydrolox), Earth | ships | – | stock |
+| R12 | Antimatter | g | M19 facilities | F01 drives, weapons | – | stock |
+| R13 | Manufactured goods / spares | t | manufacturing sector | capital formation, LS spares | 0.2–0.5 t/yr spares early | stock |
+| R14 | Energy | W | PV, fission, fusion, beamed, Dyson | everything | 2–25 kW (§1.9) | flow |
+| R15 | Compute | FLOP/s | fabs + energy | AI, uploads, research | – | flow |
+| R16 | Knowledge | KP | research (§3.1) | techs | – | stock (per polity) |
+| R17 | Capital | cr | investment | depreciation 5%/yr | – | stock |
+| R18 | Labor | person-yr | working-age pop × participation (0.5) + robots × ai_mult | all sectors | – | flow |
+| R19 | Habitat volume | m³ pressurized | construction | people (≥ 100 m³/person comfortable) | 100 m³ | stock |
+
+### 7.2 Production
+
+**Aggregate output per settlement (Cobb-Douglas with energy, KLE):**
+```
+Y = A × K^α × L^β × E^γ          (cr/yr; K in cr, L in workers, E in W used)
+Earth-like:   α = 0.30, β = 0.60, γ = 0.10   →  A0 = 492 (calibrated: Y = 1.7e14, K = 3.5Y, L = 4.2e9, E = 2.1e13 W)
+Frontier:     α = 0.35, β = 0.40, γ = 0.25   →  A0 = 75.8 (same calibration point; use where energy is the binding input)
+Blend by SSI: exponents = lerp(frontier, earth, SSI)
+```
+- Energy as a hard constraint (LINEX-style alternative, recommended in addition): `Y_eff = min(Y, E × 3.156e7 / ε)`, where energy intensity ε = 3.9e6 J/cr at 2040, falling 1.5%/yr (×0.7 per energy tech tier).
+- **TFP:** `A(t) = A0 × 1.005^(t − 2040) × Π_techs (1 + w_tier)`, with w_tier = 0.01 near, 0.02 mid, 0.05 far.
+- **Labor:** `L = 0.5 × working_age_pop + robots × ai_mult × 0.3`. Robots are capital: `robots = 0.1 × K_machines / 1e5`.
+- **Capital:** `K(t+1) = K + s × Y − δ × K`, with s = 0.25 (Earth), 0.35 (frontier), 0.45 (WAR, military), δ = 0.05. Growth is capped: `ΔK/K ≤ 0.10 × capital_growth_max`.
+
+**Sector allocation of Y** [D defaults, shares of GDP; polity policy can shift ±50%]:
+
+| Sector | Earth 2040 | Mars colony | Belt hub | Function |
+|---|---|---|---|---|
+| Life support + agriculture | 0.04 | 0.20 | 0.15 | produces R01–R03 |
+| Energy | 0.06 | 0.15 | 0.12 | adds W capacity: PV 1 W per 1–3 cr (2040), fission 5 cr/W, fusion 3 cr/W (N17) |
+| Mining / ISRU | 0.02 | 0.15 | 0.30 | extraction per §2.3 caps; energy per kg from §1.10 |
+| Manufacturing | 0.15 | 0.15 | 0.15 | R13, capital goods |
+| Construction / habitat | 0.06 | 0.15 | 0.10 | R19: habitat cost 1e4 cr/m³ (2040 Mars), ×0.5 per N05, N24; O'Neill ≈ 1e3 cr/m³ |
+| Transport / shipbuilding | 0.02 | 0.05 | 0.08 | fleet tonnage |
+| Research + education | 0.03 | 0.05 | 0.03 | sets research_share |
+| Military | 0.02 | 0.02 | 0.02 | military strength stock (δ = 0.1/yr) |
+| Services / consumption | 0.60 | 0.08 | 0.05 | happiness |
+
+### 7.3 Population dynamics
+
+Per settlement per year:
+```
+B = N × cbr0 × fertility_mult × lowg_fertility × genetic_penalty × max(0, 1 − (N/K)^2)
+D = N × (cdr0 × mortality_mult × (1 + 5 × max(0, N/K − 1)) + radiation_excess + hazard_deaths)
+N(t+1) = N + B − D + immigrants − emigrants
+```
+
+| Parameter | Earth 2040 | Frontier colony (S4–S5) | Mature habitat / city | Post-longevity (M24) |
+|---|---|---|---|---|
+| cbr0 (births/person/yr) | 0.0155 | 0.035 (colonial America ≈ 0.045–0.05) | 0.015 | 0.005 |
+| cdr0 (deaths/person/yr) | 0.0085 | 0.008 + hazards | 0.007 | 0.001 |
+| Max natural growth r | ≈ 0.7% | ≈ 2.7% (doubling ≈ 25 yr, Franklin/Malthus observation) | 0.8% | 0.4% |
+| lowg_fertility (g < 0.4) | – | 0.6 (unknown; N11 → 0.85, N29 → 1.0) | | |
+| Working-age share | 0.65 | 0.75 (selected immigrants) | 0.62 | 0.85 |
+
+**Carrying capacity:**
+```
+K = min(K_hab, K_ls, K_food, K_energy) × K_mult
+K_hab    = habitat_volume_m3 / 100                 (terraformed surface: area_km2 × 50 × H)
+K_ls     = life-support processing capacity (persons)
+K_food   = food_output_t_per_yr / 0.23 + food_imports / 0.23
+K_energy = energy_W_available / w_per_capita        (w_per_capita = 25 kW S3, 10 kW S4, 5 kW S5+, 3 kW digital-heavy)
+Earth: K_E = 1.1e10 × (1 − climate_damage) × tech_factor
+```
+**Age structure:** track 5 cohorts per settlement (0–14, 15–29, 30–44, 45–64, 65+) with annual aging (cohort_i loses 1/15 or 1/20 of its members to cohort_{i+1}). The cohorts give median age, dependency ratio and working-age share. Immigrants are 80% aged 20–44.
+
+**Migration:**
+```
+U_j (attractiveness) = 0.4 × log10(GDPpc_j) + 0.2 × stability_j + 0.15 × freedom_j + 0.15 × frontier_bonus_j − 0.3 × risk_j
+desire_ij = m0 × N_i × max(0, U_j − U_i − c_move_ij)          m0 = 1e-4
+flow_ij = min(desire_ij, seats_ij)                            seats = Σ ships on route × crew capacity × windows
+```
+Calibration: Earth→Mars seats at 2040 ≈ 2–10 ships × 12–24 crew per window. By 2070, ≈ 100 ships × 100 = 1e4 per window if EXP.
+
+### 7.4 Energy accounting (per settlement)
+
+```
+E_supply = Σ_PV (area × flux(a) × η × CF) + Σ_fission MWe + Σ_fusion + beamed_in + dyson_share
+E_demand = Σ_people w_per_capita + Σ_ISRU (kWh/kg × t/yr) + manufacturing (ε × Y) + transport fuel production
+energy_ok = min(1, E_supply / E_demand)
+```
+η = 0.3 (2040), 0.4 (N19), 0.5 (M15). CF: free space 0.9, Moon pole 0.8, Moon equator 0.45, Mars 0.22 (dust/night), Venus clouds 0.5 (×1.9 flux, diffuse light).
+
+**Dyson swarm mass budget:** 0.0025–0.025 kg per W captured at 1 AU (1–10 kg/m² collectors at 408 W/m² delivered). 1e20 W needs ≈ 2.5e17–2.5e18 kg, about 1e-5 to 1e-6 of Mercury (3.3e23 kg). A full swarm (3.8e26 W) needs ≈ 1e24 kg at 1 kg/m², more than Mercury. Use thinner collectors (0.1 kg/m²) or add asteroids and Venus. Exponential self-replicating build doubling ≈ 2–5 yr gives ≈ 30–60 yr for Mercury disassembly (Armstrong & Sandberg 2013 estimate ≈ 31 yr).
+
+### 7.5 Transport cost and trade
+
+**Per-kg transport cost i → j:**
+```
+c_ij = c_lift(i) + c_prop × (exp(Δv_ij / v_e) − 1) + c_handling + c_interest
+c_lift(i)   = launch cost off body i's surface (Earth: launch_cost_LEO; Moon 10–50 cr/kg; Mars 50–300 → 5 with M02; habitats 0)
+c_prop      = price of propellant at the departure depot (Earth LEO 2040 ≈ 100 cr/kg; Mars ISRU ≈ 20; NEA depot ≈ 30)
+v_e         = Isp × 9.81 (km/s): chem 3.7, NTR 8.8, NEP 30–100, fusion 100–1,000
+c_handling  = 10 cr/kg
+c_interest  = goods_value × r × t_transit_yr    (r = 0.05; Krugman 1978, "First Fundamental Theorem of Interstellar Trade")
+× transport_cost_mult (tech) × piracy_insurance (E24)
+```
+
+**Goods trade (arbitrage, per commodity per year):**
+- Local price: `P_i = P_ref × (demand_i / supply_i)^(1/ε)`, with ε = 1.5 (necessities: water, O2, food ε = 0.3, so scarcity causes price spikes).
+- Flow i → j happens while `P_j − P_i > c_ij` and fleet capacity remains. Flows are allocated greedily by margin `(P_j − P_i − c_ij) / c_ij`.
+- Fleet capacity on route = Σ ship tonnage × trips_per_yr (trips/yr = 1 / (transit + turnaround). Synodic windows cap high-Δv routes to one trip per synod).
+
+**Services / financial / information trade:**
+```
+T_info_ij = g0 × (Y_i × Y_j)^0.5 / (1 + lag_minutes_ij / 10)
+```
+At Earth–Moon lag (1.3 s), this is ≈ 100% integrated. At Earth–Mars (12.5 min average) it is ≈ 44%, at Earth–Saturn ≈ 12%, and at interstellar distances ≈ 0 (except a slow "blueprint/culture" stream).
+
+**Interstellar trade:** physical trade = 0, except colonists. Information exchange (designs, science, culture) is modeled as tech diffusion (§3.1) with delay = distance_ly yr. A colony at 10 ly receives a tech 10 yr after its discovery and pays 0.2× cost to implement it.
+
+**Trade gravity check (for tuning):** inter-settlement goods volume should scale ≈ `Y_i^0.8 × Y_j^0.8 / c_ij^1.0`. If the arbitrage model diverges strongly, re-tune ε.
+
+### 7.6 Wealth, inequality and well-being
+
+| Metric | Formula |
+|---|---|
+| GDP | Y (cr/yr) |
+| GDP per capita | Y / N |
+| Wealth | K + natural_capital (Σ stocks × price) + human_capital (N × education_years × 1e4 cr) |
+| Development index DI (0–1) | geometric mean of: life-expectancy index (LE − 20)/(100 − 20); education index; `log(GDPpc/100)/log(1e6/100)`; `log(kW_pc/0.1)/log(100/0.1)` |
+| Gini | starts at 0.30 (crew/colony), 0.38 (Earth 2040 average within countries; ≈ 0.6 global), 0.55 (corporate colony). Drift: +0.005/yr in GOLD with AI ×2; −0.02/yr in WAR (Scheidel's "Great Leveler"); −0.05 in COLL; +0.01/yr under cartel/monopoly |
+| Stability / happiness (0–1) | `0.25 × DI + 0.2 × (1 − Gini) + 0.2 × (1 − scarcity) + 0.15 × representation + 0.1 × cohesion + 0.1 × safety`, minus event shocks; regime bias in §5.3 |
+
+### 7.7 Military
+
+`M = military_capital × tech_mult × (1 + 0.5 × SSI)`, with δ = 0.1/yr. Projection to target: `M_proj = M × exp(−transit_days / 200) × (window_open ? 1 : 0.3)`. Battle outcome per year of war: Lanchester square law on M_proj. Loser's settlements are captured (polity change) with p = 0.3/yr if M_ratio > 3.
+
+### 7.8 Agent decision rules ("every decision depends on resources")
+
+Each polity agent evaluates options every year (or each launch window) in priority order:
+
+| Decision | Preconditions | Utility / probability |
+|---|---|---|
+| Survival actions (import LS, ration) | any stock < 1 yr of consumption | always first; ration → stability −0.1 |
+| Research allocation | – | `need_score × cost^−0.3` (§3.1); need_score from the biggest cost driver (e.g. resupply cost > 20% of GDP → N02/N03/N12 weight ×5) |
+| Build energy | energy_ok < 0.9 for 2 yr | choose the cheapest cr/W available: PV (a < 5 AU), fission, fusion (N17 + He-3 or D access) |
+| Build habitat | N/K_hab > 0.8 | build 20% of current volume; cost per §7.2 |
+| Launch robotic outpost | S1 target, U ≥ 0.30, budget ≥ cost, window open | `U = 0.3 H + 0.3 res_fit + 0.2 strategic − 0.2 norm_cost − 0.2 risk`; `p = sigmoid(10 × (U − U0)) × f_regime` |
+| Launch crewed outpost / colonists | S2 target, U ≥ 0.45, LS techs present | same U; crew size = min(seats, budget / cost_per_person) |
+| Build O'Neill habitat | M01 known; Σ Earth + space demand for housing > K_hab | cost 1e14–1e15 cr; 10–30 yr build |
+| Terraform | tech, body pop ≥ 1e6, polity GDP ≥ 1e15 | commit 2–5% GDP per yr |
+| Dyson phase | tech, capital_growth ≥ 5%/yr | commit 5–10% of industrial output |
+| Interstellar mission | §3.6 energy and capital rule; will gate; target score ≥ 0.4 | one mission per 10–50 yr per eligible polity early; ×2 under EXP |
+| Declare independence | §5.4 | |
+| Start war | tension > 0.5 and M_ratio > 1.5 and regime ∉ {GOLD} | `p = 0.002 × tension × (1 + competition) × f_regime_WAR` per rival pair per yr |
+| Join cartel / alliance | shared commodity export > 30% of GDP | p = 0.05/yr |
+
+### 7.9 Genetic and cultural divergence
+
+```
+genetic_divergence_ij += (1 − gene_flow_ij) × (0.0005 × generations_elapsed_this_yr) + engineered_delta
+gene_flow_ij = min(1, migrants_per_generation_ij / 10)       (≈ 1 migrant per generation prevents drift; 10 integrates fully)
+engineered_delta = 0.02 per germline program event (N22, M27 ×5)
+cultural_divergence_ij += 0.002/yr × (1 − info_integration_ij) − 0.001/yr × info_integration_ij
+```
+Thresholds: 0.2 = "visible ethnicity/physiology", 0.5 = "new clade" (E34), 0.8 = reproductive incompatibility. Natural rate: 10,000 yr ≈ 400 generations. Real anchors: Tibetan EPAS1 high-altitude adaptation in ≈ 3,000 yr; lactase persistence in ≈ 7,500 yr. Isolated natural populations do not speciate within 10 kyr (mammal speciation typically takes 1e5–1e6+ yr), so clades in 10 kyr need engineering (N22/M27) plus isolation. Low-g developmental changes (E35) are phenotypic, not genetic, but count +0.05.
+
+---
+
+## 8. Science-fiction survey: mechanics worth stealing
+
+Format: work · idea · concrete sim rule (with ids from §3–§7). One line each.
+
+| Work | Idea | Sim rule |
+|---|---|---|
+| **The Expanse** (Corey) | Belter physiology divergence | E35 low-g natives (cannot tolerate g > 0.6), feeding clade divergence (E34). A "Belter" clade emerges ≈ 3–5 generations after belt S4 founding |
+| | Water and air are the politics of the Belt | E23 Belt cartel, E55 water strikes, E65 rationing riots; necessities have price elasticity 0.3 (§7.5) |
+| | One drive breakthrough reshapes the system (Epstein drive) | E19-style wildcard: 0.2%/yr while N17 is known, N18 completes instantly and the polity that owns it gets military ×2 for 20 yr |
+| **Foundation** (Asimov) | Psychohistory works only for huge, unaware populations | M25 effectiveness = `min(1, log10(pop)/12) × (1 − awareness)`. Awareness rises 0.01/yr after adoption |
+| | Seldon crises / the Mule | E59 scheduled crises; E37 individual outliers break statistical forecasts |
+| | Imperial decay: overextended core worlds | +STAG/COLL transitions for polities with > 50 systems or mean internal lag > 10 yr: `×(1 + 0.1 × log10(lag_yr))` |
+| **Red / Green / Blue Mars** (Robinson) | Reds vs Greens: anti-terraforming faction | each terraform stage creates grievance in 20–40% of local pop (cultural divergence +0.1); can trigger SEC |
+| | Two revolutions: 2061 failed and violent, 2127 succeeded and mostly peaceful | after a failed E21, the next bid's peaceful-path probability ×1.5 and its win probability ×1.3 |
+| | Longevity creates gerontocracy and Earth overpopulation | M24/N27: STAG modifier ×(median_age/40); Earth K pressure → E53 emigration waves |
+| **Seveneves** (Stephenson) | Sudden Earth sterilization with a 2-yr warning | E69 (easter egg) → E68 ark exodus; off-Earth pop at that moment is humanity's seed |
+| | Bottleneck to 7 founders, then engineered "races" | with N22 + gene banks, the founder floor for viability falls to ≈ 10; each founder line becomes a clade (divergence 0.3) |
+| | 5,000-yr return to a re-terraformed Earth | Earth can drop to X3 and later re-enter S1→S7 via terraform techs |
+| **Interstellar** (Nolan) | The Blight: monoculture collapse on a planetary scale | E17 at Earth scale: p = 1e-4/yr; Earth food −50% over 30 yr → E68 |
+| | Plan A (lift people) vs Plan B (embryos) | the polity chooses between M22 generation ships and M23 embryo ships; cost vs ethics (E66) |
+| | Scouts send false-positive data (Dr. Mann) | survey reports carry error: P(false "habitable") = 0.2 for flyby-only data; truth fixes on arrival (E29) |
+| **Dune** (Herbert) | Butlerian Jihad: anti-AI crusade | after E38 with damage > 5% GDP: p = 0.1 → religion founding (E36) with an AI ban; N14/M13 locked for 200–2,000 yr in adopting polities |
+| | Single strategic resource monopoly (spice) | any polity controlling > 70% of a resource with no substitute (He-3 before M06, antimatter, FTL) gets bargaining power: tax on all users +20% |
+| | Transport guild monopoly | optional faction "Guild" owns > 50% fleet tonnage; can embargo any polity (trade ×0) |
+| **Star Trek** | Post-scarcity (replicators) | with F04 + ≥ 1e16 W: Gini drifts to 0.1; GOLD self-transition ×1.3; services → 90% of GDP |
+| | Prime Directive | discovered native biospheres (E67/E30) default to X4 protection unless the polity's ideology flag says otherwise |
+| | First contact triggered by the first warp test | F07 completion → detectability ×10 for E31/E33 |
+| **Alien** (Scott/Cameron) | Corporate company-town colonies | E56; corporate colonies: Gini 0.55, representation 0.2, funding ×1.5 |
+| | Hazardous native life | E61 alien biohazard → X4 |
+| | Small terraforming outposts (Hadley's Hope, 158 colonists, decades-long atmosphere processors) | allows S3/S4 terraform-stage outposts on marginal exoplanets: H +0.01/yr |
+| **Aurora** (Robinson) | Failed-colony thesis: biology does not travel well | E18 biome drift, E30 incompatible biospheres; `P_hab_prior` truths are mostly false (§2.5) |
+| | Island effect: small closed populations degrade | E18 adds a cognition/health decline flag; generation-ship pop < 2,000 → E27 ×1.5 |
+| | Return home is a valid outcome | E29 return option (0.1); "returned colonists" migrate to Earth |
+| **Three-Body Problem** (Liu Cixin) | Dark forest | E33 (off by default); METI broadcasts raise detectability; strike delay = light-time + weapon flight time |
+| | Sophons lock basic physics | E31 variant: if hostile contact, cost of far-tier [S] techs ×10 |
+| | Escapism crisis: fleeing ships become political traitors | during existential threats, interstellar launches trigger SEC/WAR (p = 0.3) |
+| **Hyperion** (Simmons) | Farcaster network dependence | if F08 exists: losing a link → connected polities' GDP −30% and COLL p = 0.3 |
+| | TechnoCore: AI as a parasitic separate polity | SING outcome "partial loss of control" (§5.5) spawns an AI polity |
+| | Ousters: space-adapted posthumans vs planetbound | clade conflict modifier: WAR ×(1 + clade_divergence) between clades |
+| **Culture** (Banks) | Benevolent Minds run post-scarcity habitats | SING "aligned" outcome → AI-run settlements: stability +0.2, Gini 0.05 |
+| | Orbitals (ring habitats with 10s of billions) | late megastructure habitat class: K ≤ 5e10 per Orbital (F04 + M18) |
+| | Sublimation | the transcendence outcome removes a polity from play (pop → 0, ruins left) |
+| **Revelation Space** (Reynolds) | Inhibitors: machines that cull spacefaring civs | variant of E33 triggered by expansion radius > R_inhib (default 50 ly) or K ≥ 1.5 |
+| | Melding Plague | E60 |
+| | Lighthuggers and slow politics; Ultras and Conjoiners as clades | relativistic time dilation for ships ≥ 0.5c; clade types: spacer (Ultra), hive-mind (Conjoiner, with F02 + N26) |
+| **Mass Effect** | Precursor relay network | E32 artifact may (p = 0.05) be a relay node that gives instant travel along a fixed graph |
+| | Cyclical purge (Reapers, 50 kyr) | optional "cycle" dial: civilization-wide purge every N yr (off by default) |
+| | Genophage (fertility bioweapon) | WAR bioweapon option: target fertility ×0.1 for 100+ yr |
+| **Stellaris** | Ethics factions with attraction and happiness | each settlement has faction shares (expansionist, isolationist, spiritualist, materialist, xenophile); unhappy factions raise SEC |
+| | Ascension paths (genetic, synthetic, psionic) | three endgame branches: M27 clades, F02 uploads, and (no psionics) F05 Matrioshka |
+| | Crises scaled to elapsed time | mid-game crisis events weighted by sim year (AI, nanotech, contact) |
+| **SpaceEngine** | Real catalog plus procedural fill | world-gen per §2.6: Hipparcos/Gaia stars + NASA exoplanet archive, then procedural for the rest |
+| | Planet taxonomy | label bodies as terra/selena/aquaria/ferria/carbonia/jupiter/neptune × frigid/cold/temperate/warm/hot/torrid |
+| **Civilization: Beyond Earth** | Affinities: Purity / Harmony / Supremacy | the colony adaptation strategy chosen at founding: Purity (habitats, Earth-normal: hab cost ×1.3), Harmony (gene adaptation: M27, divergence ×2), Supremacy (cyborg/AI: N26/F02) |
+| | Victory types: Contact, Emancipation, Promised Land, Transcendence | use as end-of-run "outcome" labels for summaries |
+| | Sponsor choice | each founding polity picks a sponsor profile with stat modifiers (corporate, national, religious, cooperative) |
+| **Orion's Arm** | Toposophic levels (S0–S6) | ai_level as discrete tiers; each SING crossing raises the tier and moves research_mult by ×10 |
+| | Clade taxonomy: baselines, tweaks, splices, provolves, vecs | `clade` enum for the data viewer |
+| | Technocalypse and wormhole Nexus | E40/E38 combo event "Technocalypse" (AI + nanotech) at p = 1e-4/yr once both F04 and M13 exist |
+| **Children of Time** (Tchaikovsky) | Uplift virus creates a non-human sapient species over millennia | E62 |
+| | Ark ship with failing crew and cargo-cult knowledge loss | gen/sleeper ships lose 0.1%/yr of tech knowledge (re-learnable at 0.3×) |
+| **Project Hail Mary** (Weir) | Astrophage: star-dimming microbe, a sudden energy crisis | event "Stellar dimming": solar output −1–10% over 20–50 yr (p = 1e-5/yr, rarer than E31) |
+| | Astrophage as perfect fuel | if that event fires: optional tech "Astrophage drive" (v_max 0.9c, cost 1e6 KP) |
+| | Cooperative first contact | E31 outcome table: 70% neutral, 20% cooperative (research +30%), 10% hostile |
+| **Extras** | *The Moon Is a Harsh Mistress*: mass-driver rebellion and resource drain | E25 by lunar colonies; Moon exports of water/food → grievance (tax_norm) |
+| | *2312*: terraria in hollowed asteroids; Mercury's moving city | asteroid terraria habitat class (K 1e4–1e5 per 30 km asteroid, needs N21 + M07) |
+| | *Bobiverse*: uploaded self-replicating probes | F03 digital seeds; replication doubling 1–5 yr per system |
+| | *Orphans of the Sky*: crew forgets it's on a ship | voyages > 300 yr: p(mission forgotten) = 0.001/yr → arrival actions random |
+
+---
+
+## 9. Galactic scale
+
+### 9.1 Milky Way parameters [R]
+
+| Parameter | Value | Use in sim |
+|---|---|---|
+| Stars | 1–4e11 (use 2e11) | procedural star count (render LOD only; simulate a ≤ 1e6 star neighborhood in detail) |
+| Stellar mass | ≈ 6e10 M☉ | |
+| Total mass (incl. dark matter) | ≈ 1–1.5e12 M☉ | |
+| Stellar disk radius | ≈ 15 kpc ≈ 50,000 ly (disk diameter ≈ 100,000 ly; faint stars beyond 25 kpc) | |
+| Disk scale length | ≈ 2.6 kpc (8,500 ly) | `ρ(R) ∝ exp(−R / 2.6 kpc)` |
+| Thin-disk scale height | ≈ 300 pc (≈ 1,000 ly) | `ρ(z) ∝ exp(−\|z\| / 300 pc)` |
+| Thick-disk scale height | ≈ 900 pc (≈ 10% of local stars) | |
+| Bulge / bar | bar half-length ≈ 5 kpc, angle ≈ 27° to the Sun–GC line | |
+| Sun's galactocentric distance | 8.18 kpc (26,700 ly) (GRAVITY 2019) | |
+| Sun's height above the plane | ≈ +20 pc | |
+| Rotation speed at the Sun | ≈ 230 km/s; galactic year ≈ 225–250 Myr | star positions are effectively static over 10 kyr (they move ≤ 0.03 ly/yr ≈ 300 ly per 10 kyr; include proper motion for nearby stars: Barnard's 10.3″/yr) |
+| Central black hole | Sgr A*, 4.3e6 M☉ | |
+| Spiral arms | 2 major (Scutum–Centaurus, Perseus) + 2 minor (Norma/Outer, Sagittarius–Carina); the Sun is in the Orion Spur | |
+| Arm pitch angle | ≈ 12–13° (range 10–14°) | log spiral `r = r0 × exp(θ × tan(12.5°))` |
+| Local stellar density | ≈ 0.1 stars/pc³ ≈ 0.0034 stars/ly³ (incl. faint M dwarfs; ≈ 0.14/pc³ with brown dwarfs) | |
+| Mean nearest-neighbor distance | ≈ 0.554 × n^(−1/3) ≈ 3.7 ly | typical hop to a *suitable* target ≈ 6–10 ly |
+| Galactic habitable zone | 7–9 kpc, ≈ 10% of stars (Lineweaver et al. 2004) | multiply habitability priors by GHZ factor |
+| SN rate (galaxy) | ≈ 1.6–2 per century | |
+| Metallicity gradient | ≈ −0.06 dex/kpc | §2.6 |
+
+**Star counts within radius R of the Sun** (density 0.0034/ly³, thin-disk clipped at ±1,000 ly) [computed]:
+
+| R (ly) | Stars (incl. M dwarfs) | Fraction of the galaxy | Expected "truly habitable" planets (0.029 per star, §2.6 priors) |
+|---|---|---|---|
+| 10 | 14 | 7e-11 | 0.4 |
+| 20 | 114 (real census ≈ 130 objects incl. BDs) | 6e-10 | 3 |
+| 50 | 1,800 | 9e-9 | 50 |
+| 100 | 14,000 | 7e-8 | 400 |
+| 250 | 2.2e5 | 1.1e-6 | 6,500 |
+| 500 | 1.8e6 | 9e-6 | 52,000 |
+| 1,000 | 1.4e7 | 7e-5 | 4e5 |
+| 2,000 | 7.8e7 | 4e-4 | 2.3e6 |
+| 5,000 | 5.3e8 | 2.6e-3 | 1.5e7 |
+
+### 9.2 Colonization-wave literature (Fermi paradox)
+
+| Study | Model | Result |
+|---|---|---|
+| Hart 1975 | settle-and-spread at ≈ 0.1c | galaxy filled in ≈ 0.65–2 Myr. Absence of ETs is "Fact A" |
+| Jones 1976, 1981 | Monte Carlo, population-pressure driven | ≈ 5–60 Myr depending on growth rate |
+| Newman & Sagan 1981 | reaction-diffusion (Fisher-KPP); front speed `v = 2 √(γ D)` | with low population growth γ the front is very slow; galaxy crossing can take ≈ 1e9+ yr for long-lived, slow-growing civs |
+| Landis 1998 | percolation on a lattice; each colony spawns with probability P | below the critical P_c ≈ 0.3, expansion halts in finite clusters, leaving large empty voids forever |
+| Bjørk 2007 | non-replicating probes (8 probes × 8 subprobes, 0.1c) | ≈ 40,000 stars explored in ≈ 1e5 yr; full exploration ≫ 1e8 yr |
+| Armstrong & Sandberg 2013 | Dyson-powered self-replicating probes | Mercury disassembly ≈ 31 yr; intergalactic spread is feasible |
+| Carroll-Nellenback et al. 2019 ("Aurora effect") | probe range + stellar motions + settleable fraction f | galaxy fills in ≲ 1 Gyr even with 10 km/s ships, thanks to stellar mixing; steady states with unsettled pockets exist for small f |
+| Hanson et al. 2021 (grabby aliens) | expanding civs at 0.3–0.9c | sets expectations for loud vs quiet civs; usable for a contact dial |
+
+**Front speed formula used in this sim** (Hart-style hop-and-settle):
+```
+v_front = d_hop / (d_hop / v_ship + t_settle)          (ly/yr)
+d_hop ≈ 8 ly (to a suitable target), t_settle = 300–1,000 yr (biological), 50–200 yr (digital seeds)
+N_colonies(t) ≈ min( b^((t − t0) / T_cycle), f_target × stars(R(t)) ),   T_cycle = d_hop/v_ship + t_settle,  b = 2–5
+```
+Add the percolation rule: each new colony spawns daughters with probability `P_spawn = f_regime × SSI × will` per cycle. If the effective P_spawn < 0.3, the wave fragments (Landis). This is what makes collapse, Aurora failures and STAG regimes matter at galactic scale.
+
+### 9.3 Time to cross the galaxy (diameter 100,000 ly; the far edge is ≈ 76,000 ly from the Sun)
+
+| Speed | Coast only (100,000 ly) | With settle stops (t_settle 300 yr, 8 ly hops) |
+|---|---|---|
+| 0.005c | 20 Myr | 24 Myr |
+| 0.01c | 10 Myr | 14 Myr |
+| 0.05c | 2 Myr | 5.8 Myr |
+| 0.1c | 1 Myr | 4.7 Myr |
+| 0.2c | 0.5 Myr | 4.3 Myr |
+| 0.5c | 0.2 Myr | 4.0 Myr (settling dominates) |
+
+### 9.4 What is reachable by 12,040? (honest numbers)
+
+Assume the earliest launch years from §3: robotic 0.2c probes from ≈ 2080; generation/seed ships (0.005–0.05c) from ≈ 2250–2300; crewed 0.1c beamed sails from ≈ 2500–2600. Radius = v_front × (12,040 − launch_year), and "stars inside" is the volume-based upper bound.
+
+| Ship speed | t_settle | Launch from | v_front (ly/yr) | Frontier radius by 12,040 | Stars inside sphere |
+|---|---|---|---|---|---|
+| 0.005c | 300 yr | 2300 | 0.0042 | ≈ 40 ly | ≈ 1,000 |
+| 0.01c | 0 (one-way, no re-launch) | 2300 | 0.0100 | ≈ 97 ly | ≈ 13,000 |
+| 0.01c | 300 | 2300 | 0.0073 | ≈ 71 ly | ≈ 5,000 |
+| 0.01c | 1,000 | 2300 | 0.0044 | ≈ 43 ly | ≈ 1,200 |
+| 0.05c | 300 | 2300 | 0.0174 | ≈ 170 ly | ≈ 70,000 |
+| 0.1c | 0 | 2600 | 0.100 | ≈ 944 ly | ≈ 1.2e7 |
+| 0.1c | 100 (digital seeds) | 2600 | 0.044 | ≈ 420 ly | ≈ 1e6 |
+| 0.1c | 300 | 2600 | 0.021 | ≈ 200 ly | ≈ 1.1e5 |
+| 0.2c | 300 | 2600 | 0.0235 | ≈ 220 ly | ≈ 1.6e5 |
+| 0.2c (probes only, no settlement) | – | 2080 | 0.2 | ≈ 1,990 ly | survey only |
+
+**Bottom line for the design:**
+- In 10,000 years, even with 0.1c ships, settlement is capped at a **≈ 1,000 ly radius** (pure coasting from 2600). That is ≈ 1e7 stars, or ≈ 0.005% of the galaxy.
+- Realistic runs with re-launch delays settle a bubble of **40–200 ly**: 1e3–1e5 stars inside, of which **10–1,000 systems** are actually settled (b^(t/T_cycle) growth and percolation losses).
+- Robotic probes can survey out to ≈ 2,000 ly at most.
+- Crossing the galaxy takes ≥ 1 Myr, so the galactic view of the sim is a **tiny bubble on a static backdrop**. Show it honestly, with a "projected bubble at current front speed" overlay extending to 1 Myr for drama.
+- Only F07/F08 (p ≤ 1% per run) break this.
+
+### 9.5 Local Group and beyond (universe view, observational only)
+
+| Galaxy | Type | Distance (Mly) | Stars | Diameter (kly) | Notes |
+|---|---|---|---|---|---|
+| Milky Way | SBbc barred spiral | 0 | 1–4e11 | ≈ 100 | home |
+| Canis Major overdensity | disputed dwarf / warp | 0.025 | ≈ 1e9 | – | may be a disk warp |
+| Sagittarius dSph | dwarf spheroidal | 0.070 | ≈ 1e8 | ≈ 10 | being absorbed by the MW |
+| Large Magellanic Cloud | SBm | 0.163 | ≈ 2–3e10 | ≈ 14 | SN 1987A; will merge with the MW in ≈ 2.4 Gyr |
+| Small Magellanic Cloud | dIrr | 0.204 | ≈ 3–7e9 | ≈ 7 | |
+| Ursa Minor / Draco / Sculptor | dSph | 0.20 / 0.26 / 0.29 | 1e5–1e6 | 1–3 | |
+| Fornax dSph | dSph | 0.46 | ≈ 2e7 | ≈ 3 | |
+| Leo II / Leo I | dSph | 0.69 / 0.82 | 1e6–1e7 | ≈ 2 | |
+| NGC 6822 (Barnard's Galaxy) | dIrr | 1.6 | ≈ 1e7–1e8 | ≈ 7 | |
+| IC 10 | dIrr (starburst) | 2.2 | ≈ 1e8 | ≈ 5 | |
+| IC 1613 | dIrr | 2.4 | ≈ 1e8 | ≈ 10 | |
+| M32 | compact elliptical | 2.49 | ≈ 3e9 | ≈ 6.5 | M31 satellite |
+| Andromeda (M31) | SA(s)b spiral | 2.54 | ≈ 1e12 | ≈ 150–220 | approaching at 110 km/s; MW–M31 merger in ≈ 4.5–5 Gyr (recent work: ≈ 50% chance within 10 Gyr) |
+| M110 (NGC 205) | dwarf elliptical | 2.69 | ≈ 1e10 | ≈ 17 | |
+| Triangulum (M33) | SA(s)cd spiral | 2.73 | ≈ 4e10 | ≈ 60 | |
+| WLM | dIrr | 3.0 | ≈ 1e7 | ≈ 8 | |
+| Local Group total | – | diameter ≈ 10 Mly | > 80 members | – | mass ≈ 2–5e12 M☉ |
+| M81 group / Centaurus A | groups | 11.7 / 12–13 | – | – | nearest neighbor groups |
+| Virgo Cluster | cluster | ≈ 54 | 1,300–2,000 galaxies | – | |
+| Laniakea Supercluster | supercluster | ≈ 250 (center) | ≈ 1e5 galaxies | ≈ 520 Mly across | |
+| Observable universe | – | radius 46.5 Gly | ≈ 2e11 galaxies (2021 revision; older estimate 2e12) | – | |
+
+Intergalactic travel: Andromeda at 0.1c takes 25 Myr, so it is out of scope. The universe view is a static backdrop with real positions (NGC/IC/Messier catalogs).
+
+---
+
+## 10. Data dimensions (metrics to track)
+
+Scope: **S** = settlement, **Y** = system, **P** = polity, **G** = global. All metrics are time series. Store S-level metrics every snapshot (§0.3) and aggregate the others. The ★ marks headline metrics for the inspector panel.
+
+### 10.1 Demography
+
+| # | Metric | Unit | Scope | Definition / notes |
+|---|---|---|---|---|
+| 1 | population ★ | persons | S/Y/P/G | biological humans |
+| 2 | digital_population | persons | S/P/G | uploads (F02) |
+| 3 | births | /yr | S | B in §7.3 |
+| 4 | deaths | /yr | S | D in §7.3 |
+| 5 | deaths_by_cause | /yr per cause | S | natural, radiation, accident, event id, war, famine |
+| 6 | crude_birth_rate | ‰ | S/P | |
+| 7 | crude_death_rate | ‰ | S/P | |
+| 8 | total_fertility_rate | children/woman | S/P | |
+| 9 | life_expectancy | yr | S/P | |
+| 10 | median_age ★ | yr | S/P/G | from cohorts |
+| 11 | age_cohorts | 5 counts | S | 0–14, 15–29, 30–44, 45–64, 65+ |
+| 12 | dependency_ratio | – | S | (0–14 + 65+) / 15–64 |
+| 13 | immigrants / emigrants | /yr | S | |
+| 14 | native_born_share | 0–1 | S | E35 driver |
+| 15 | carrying_capacity_K ★ | persons | S | with the binding constraint named (hab/ls/food/energy) |
+| 16 | N_over_K | ratio | S | |
+| 17 | effective_pop_size_Ne | persons | S | §1.8 |
+| 18 | inbreeding_F | 0–1 | S | |
+
+### 10.2 Economy
+
+| # | Metric | Unit | Scope | Definition / notes |
+|---|---|---|---|---|
+| 19 | GDP ★ | cr/yr | S/P/G | Y |
+| 20 | GDP_per_capita ★ | cr/person/yr | S/P/G | |
+| 21 | capital_stock | cr | S/P | K |
+| 22 | investment_rate | 0–1 | S | s |
+| 23 | TFP_A | – | S | |
+| 24 | sector_output[9] | cr/yr | S | §7.2 sectors |
+| 25 | wealth | cr | S/P/G | §7.6 |
+| 26 | gini ★ | 0–1 | S/P/G | |
+| 27 | development_index | 0–1 | S/P/G | §7.6 |
+| 28 | prices[commodity] | cr/unit | S | §7.5 |
+| 29 | imports / exports[commodity] | t/yr, cr/yr | S | |
+| 30 | trade_balance | cr/yr | S/P | |
+| 31 | self_sufficiency_SSI ★ | 0–1 | S | §4.3 |
+| 32 | resupply_dependency | share of LS imported | S | |
+| 33 | tax_transfer_to_capital | cr/yr | S | grievance input |
+| 34 | fleet_tonnage | t | P | |
+| 35 | transport_cost_to_Earth | cr/kg | S | c_ij |
+| 36 | debt_ratio | – | P | |
+
+### 10.3 Energy and resources
+
+| # | Metric | Unit | Scope | Definition / notes |
+|---|---|---|---|---|
+| 37 | energy_supply ★ | W | S/P/G | by source: PV, fission, fusion, beamed, Dyson |
+| 38 | energy_demand | W | S | |
+| 39 | energy_per_capita ★ | W/person | S/P/G | |
+| 40 | energy_ok | 0–1 | S | |
+| 41 | kardashev_K ★ | – | G/P | (log10 W − 6)/10 |
+| 42 | resource_stock[R01–R13] | t, kg | S | §7.1 |
+| 43 | resource_production[R] | /yr | S | |
+| 44 | resource_consumption[R] | /yr | S | |
+| 45 | days_of_reserve[water, O2, food] ★ | days | S | survival dashboard |
+| 46 | ls_closure_water / ls_closure_O2 / food_closure | 0–1 | S | |
+| 47 | habitat_volume | m³ | S | |
+| 48 | habitat_volume_per_capita | m³/person | S | |
+| 49 | He3_stock / antimatter_stock | kg / g | P | |
+| 50 | dyson_coverage | fraction of L☉ | Y | |
+
+### 10.4 Knowledge and technology
+
+| # | Metric | Unit | Scope | Definition / notes |
+|---|---|---|---|---|
+| 51 | KP_rate ★ | KP/yr | S/P/G | §3.1 |
+| 52 | KP_cumulative | KP | P/G | |
+| 53 | techs_known | list + count | P | |
+| 54 | tech_tier_index | 0–3 | P | share of near/mid/far known |
+| 55 | researchers | persons | S | |
+| 56 | ai_level | tier 0–6 | P | Orion's Arm toposophic analog |
+| 57 | knowledge_lost | count | P | Tasmania effect |
+| 58 | tech_lag_vs_frontier | yr | P | years behind the most advanced polity |
+
+### 10.5 Social, political and military
+
+| # | Metric | Unit | Scope | Definition / notes |
+|---|---|---|---|---|
+| 59 | lifecycle_state ★ | S0–S8/X1–X4 | S | §4 |
+| 60 | years_in_state | yr | S | |
+| 61 | polity_id / independent ★ | id / bool | S | |
+| 62 | regime ★ | enum | P/G | §5 |
+| 63 | regime_history | list | P | |
+| 64 | stability ★ | 0–1 | S/P | §7.6 |
+| 65 | grievance_G | 0–1 | S | §5.4 |
+| 66 | representation | 0–1 | S | |
+| 67 | cohesion | 0–1 | S | |
+| 68 | faction_shares | 5 shares | S | Stellaris-style |
+| 69 | religions / ideologies present | list | S | E36 |
+| 70 | military_strength | – | S/P | §7.7 |
+| 71 | military_projection_to[target] | – | P | |
+| 72 | war_deaths_cumulative | persons | P/G | |
+| 73 | corporate_owned | bool | S | E56 |
+
+### 10.6 Biology, health and divergence
+
+| # | Metric | Unit | Scope | Definition / notes |
+|---|---|---|---|---|
+| 74 | genetic_divergence_from_Earth ★ | 0–1 | S | §7.9 |
+| 75 | cultural_divergence_from_Earth | 0–1 | S | |
+| 76 | clade | enum | S | baseline / belter / tweak / splice / upload / … |
+| 77 | radiation_dose_mean | mSv/yr | S | |
+| 78 | gravity | g | S | |
+| 79 | lowg_native_share | 0–1 | S | |
+| 80 | biome_health | 0–1 | S/Ship | E18 |
+
+### 10.7 Spatial, risk and transit
+
+| # | Metric | Unit | Scope | Definition / notes |
+|---|---|---|---|---|
+| 81 | light_lag_to_Earth ★ | s | S | instantaneous |
+| 82 | light_lag_to_capital | s | S | |
+| 83 | delta_v_to_Earth | km/s | S | |
+| 84 | transit_time_to_Earth | days | S | with the best available drive |
+| 85 | next_window_to_Earth | date | S | |
+| 86 | habitability_H | 0–1 | S | tech-adjusted |
+| 87 | event_log | list | S/P/G | (year, event id, params) |
+| 88 | hazard_rate_total | /yr | S | sum of §4.3 + §6 |
+| 89 | ships_in_transit | count, persons aboard | P/G | |
+| 90 | interstellar_frontier_radius ★ | ly | G | |
+| 91 | settled_systems ★ | count | G | |
+| 92 | probability_of_extinction_estimate | 0–1 | G | fraction of pop in single-point-of-failure locations |
+
+### 10.8 Global dashboard ("one screen")
+
+Total humans (bio + digital) · off-Earth share · settlements by state · Kardashev K · total energy · GDP · KP_rate · regime mix (stacked share of polities) · number of independent polities · clades · settled systems and frontier radius · active wars · last 10 events.
+
+---
+
+## Appendix A. Calibration targets (what a "median" run should look like)
+
+Tune §3–§7 parameters until a batch of ≥ 1,000 seeded runs hits these bands. They are [D] judgments informed by history and by the real-world numbers above.
+
+| Milestone / metric | p10 | Median | p90 |
+|---|---|---|---|
+| Off-Earth population, 2050 | 100 | 500 | 3,000 |
+| Off-Earth population, 2100 | 5e3 | 1e5 | 2e6 |
+| Off-Earth population, 2200 | 1e5 | 1e7 | 3e8 |
+| Off-Earth population, 2500 | 1e6 | 1e9 | 3e10 |
+| Off-Earth population, 3000 | 1e7 | 1e10 | 1e12 |
+| Total humans at 12,040 (bio + digital) | 1e8 (post-collapse) | 1e11 | 1e14 |
+| Earth population, 2100 | 9.0e9 | 10.2e9 | 10.8e9 |
+| Mars S4 (colony) reached | 2048 | 2058 | 2080 |
+| Mars S5 (city) reached | 2070 | 2095 | 2160 |
+| First Mars independence | 2120 | 2200 | never (≈ 15% of runs) |
+| First O'Neill-class habitat | 2140 | 2180 | 2300 |
+| Kardashev 1.0 | 2150 | 2250 | 2500+ |
+| Kardashev 2.0 | 2800 | 3500 | never (≈ 40%) |
+| First Starshot-class probe launch | 2060 | 2080 | 2150 |
+| First crewed or embryo interstellar launch | 2220 | 2300 | 2700 |
+| First exoplanet colony founded (S4) | 2450 | 2700 | 3500 |
+| Settled star systems at 12,040 | 0 | 50 | 2,000 |
+| Frontier radius at 12,040 | 0 ly | 60 ly | 400 ly |
+| Runs with a ≥ 200-yr civilization-wide dark age | 20% | 30% | 40% (share of runs) |
+| Runs where Earth-origin humanity goes extinct | < 2% | | |
+| Runs with a SETI detection (E31 at 1e-5/yr) | ≈ 10% | | |
+| Runs with a ≥ 1 new human clade by 12,040 | ≈ 80% | | |
+
+## Appendix B. Minimal data schema (TypeScript-ish)
+
+```ts
+type StateId = 'S0'|'S1'|'S2'|'S3'|'S4'|'S5'|'S6'|'S7'|'S8'|'X1'|'X2'|'X3'|'X4';
+type RegimeId = 'EXP'|'CON'|'GOLD'|'STAG'|'WAR'|'PAND'|'COLL'|'SEC'|'SING';
+
+interface Body { id: string; name: string; type: string; parentId?: string; systemId: string;
+  g: number; radiusKm: number; aAU: number; periodYr: number; tempK: number; H: number;
+  res: { water: number; metals: number; light: number; volatiles: number; rare: number; he3: number; fissile: number; energy: number };
+  hidden?: { habitable: boolean; biosphere: boolean; biochemCompatible: boolean }; revealed: number /*0..1*/ }
+
+interface Settlement { id: string; bodyId: string; polityId: string; state: StateId; yearsInState: number;
+  pop: number; cohorts: [number, number, number, number, number]; digitalPop: number;
+  K: number; Kbinding: 'hab'|'ls'|'food'|'energy';
+  capital: number; gdp: number; gini: number; ssi: number; stability: number; grievance: number;
+  energySupplyW: number; energyDemandW: number;
+  stocks: Record<string, number>; production: Record<string, number>; prices: Record<string, number>;
+  habitatM3: number; shield: number; radiationMSvYr: number;
+  geneticDiv: number; culturalDiv: number; clade: string; independent: boolean; corporate: boolean;
+  militaryStrength: number; factions: number[]; religions: string[] }
+
+interface Polity { id: string; capitalId: string; regime: RegimeId; regimeSince: number;
+  techs: Set<string>; techProgress: Record<string, number>; kpRate: number; kpStock: number;
+  aiLevel: number; treaties: string[]; rivals: Record<string, number /*tension*/> }
+
+interface Ship { id: string; class: string; ownerId: string; fromId: string; toId: string;
+  departYr: number; arriveYr: number; vC: number; massKg: number; pop: number; embryos: number;
+  biomeHealth: number; generations: number; knowledgeRetained: number }
+
+interface EventRecord { year: number; eventId: string; scope: string; targetId: string; params: Record<string, number>; outcome: string }
+```
+
+**RNG:** use one seeded PRNG stream per scope instance (e.g. `hash(seed, settlementId)`), so that adding a settlement does not reshuffle the others' histories. This lets users compare runs with "same seed, one parameter changed".
+
+**Performance budget:** ≈ 1e3–1e5 settlements × 10,000 yr. Use annual ticks to ≈ 2300. After that, tick every 5–10 yr for S7/S8 and ships in transit, and annually for S2–S5. Event rolls use `p_dt = 1 − (1 − p)^dt`.
+
+## Appendix C. Key judgment calls (and how to dial them)
+
+| Call | Default | Why | Dial |
+|---|---|---|---|
+| AGI timing | N14 earliest 2045, cost 20k KP (lands ≈ 2050–2070) | forecasts cluster in the 2030s–2050s but are very uncertain; the premise starts at 2040 | `ai_pace` ×0.3–×3 on N14/M13 cost |
+| ASI risk | 3% catastrophe per SING exit | literature spread is huge | 0–20% |
+| Biology does not travel (Aurora) | P_hab_prior ≤ 0.2 for every known exoplanet; biosphere compatibility 0.3 | no confirmed habitable exoplanet; JWST shows the inner TRAPPIST-1 planets are airless | `aurora_strictness` 0–1 |
+| FTL | F07 p = 0.01, F08 p = 0.005, rolled per run, ≥ year 8000 | physics says no; keep a sliver for drama | 0–0.1 |
+| Dark forest | off (λ = 0) | otherwise it dominates outcomes | λ 0–1e-4 |
+| Max realistic interstellar speed | 0.01–0.05c biological, 0.1c beamed, 0.3c antimatter (late) | energy budgets in §3.6 | – |
+| Mars colony growth | median 2e4 by 2100, not 1e6 by 2050 | logistics (§1.2, §1.9) and historical colony attrition | `optimism` ×0.3–×10 on f_parent |
+| Event probabilities | historical base rates where they exist (pandemics, storms, impacts, wars) | defensible | `volatility` dial on regime off-diagonals |
+| He-3 | lunar He-3 is a niche until gas-giant scooping (M06) | USGS assesses it as likely unmineable at today's tech | – |
+| Psyche composition | 30–60 vol% metal (not "pure iron") | density 3.4–4.1 g/cm³ | – |
+
+## Appendix D. Sources (selection)
+
+Real-science numbers:
+- UN World Population Prospects 2024, Summary of Results: https://www.un.org/development/desa/pd/node/4324 ; 2040 ≈ 9.2B via https://www.populationpyramid.net/world/2040/
+- Energy Institute Statistical Review 2025 (592 EJ in 2024): https://dieselnet.com/news/2025/06energyreview.php ; OWID energy: https://ourworldindata.org/grapher/primary-energy-consumption-by-region
+- Starship V3 capacity and cost-per-kg estimates: https://satnews.com/2026/08/10/projected-starship-cost-collapse-redefines-low-earth-orbit-infrastructure-economics/ ; https://spaceodysseyhub.com/articles/starship-economics-investor-analysis-2026
+- Nearest exoplanets: https://en.wikipedia.org/wiki/List_of_nearest_exoplanets ; systems within 20–25 ly: https://en.wikipedia.org/wiki/List_of_star_systems_within_20%E2%80%9325_light-years
+- Alpha Centauri A candidate planet (Beichman et al. 2025, ApJL 989 L22): https://aasnova.org/2025/08/11/potential-discovery-of-a-world-next-door/
+- Epsilon Indi Ab (JWST 2024): https://en.wikipedia.org/wiki/Epsilon_Indi_Ab ; https://www.mpg.de/22154949/0702-astr-2024-jwst-eps-ind-150980-x
+- TRAPPIST-1 masses/radii (Agol et al. 2021): https://arxiv.org/abs/2010.01074v2
+- Psyche composition: https://news.arizona.edu/news/asteroid-16-psyche-might-not-be-what-scientists-expected ; https://pmc.ncbi.nlm.nih.gov/articles/PMC7375145
+- Lunar He-3 estimates and USGS skepticism: https://popsci.com/science/interlune-moon-mining ; https://heise.de/en/news/Interlune-Helium-3-from-the-moon-for-quantum-computers-on-Earth-10259748.html
+- Carroll-Nellenback et al. 2019, "The Fermi Paradox and the Aurora Effect": https://arxiv.org/abs/1902.04450v1
+- Bjørk 2007 probe exploration: https://www.centauri-dreams.org/2007/01/18/of-fermi-and-slow-probes/
+- Additional standard references (values from the literature, not fetched this session): Hart 1975 (QJRAS 16:128); Newman & Sagan 1981 (Icarus 46:293); Landis 1998 (JBIS 51:163); Armstrong & Sandberg 2013 (Acta Astronautica 89:1); Marin & Beluffi 2018 (JBIS 71:45); Smith 2014 (Acta Astronautica 97:16); Moore 2003; Traill et al. 2007 (Biol. Cons. 139:159); Bryson et al. 2021 (AJ 161:36) η⊕; Dressing & Charbonneau 2015; Chen & Kipping 2017 (ApJ 834:17); Lineweaver et al. 2004 (Science 303:59); GRAVITY Collaboration 2019 (R0 = 8.178 kpc); Marani et al. 2021 (PNAS 118:e2105482118) pandemic frequency; Riley 2012 (Space Weather 10) Carrington odds; Hassler et al. 2014 (Science 343) Mars RAD dose; Zhang et al. 2020 (Sci. Adv.) Chang'e-4 lunar dose; Colaprete et al. 2010 LCROSS; Krugman 1978 "The Theory of Interstellar Trade"; Jones 1995 (JPE 103:759) semi-endogenous growth; Henrich 2004 (Am. Antiquity 69:197) Tasmanian effect; Scheidel 2017 *The Great Leveler*; NASA BVAD (Baseline Values and Assumptions Document, 2022); Dyson 1968 "Interstellar Transport" (Physics Today); BIS Project Daedalus 1978; Breakthrough Starshot (2016); Project Hyperion generation-ship study (2024); Kite et al. 2024 (Sci. Adv.) Mars nanorod warming.
 
