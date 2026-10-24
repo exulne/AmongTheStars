@@ -4,6 +4,7 @@
 
 import { ERA_FX, ERA_MATRIX, ERAS, EV, STAGE, STAGE_CAP, TECHS, type Tech } from './catalog.ts';
 import { F, GM, HIST_FIELDS, NF, NGM } from './metrics.ts';
+import { FLOW, GENERATION, Ledger, NPERIODS, isPeriodBoundary, periodOf } from './ledger.ts';
 import { next, seedRng, type RngState } from './rng.ts';
 import type { World } from './world.ts';
 
@@ -20,8 +21,8 @@ export function stepYears(): number[] {
 }
 
 // Ship table columns
-const SH = { from: 0, to: 1, depart: 2, arrive: 3, colonists: 4, kind: 5 } as const;
-const NSH = 6;
+const SH = { from: 0, to: 1, depart: 2, arrive: 3, colonists: 4, kind: 5, flow: 6 } as const;
+const NSH = 7;
 const MAX_SHIPS = 4096;
 
 // Global scalar slots
@@ -31,6 +32,7 @@ const G = {
   // last step's aggregates that feed the era chain; kept here (not read back from
   // the series) so a restored snapshot replays exactly
   prevShortage: 15, prevFactions: 16, prevStability: 17, rivals: 18,
+  flowSeq: 19, // id of the next discrete group of travellers (crew or ship), same in replays
 } as const;
 const NG = 20;
 
@@ -77,6 +79,11 @@ export class Engine {
   fx!: Fx;
   logEvents = true;
   events: SimEvent[] = [];
+  /** who moved where, per demography period; main run only (null on replay engines) */
+  ledger: Ledger | null = new Ledger();
+  /** discrete flows: G.flowSeq id → ledger flow index */
+  flowIndex = new Map<number, number>();
+  private generationShips = new Set<number>();
   /** global metric rows, one per step */
   series: Float64Array;
   years: number[];
@@ -92,7 +99,8 @@ export class Engine {
   /** per system: neighbours before this index have nothing left to survey (a cache, rebuilt after restore) */
   private surveyCursor: Int32Array;
   private sysBodies: number[][];
-  private migW: Float64Array; private migD: Float64Array; // per-system scratch, rebuilt every step
+  private migW: Float64Array; private migD: Float64Array;
+  private recv: Float64Array; private sent: Float64Array; // per-body migration scratch, rebuilt every step // per-system scratch, rebuilt every step
   private swarmStamp: Int32Array; private sysLum: Float64Array; private tick = 0;
 
   constructor(world: World, seed: number) {
@@ -116,6 +124,7 @@ export class Engine {
     this.sysRegion = new Uint8Array(ns);
     this.sysBodies = world.systems.map((s) => s.bodies);
     this.migW = new Float64Array(ns); this.migD = new Float64Array(ns);
+    this.recv = new Float64Array(nb); this.sent = new Float64Array(nb);
     this.swarmStamp = new Int32Array(ns); this.sysLum = Float64Array.from(world.systems, (s) => s.lum);
     world.systems.forEach((s, i) => {
       this.sysX[i] = s.x; this.sysY[i] = s.y; this.sysZ[i] = s.z;
@@ -169,6 +178,9 @@ export class Engine {
     const moon = W.bodies.find((b) => b.name === 'Moon')!.id;
     this.found(st, W.mars, STAGE.OUTPOST, 12, W.earth, 0);
     this.found(st, moon, STAGE.OUTPOST, 40, W.earth, 0);
+    S[e + F.pop] -= 52;
+    this.travel(st, W.earth, W.mars, 12, 0, 0, FLOW.CREW);
+    this.travel(st, W.earth, moon, 40, 0, 0, FLOW.CREW);
     // robotic probes have already visited most of the Solar System
     for (const b of this.sysBodies[0]) {
       if (b !== W.earth && b !== moon && b !== W.mars && this.bSettle[b]) this.found(st, b, STAGE.SURVEY, 0, W.earth, 0);
@@ -270,11 +282,34 @@ export class Engine {
     // people to the young settlements around the same star, weighted by free room
     const migW = this.migW.fill(0), migD = this.migD.fill(0);
     migD[0] = Math.min(g[G.launchCap] / 8, S[eo + F.pop] * 0.002) * (S[eo + F.stage] === STAGE.HUB ? 1 : 0.2);
+    const earthOffer = migD[0];
     for (let n = 0; n < st.nSettled; n++) {
       const b = st.settled[n], o = b * NF, stg = S[o + F.stage];
       if (b === earth || stg < STAGE.OUTPOST || stg > STAGE.MEGA) continue;
       if (stg <= STAGE.CITY) migW[this.bSys[b]] += Math.max(0, S[o + F.capacity] - S[o + F.pop]) ** 0.5;
       if (stg >= STAGE.COLONY) migD[this.bSys[b]] += S[o + F.pop] * MIGRATE;
+    }
+    // People are conserved: receivers take what fits, senders lose exactly that
+    // much in proportion to what they offered, and the ledger records who went where.
+    const recv = this.recv, sent = this.sent;
+    const senders = new Map<number, number[]>(), receivers = new Map<number, number[]>(), got = new Map<number, number>();
+    const contrib = (b: number) => (b === earth ? earthOffer : S[b * NF + F.pop] * MIGRATE);
+    for (let n = 0; n < st.nSettled; n++) {
+      const b = st.settled[n], o = b * NF, stg = S[o + F.stage], sy = this.bSys[b];
+      recv[b] = 0; sent[b] = 0;
+      if (stg < STAGE.OUTPOST || stg > STAGE.MEGA || migW[sy] <= 0 || migD[sy] <= 0) continue;
+      if (b === earth || stg >= STAGE.COLONY) push(senders, sy, b);
+      if (b !== earth && stg <= STAGE.CITY) {
+        const room = Math.max(0, S[o + F.capacity] - S[o + F.pop]);
+        recv[b] = Math.min(migD[sy] * room ** 0.5 / migW[sy], room / dt);
+        if (recv[b] > 0) { push(receivers, sy, b); got.set(sy, (got.get(sy) ?? 0) + recv[b]); }
+      }
+    }
+    for (const [sy, list] of senders) {
+      const k = (got.get(sy) ?? 0) / migD[sy];
+      for (const b of list) sent[b] = contrib(b) * k;
+      if (!this.ledger) continue;
+      for (const r of receivers.get(sy) ?? []) for (const b of list) this.ledger.migrate(b, r, recv[r] * contrib(b) / migD[sy] * dt);
     }
 
     const sysNet = new Map<number, Float64Array>(); // per-system resource pooling
@@ -350,9 +385,9 @@ export class Engine {
       const deaths = pop * dRate;
       if (stg === STAGE.OUTPOST) births *= 0.3; // rotating crews don't raise families
       const sy = this.bSys[b];
-      let immig = 0;
-      if (!isEarth && stg <= STAGE.CITY && migW[sy] > 0) immig = Math.min(migD[sy] * Math.max(0, cap - pop) ** 0.5 / migW[sy], Math.max(0, cap - pop) / dt);
-      if (!isEarth && stg >= STAGE.COLONY && migW[sy] > 0) immig -= pop * MIGRATE;
+      const immig = recv[b] - sent[b];
+      void sy;
+      this.ledger?.addBirths(b, births * dt);
       // exponential step: a 10-year step at a high crowding death rate must not overshoot zero
       pop = Math.max(0, pop * Math.exp(pop > 0 ? ((births - deaths) / pop) * dt : 0) + immig * dt);
       if (pop > cap * 1.5) pop = cap * 1.5;
@@ -428,6 +463,25 @@ export class Engine {
     st.step++;
     g[G.year] = this.years[st.step];
     this.record(st.step);
+    if (this.ledger && (isPeriodBoundary(g[G.year]) || this.done)) {
+      const p = this.done ? NPERIODS - 1 : periodOf(g[G.year]) - 1;
+      this.ledger.close(p, (fn) => {
+        for (let n = 0; n < st.nSettled; n++) {
+          const b = st.settled[n];
+          fn(b, Math.max(0, Math.round(S[b * NF + F.pop])));
+        }
+      });
+    }
+  }
+
+  /** A discrete group of travellers (founding crew or ship). Returns its id. */
+  private travel(st: SimState, src: number, dst: number, n: number, depart: number, arrive: number, kind: number): number {
+    const id = st.g[G.flowSeq]++;
+    if (!this.ledger) return id;
+    const long = (kind === FLOW.SHIP || kind === FLOW.FTL) && arrive - depart > GENERATION;
+    this.flowIndex.set(id, long ? this.ledger.voyage(id, src, dst, n, depart, arrive, kind) : this.ledger.depart(src, dst, n, depart, arrive, kind));
+    if (long) this.generationShips.add(id);
+    return id;
   }
 
   /** Watts a Dyson swarm around a 1 L_sun star captures by now. Phase I is ~1e16 W
@@ -563,6 +617,8 @@ export class Engine {
         if (best >= 0) {
           const crew = isEarth ? 8 + Math.floor(this.rand() * 30) : 20 + Math.floor(this.rand() * 200);
           this.found(st, best, STAGE.OUTPOST, crew, b, year);
+          S[o + F.pop] = Math.max(0, S[o + F.pop] - crew);
+          this.travel(st, b, best, crew, year, year, FLOW.CREW);
           this.log(EV['Colony founded'], best, b, 0);
         }
       }
@@ -640,6 +696,7 @@ export class Engine {
     const o = n * NSH;
     st.ships[o + SH.from] = from; st.ships[o + SH.to] = to; st.ships[o + SH.depart] = depart;
     st.ships[o + SH.arrive] = arrive; st.ships[o + SH.colonists] = colonists; st.ships[o + SH.kind] = kind;
+    st.ships[o + SH.flow] = this.travel(st, from, to, colonists, depart, arrive, kind === 1 ? FLOW.FTL : FLOW.SHIP);
     st.g[G.nShips] = n + 1;
     st.g[G.shipsLaunched]++;
     // reserve the target so two ships don't race for it
@@ -657,6 +714,7 @@ export class Engine {
       const from = sh[o + SH.from], to = sh[o + SH.to], colonists = sh[o + SH.colonists];
       const voyage = sh[o + SH.arrive] - sh[o + SH.depart];
       st.S[to * NF + F.inbound]--;
+      const seq = sh[o + SH.flow], gen = this.generationShips.has(seq);
       const pOk = Math.max(0.2, Math.min(0.97, 0.82 + fx.reliability - 0.12 * (voyage / 200)));
       if (this.rand() < pOk) {
         const ts = st.S[to * NF + F.stage];
@@ -672,10 +730,14 @@ export class Engine {
           // years of light-lag from home: de facto independent from the day they land
           if (this.bSys[to] !== this.bSys[from]) st.S[to * NF + F.faction] = to;
         }
+        if (gen) this.ledger?.land(seq, to, colonists, year, false);
         if (this.rand() < 0.08) { st.S[to * NF + F.stability] = 0.4; this.log(EV['Mutiny in transit'], to, from); }
         if (!joined) this.log(EV['Colony founded'], to, from, 1);
       } else {
         st.g[G.shipsLost]++;
+        const fi = this.flowIndex.get(seq);
+        if (gen) this.ledger?.land(seq, to, colonists, year, true);
+        else if (this.ledger && fi !== undefined) this.ledger.flows[fi].lost = true;
         if (st.S[to * NF + F.stage] === STAGE.SURVEY && st.S[to * NF + F.pop] === 0) st.S[to * NF + F.parent] = -1;
         this.log(EV['Ship lost'], to, from);
       }
@@ -928,6 +990,11 @@ function neighbours(world: World): Neighbours {
   const out = { start, sys: Int32Array.from(ids), d: Float32Array.from(ds) };
   NBR_CACHE.set(world, out);
   return out;
+}
+
+function push(m: Map<number, number[]>, k: number, v: number): void {
+  const a = m.get(k);
+  if (a) a.push(v); else m.set(k, [v]);
 }
 
 function clamp01(x: number): number { return x < 0 ? 0 : x > 1 ? 1 : x; }
