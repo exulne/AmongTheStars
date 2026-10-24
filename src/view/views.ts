@@ -136,6 +136,46 @@ function glowSprite(color: number, scale: number, opacity = 1, tex = glowTex): T
   return s;
 }
 
+/** Ship routes: additive line segments with per-vertex colour, plus glowing heads. */
+class Trails {
+  lines: THREE.LineSegments;
+  heads: ReturnType<typeof pointCloud>;
+  private pos: Float32Array; private col: Float32Array;
+  private ns = 0; private nh = 0;
+  constructor(private maxSeg: number, private maxHeads: number, headPx = 2) {
+    const g = new THREE.BufferGeometry();
+    this.pos = new Float32Array(maxSeg * 6); this.col = new Float32Array(maxSeg * 6);
+    g.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(this.col, 3));
+    this.lines = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    this.lines.frustumCulled = false;
+    this.heads = pointCloud(maxHeads, pointsMaterial({ minPx: headPx }));
+  }
+  addTo(g: THREE.Group): void { g.add(this.lines, this.heads.pts); }
+  begin(): void { this.ns = 0; this.nh = 0; }
+  seg(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Color, ka: number, kb: number): void {
+    if (this.ns >= this.maxSeg) return;
+    this.pos.set([a.x, a.y, a.z, b.x, b.y, b.z], this.ns * 6);
+    this.col.set([c.r * ka, c.g * ka, c.b * ka, c.r * kb, c.g * kb, c.b * kb], this.ns * 6);
+    this.ns++;
+  }
+  head(p: THREE.Vector3, c: THREE.Color, size: number): void {
+    if (this.nh >= this.maxHeads) return;
+    this.heads.pos.set([p.x, p.y, p.z], this.nh * 3);
+    this.heads.col.set([c.r, c.g, c.b], this.nh * 3);
+    this.heads.size[this.nh++] = size;
+  }
+  end(): void {
+    const g = this.lines.geometry;
+    g.setDrawRange(0, this.ns * 2);
+    g.attributes.position.needsUpdate = true; g.attributes.color.needsUpdate = true;
+    this.heads.pts.geometry.setDrawRange(0, this.nh);
+    dirty(this.heads.pts);
+  }
+}
+const SHIP_C = new THREE.Color(0.55, 0.9, 1), FTL_C = new THREE.Color(0.8, 0.6, 1);
+const tv1 = new THREE.Vector3(), tv2 = new THREE.Vector3(), tv3 = new THREE.Vector3();
+
 /** Distant stars with a Milky Way band; follows the camera. */
 export function makeSky(seed = 7, count = 9000): THREE.Group {
   const r = new Rng(seed);
@@ -264,6 +304,7 @@ export class GalaxyView implements View {
   private far: ReturnType<typeof pointCloud>;
   private farIds: number[] = [];
   private reach = 0;
+  private trails = new Trails(6000, 400, 1.6);
 
   constructor(world: World) {
     this.group.add(makeGalaxy({ seed: 2040, count: 420000, radius: 500, arms: 4, pitch: 12, bar: 0.22, thickness: 0.018, sizeScale: 2.1, brightness: 1, dust: 0.3 }));
@@ -284,6 +325,7 @@ export class GalaxyView implements View {
       this.far.pos.set([p.x, p.y, p.z], i * 3);
     });
     this.group.add(this.far.pts);
+    this.trails.addTo(this.group);
   }
 
   enter(ctx: Ctx): void {
@@ -317,6 +359,30 @@ export class GalaxyView implements View {
   frame(ctx: Ctx): void {
     this.group.rotation.y = 0;
     (this.ring.material as THREE.MeshBasicMaterial).opacity = 0.35 + 0.2 * Math.sin(ctx.t * 2);
+    this.drawShips(ctx);
+  }
+
+  /** FTL voyages arc above the disc; slower-than-light ones are short hops inside the bubble. */
+  private drawShips(ctx: Ctx): void {
+    const t = this.trails, w = ctx.world;
+    t.begin();
+    for (const sh of ctx.snap?.ships ?? []) {
+      const a = w.systems[w.bodies[sh.from].system], b = w.systems[w.bodies[sh.to].system];
+      const pa = toScene(a.x, a.y, a.z, this.U, GALACTIC_CENTRE[0]), pb = toScene(b.x, b.y, b.z, this.U, GALACTIC_CENTRE[0]);
+      const f = Math.min(1, Math.max(0, (ctx.year - sh.depart) / Math.max(0.1, sh.arrive - sh.depart)));
+      const c = sh.kind === 1 ? FTL_C : SHIP_C;
+      const lift = sh.kind === 1 ? pa.distanceTo(pb) * 0.18 : 0;
+      const N = sh.kind === 1 ? 32 : 1;
+      const at = (u: number, out: THREE.Vector3) => out.lerpVectors(pa, pb, u).setY(out.y + lift * 4 * u * (1 - u));
+      for (let k = 0; k < N; k++) {
+        const u0 = k / N, u1 = (k + 1) / N;
+        // brighter just behind the ship, faint ahead of it
+        const w0 = u0 <= f ? 0.15 + 0.6 * Math.pow(u0 / Math.max(f, 1e-3), 3) : 0.07, w1 = u1 <= f ? 0.15 + 0.6 * Math.pow(u1 / Math.max(f, 1e-3), 3) : 0.07;
+        t.seg(at(u0, tv1), at(u1, tv2), c, w0, w1);
+      }
+      t.head(at(f, tv3), c, sh.kind === 1 ? 5 + Math.sin(ctx.t * 5) : 2.5);
+    }
+    t.end();
   }
 
   pickables(ctx: Ctx): Pickable[] {
@@ -509,6 +575,8 @@ export class SystemView implements View {
   private star!: THREE.Group;
   private starR = 1;
   private swarm: ReturnType<typeof pointCloud> | null = null;
+  private trails = new Trails(512, 512, 1.8);
+  private edge = 60;
 
   enter(ctx: Ctx): void {
     this.build(ctx);
@@ -554,6 +622,8 @@ export class SystemView implements View {
     }
     if (sys.id === 0) { this.addBelt(this.vis.find((v) => ctx.world.bodies[v.id].name === 'Ceres')!.orbitR, 1, 2600); this.addBelt(this.vis.find((v) => ctx.world.bodies[v.id].name === 'Pluto')!.orbitR, 2, 3500, 5); }
     this.swarm = null;
+    this.edge = Math.max(40, ...this.vis.map((v) => v.orbitR)) * 1.35;
+    this.trails.addTo(this.group);
   }
 
   private addBelt(R: number, seed: number, n = 1600, width = 2.2): void {
@@ -637,6 +707,38 @@ export class SystemView implements View {
       v.marker.position.copy(v.mesh.position);
     }
     if (this.swarm) this.swarm.pts.rotation.y = ctx.tm * 0.03;
+    this.drawShips(ctx);
+  }
+
+  /** Interstellar ships leaving or reaching this system: a trail from the world to the edge, toward the other star, with motes flowing along it. */
+  private drawShips(ctx: Ctx): void {
+    const t = this.trails, w = ctx.world, here = w.systems[this.builtFor];
+    t.begin();
+    let i = 0;
+    // the 48 most recent departures and nearest arrivals; more is a hairball
+    const mine = (ctx.snap?.ships ?? []).filter((sh) => (w.bodies[sh.from].system === this.builtFor) !== (w.bodies[sh.to].system === this.builtFor));
+    const near = (sh: (typeof mine)[number]) => (w.bodies[sh.from].system === this.builtFor ? ctx.year - sh.depart : sh.arrive - ctx.year);
+    for (const sh of mine.sort((a, b) => near(a) - near(b)).slice(0, 48)) {
+      const fs = w.bodies[sh.from].system, ts = w.bodies[sh.to].system;
+      const out = fs === this.builtFor;
+      const v = this.vis.find((x) => x.id === (out ? sh.from : sh.to));
+      if (!v) continue;
+      const o = w.systems[out ? ts : fs];
+      const dir = toScene(o.x - here.x, o.y - here.y, o.z - here.z);
+      dir.y *= 0.25; // keep routes near the orbital plane so they read against it
+      dir.normalize();
+      const body = v.mesh.position, far = tv1.copy(dir).multiplyScalar(Math.min(this.edge * 0.5, 22)).add(body);
+      const a = out ? body : far, b = out ? far : body;
+      const c = sh.kind === 1 ? FTL_C : SHIP_C;
+      t.seg(a, b, c, out ? 0.22 : 0, out ? 0 : 0.22);
+      for (let k = 0; k < 3; k++) {
+        const u = (ctx.t * 0.06 + k / 3 + hash01(i, 3)) % 1;
+        const fade = out ? 1 - u : u;
+        t.head(tv2.lerpVectors(a, b, u), tmpC.copy(c).multiplyScalar(0.2 + 0.6 * fade), 0.4 + 0.7 * fade);
+      }
+      i++;
+    }
+    t.end();
   }
 
   pickables(ctx: Ctx): Pickable[] {

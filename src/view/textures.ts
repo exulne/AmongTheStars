@@ -102,13 +102,14 @@ export function galaxySpriteTex(seed: number): THREE.CanvasTexture {
  * Shared point material: per-vertex color and size, soft round falloff,
  * additive. `sizeScale` lets one geometry serve many zoom levels.
  */
-export function pointsMaterial(opts: { sizeScale?: number; attenuate?: boolean; opacity?: number; blending?: THREE.Blending; minPx?: number } = {}): THREE.ShaderMaterial {
+export function pointsMaterial(opts: { sizeScale?: number; attenuate?: boolean; opacity?: number; blending?: THREE.Blending; minPx?: number; maxPx?: number } = {}): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       uScale: { value: opts.sizeScale ?? 1 },
       uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
       uOpacity: { value: opts.opacity ?? 1 },
       uMinPx: { value: opts.minPx ?? 0.8 },
+      uMaxPx: { value: opts.maxPx ?? 256 },
       uTime: { value: 0 },
     },
     vertexShader: /* glsl */ `
@@ -116,7 +117,7 @@ export function pointsMaterial(opts: { sizeScale?: number; attenuate?: boolean; 
       attribute vec3 color;
       varying vec3 vColor;
       varying float vFade;
-      uniform float uScale, uPixelRatio, uMinPx;
+      uniform float uScale, uPixelRatio, uMinPx, uMaxPx;
       #include <common>
       #include <logdepthbuf_pars_vertex>
       void main() {
@@ -125,7 +126,7 @@ export function pointsMaterial(opts: { sizeScale?: number; attenuate?: boolean; 
         gl_Position = projectionMatrix * mv;
         float px = ${opts.attenuate === false ? 'size * uScale' : 'size * uScale * (300.0 / -mv.z)'};
         vFade = clamp(px / uMinPx, 0.0, 1.0);
-        gl_PointSize = max(px, uMinPx) * uPixelRatio;
+        gl_PointSize = clamp(px, uMinPx, uMaxPx) * uPixelRatio;
         #include <logdepthbuf_vertex>
       }`,
     fragmentShader: /* glsl */ `
