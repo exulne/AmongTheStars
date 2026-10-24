@@ -15,6 +15,7 @@ import { styleOf } from './epoch.ts';
 import { makeGalaxy } from './galaxyPoints.ts';
 import { atmosphereMaterial, planetMaterial } from './planetShader.ts';
 import { Orbitals, StarWorks, tierRank } from './orbitals.ts';
+import { BEAM, SCOOP, shipStyle } from './shipStyles.ts';
 import { REDUCED_MOTION, applyPlanetLook } from './timeLook.ts';
 import { STAGE_COLORS, flareTex, galaxySpriteTex, glowTex, pointsMaterial, specColor } from './textures.ts';
 
@@ -184,7 +185,6 @@ class Trails {
     dirty(this.heads.pts);
   }
 }
-const SHIP_C = new THREE.Color(0.55, 0.9, 1), FTL_C = new THREE.Color(0.8, 0.6, 1);
 const ELEVATOR = TECHS.findIndex((t) => t.id === 'spaceElevator');
 const tv1 = new THREE.Vector3(), tv2 = new THREE.Vector3(), tv3 = new THREE.Vector3();
 const WHITE = new THREE.Color(1, 1, 1);
@@ -410,7 +410,7 @@ export class GalaxyView implements View {
       const a = w.systems[w.bodies[sh.from].system], b = w.systems[w.bodies[sh.to].system];
       const pa = toScene(a.x, a.y, a.z, this.U, GALACTIC_CENTRE[0]), pb = toScene(b.x, b.y, b.z, this.U, GALACTIC_CENTRE[0]);
       const f = Math.min(1, Math.max(0, (ctx.year - sh.depart) / Math.max(0.1, sh.arrive - sh.depart)));
-      const c = sh.kind === 1 ? FTL_C : SHIP_C;
+      const st = shipStyle(ctx.snap, sh), c = st.trail;
       const lift = sh.kind === 1 ? pa.distanceTo(pb) * 0.18 : 0;
       const N = sh.kind === 1 ? 32 : 1;
       const at = (u: number, out: THREE.Vector3) => out.lerpVectors(pa, pb, u).setY(out.y + lift * 4 * u * (1 - u));
@@ -420,7 +420,11 @@ export class GalaxyView implements View {
         const w0 = u0 <= f ? 0.15 + 0.6 * Math.pow(u0 / Math.max(f, 1e-3), 3) : 0.07, w1 = u1 <= f ? 0.15 + 0.6 * Math.pow(u1 / Math.max(f, 1e-3), 3) : 0.07;
         t.seg(at(u0, tv1), at(u1, tv2), c, w0, w1);
       }
-      t.head(at(f, tv3), c, sh.kind === 1 ? 5 + Math.sin(ctx.t * 5) : 2.5);
+      at(f, tv3);
+      if (st.plume > 0 && sh.kind !== 1) t.seg(at(Math.max(0, f - 0.04), tv1), tv3, st.head, 0, st.plume);
+      if (st.beam) t.seg(pa, tv3, BEAM, 0.35, 0.08);
+      if (st.scoop) t.head(tv3, SCOOP, 6);
+      t.head(tv3, st.head, sh.kind === 1 ? 5 + Math.sin(ctx.t * 5) : 2.5 * st.headSize);
     }
     t.end();
   }
@@ -540,24 +544,43 @@ export class LocalView implements View {
     const col = this.shipLines.geometry.attributes.color.array as Float32Array;
     let n = 0;
     if (snap) {
+      let h = 0;
       for (const sh of snap.ships) {
-        if (n >= 4096 || sh.kind === 1) continue;
+        if (n >= 4093 || h >= 4094 || sh.kind === 1) continue;
         const a = ctx.world.systems[ctx.world.bodies[sh.from].system], b = ctx.world.systems[ctx.world.bodies[sh.to].system];
         const pa = toScene(a.x, a.y, a.z), pb = toScene(b.x, b.y, b.z);
+        // route and ship look follow the drive known when it left; generation ships trail amber
+        const st = shipStyle(snap, sh), tc = st.trail, hc = st.head;
         pos.set([pa.x, pa.y, pa.z, pb.x, pb.y, pb.z], n * 6);
-        col.set([0.1, 0.25, 0.35, 0.5, 0.9, 1], n * 6);
-        const f = Math.min(1, Math.max(0, (ctx.year - sh.depart) / (sh.arrive - sh.depart)));
-        const h = pa.lerp(pb, f);
-        this.shipHeads.pos.set([h.x, h.y, h.z], n * 3);
-        this.shipHeads.col.set([0.7, 0.95, 1], n * 3);
-        this.shipHeads.size[n] = 1.6 + 0.4 * Math.sin(ctx.t * 4 + n);
+        col.set([tc.r * 0.2, tc.g * 0.2, tc.b * 0.2, tc.r * 0.8, tc.g * 0.8, tc.b * 0.8], n * 6);
         n++;
+        const f = Math.min(1, Math.max(0, (ctx.year - sh.depart) / (sh.arrive - sh.depart)));
+        const hp = tv3.lerpVectors(pa, pb, f);
+        if (st.plume > 0) {
+          const tail = tv1.lerpVectors(pa, pb, Math.max(0, f - 0.12));
+          pos.set([tail.x, tail.y, tail.z, hp.x, hp.y, hp.z], n * 6);
+          col.set([0, 0, 0, hc.r * 2 * st.plume, hc.g * 2 * st.plume, hc.b * 2 * st.plume], n * 6);
+          n++;
+        }
+        if (st.beam) {
+          pos.set([pa.x, pa.y, pa.z, hp.x, hp.y, hp.z], n * 6);
+          col.set([BEAM.r * 1.6, BEAM.g * 1.6, BEAM.b * 1.6, BEAM.r * 0.3, BEAM.g * 0.3, BEAM.b * 0.3], n * 6);
+          n++;
+        }
+        if (st.scoop) {
+          this.shipHeads.pos.set([hp.x, hp.y, hp.z], h * 3);
+          this.shipHeads.col.set([SCOOP.r * 0.5, SCOOP.g * 0.5, SCOOP.b * 0.5], h * 3);
+          this.shipHeads.size[h++] = 5;
+        }
+        this.shipHeads.pos.set([hp.x, hp.y, hp.z], h * 3);
+        this.shipHeads.col.set([hc.r, hc.g, hc.b], h * 3);
+        this.shipHeads.size[h++] = (1.6 + 0.4 * Math.sin(ctx.t * 4 + n)) * st.headSize;
       }
-    }
+      this.shipHeads.pts.geometry.setDrawRange(0, h);
+    } else this.shipHeads.pts.geometry.setDrawRange(0, 0);
     this.shipLines.geometry.setDrawRange(0, n * 2);
     this.shipLines.geometry.attributes.position.needsUpdate = true;
     this.shipLines.geometry.attributes.color.needsUpdate = true;
-    this.shipHeads.pts.geometry.setDrawRange(0, n);
     dirty(this.shipHeads.pts);
   }
 
@@ -780,12 +803,13 @@ export class SystemView implements View {
       dir.normalize();
       const body = v.mesh.position, far = tv1.copy(dir).multiplyScalar(Math.min(this.edge * 0.5, 22)).add(body);
       const a = out ? body : far, b = out ? far : body;
-      const c = sh.kind === 1 ? FTL_C : SHIP_C;
+      const st = shipStyle(ctx.snap, sh), c = st.trail;
       t.seg(a, b, c, out ? 0.22 : 0, out ? 0 : 0.22);
+      if (st.beam && out) t.seg(a, b, BEAM, 0.5, 0.1);
       for (let k = 0; k < 3; k++) {
-        const u = (ctx.t * 0.06 + k / 3 + hash01(i, 3)) % 1;
+        const u = (ctx.t * 0.06 * st.speed + k / 3 + hash01(i, 3)) % 1;
         const fade = out ? 1 - u : u;
-        t.head(tv2.lerpVectors(a, b, u), tmpC.copy(c).multiplyScalar(0.2 + 0.6 * fade), 0.4 + 0.7 * fade);
+        t.head(tv2.lerpVectors(a, b, u), tmpC.copy(k === 0 ? st.head : c).multiplyScalar(0.2 + 0.6 * fade), (0.4 + 0.7 * fade) * st.headSize);
       }
       i++;
     }
