@@ -98,3 +98,23 @@ npm run sim -- 42     # run future #42 in the terminal and print a summary
 | `src/ml/` | The transformer and the forecaster |
 | `ml/` | Scripts that make training data and train the network |
 | `research/` | Notes and the simulation bible |
+
+---
+
+## Starship (branch `starship`)
+
+A first-person / chase-cam spaceflight game: tell the ship where (or when) to go and watch the trip.
+
+```bash
+npm install
+npm run dev:ship        # opens http://localhost:5173/ship.html
+```
+
+- **Talk to it** in the chat bar on the left, by typing or with the mic: "send me to Alpha Centauri", "some random planet", "take me to Mars in the year 3000", "go back 66 million years", "black hole", "Andromeda", "when the sun dies", "cockpit view".
+- **Cameras:** Cockpit (first person) and Chase cam (third person). Drag to look around, scroll to zoom the chase cam, double-click to reset.
+- **The sky is real 3D data.** Stars and galaxies are drawn from their actual positions, so after a jump the constellations shift, and from Alpha Centauri the Sun is just another star.
+- **Time travel** spins up a chrono bubble and runs the clock forward or back. The Solar System changes with it: no Sun before 4.6 billion years ago, a red giant in 6.5 billion, city lights only after 1880, a terraformed Mars and ring habitats in the far future, Andromeda filling the sky as it arrives.
+- **Voice (ElevenLabs).** Put `ELEVENLABS_API_KEY=...` in `.env.local` (gitignored). The dev server proxies `/eleven`, so the key never reaches the page. You can also paste a key in the ⚙ panel, which keeps it in browser localStorage only. The panel shows remaining credits. Replies use `eleven_flash_v2_5`, the cheapest model, and repeated lines are cached. The mic uses Scribe speech-to-text. With no key, everything falls back to the browser's free speech engines.
+- **Custom ship model:** drop a `.glb` into `public/models/` and open `ship.html?model=<file>.glb` (add `&rot=x,y,z` in degrees if the nose doesn't point forward). The default ship is a Starship-style vehicle built in code (`src/ship/starship.ts`).
+
+Code: `src/ship/` — `places.ts` (destinations, eras), `sky.ts` (star and galaxy shader), `system.ts` (local star systems, black hole, nebulae), `starship.ts` + `ship.ts` (hull, cockpit, warp and chrono effects), `commands.ts` (plain-English parser), `voice.ts` (ElevenLabs and browser speech), `main.ts` (flight, cameras, HUD, chat).

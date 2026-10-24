@@ -5,3 +5,6 @@ dist
 ml/.venv
 ml/data
 ml/data
+.env
+.env.local
+.env.*.local

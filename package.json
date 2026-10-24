@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build && node scripts/artifact.mjs",
     "typecheck": "tsc --noEmit",
-    "sim": "node --experimental-strip-types scripts/headless.ts"
+    "sim": "node --experimental-strip-types scripts/headless.ts",
+    "dev:ship": "vite --open /ship.html",
+    "build:ship": "tsc --noEmit && ENTRY=ship vite build"
   },
   "devDependencies": {
     "@types/three": "^0.186.0",
