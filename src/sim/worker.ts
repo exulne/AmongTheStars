@@ -27,7 +27,8 @@ export type ToWorker =
   | { type: 'chronicle'; id: number; from: number; to: number; body?: number; query?: string; limit?: number; minWeight?: number }
   | { type: 'inventions'; id: number }
   | { type: 'society'; id: number; body: number; step: number }
-  | DataReq;
+  | DataReq
+  | { type: 'ship'; id: number; from: number; to: number; depart: number };
 
 export type FromWorker =
   | { type: 'progress'; seed: number; step: number; years: number[]; series: Float64Array; done: boolean; ms: number }
@@ -40,7 +41,11 @@ export type FromWorker =
   | { type: 'chronicle'; id: number; pending?: boolean; entries: Entry[] }
   | { type: 'inventions'; id: number; pending?: boolean; list: { tech: number; year: number; entry: Entry | null }[] }
   | { type: 'society'; id: number; pending?: boolean; society: Society | null }
-  | DataRes;
+  | DataRes
+  | { type: 'ship'; id: number; pending?: boolean; ship: ShipInfo | null };
+
+/** A ship in transit, as the people model knows it: its name, who boarded, and the Chronicle's launch entry (with its captain). */
+export interface ShipInfo { name: string; n: number; generation: boolean; launch: Entry | null }
 
 const world = buildWorld();
 let main: Engine | null = null;
@@ -150,6 +155,9 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
       const e = stateAt(m.step);
       post({ type: 'society', id: m.id, society: society!.at(m.body, e.years[e.st.step], e.st.S, e.st.techDone, e.st.g[1], e.st.hx) });
     }
+  } else if (m.type === 'ship') {
+    const L = people();
+    post({ type: 'ship', id: m.id, pending: !L, ship: L ? shipInfo(L, m.from, m.to, m.depart) : null });
   } else if (m.type === 'inventions') {
     const ok = people() && chron;
     post({ type: 'inventions', id: m.id, pending: !ok, list: ok ? chron!.inventions() : [] });
@@ -165,3 +173,18 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
     post({ type: 'events', id: m.id, events: out });
   }
 };
+
+/** Find the launch event for a ship (same route, launched in its departure year) and name it. */
+function shipInfo(L: Lives, from: number, to: number, depart: number): ShipInfo | null {
+  if (!main) return null;
+  const evs = main.events, T = EV['Ship launched'];
+  for (let i = evs.length - 1; i >= 0; i--) {
+    const e = evs[i];
+    if (e.type !== T || e.body !== from || e.a !== to || Math.abs(e.year - depart) > 0.5) continue;
+    const v = L.voyage(e.b);
+    if (!v || main.ledger === null) return null;
+    const fl = main.ledger.flows[v.flow];
+    return { name: L.shipName(fl), n: v.n, generation: v.generation, launch: chron ? chron.entry(i) : null };
+  }
+  return null;
+}
