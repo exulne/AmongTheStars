@@ -2,6 +2,7 @@
 // network: every glow, flare and nebula is drawn into a canvas at startup.
 
 import * as THREE from 'three';
+import { STAGE_NAMES } from '../sim/catalog.ts';
 import { hash01 } from '../sim/rng.ts';
 
 function canvasTex(size: number, draw: (c: CanvasRenderingContext2D, s: number) => void): THREE.CanvasTexture {
@@ -155,5 +156,14 @@ export function specColor(spec: string): THREE.Color {
   return new THREE.Color(t[spec[0]] ?? 0xffffff);
 }
 
-export const STAGE_COLORS = [0x56606e, 0x6f9bd8, 0x79c3e6, 0x8fe0c8, 0xd8e6a0, 0xf3d27a, 0xf6a35c, 0xff6fa8, 0x4b4440, 0xa33b2f];
+// Stage colours by name, so stages added or reordered in the catalog keep theirs. The ramp runs
+// cool to warm through Megastructure pink, then on past it: violet ring worlds, periwinkle
+// swarm-worlds, magenta brain-stars, pale stellar lifted stars, and ghost-white uploaded worlds.
+const STAGE_HEX: Record<string, number> = {
+  survey: 0x56606e, outpost: 0x6f9bd8, base: 0x79c3e6, colony: 0x8fe0c8, town: 0xd8e6a0, city: 0xf3d27a,
+  hub: 0xf6a35c, megastructure: 0xff6fa8, ringworld: 0xc77dff, swarmworld: 0x8f9bff, brainstar: 0xff4fd8,
+  liftedstar: 0xfff1b0, uploaded: 0xe6fbff, abandoned: 0x4b4440, dead: 0xa33b2f,
+};
+const SPARE = [0x9ad7ff, 0xffc2e2, 0xb6f0d0, 0xe0c8ff];
+export const STAGE_COLORS = STAGE_NAMES.map((n, i) => STAGE_HEX[n.toLowerCase().replace(/[^a-z]/g, '')] ?? SPARE[i % SPARE.length]);
 export const STAGE_CSS = STAGE_COLORS.map((c) => '#' + c.toString(16).padStart(6, '0'));

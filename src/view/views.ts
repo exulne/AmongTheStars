@@ -14,7 +14,8 @@ import { ageColor, factionColor, heatColor, type ColorMode } from './colorModes.
 import { styleOf } from './epoch.ts';
 import { makeGalaxy } from './galaxyPoints.ts';
 import { atmosphereMaterial, planetMaterial } from './planetShader.ts';
-import { applyPlanetLook } from './timeLook.ts';
+import { Orbitals, StarWorks, tierRank } from './orbitals.ts';
+import { REDUCED_MOTION, applyPlanetLook } from './timeLook.ts';
 import { STAGE_COLORS, flareTex, galaxySpriteTex, glowTex, pointsMaterial, specColor } from './textures.ts';
 
 export type Level = 'universe' | 'galaxy' | 'local' | 'system' | 'planet' | 'street';
@@ -75,7 +76,8 @@ export function stageOf(snap: StateMsg | null, b: number): number {
 export function popOf(snap: StateMsg | null, b: number): number {
   return snap ? snap.S[b * NF + F.pop] : 0;
 }
-export function alive(stage: number): boolean { return stage >= STAGE.OUTPOST && stage <= STAGE.MEGA; }
+/** Outpost and up, including any stages above Megastructure, but not abandoned or dead. */
+export function alive(stage: number): boolean { return stage >= STAGE.OUTPOST && stage !== STAGE.ABANDONED && stage !== STAGE.DEAD && stage < STAGE_NAMES.length; }
 
 /** Settlements drawn on a world: one capital plus more as it grows. */
 export function cityCount(stage: number, pop: number): number {
@@ -183,7 +185,6 @@ class Trails {
   }
 }
 const SHIP_C = new THREE.Color(0.55, 0.9, 1), FTL_C = new THREE.Color(0.8, 0.6, 1);
-const HAB_MAT = new THREE.MeshStandardMaterial({ color: 0x8a919b, metalness: 0.6, roughness: 0.55 });
 const ELEVATOR = TECHS.findIndex((t) => t.id === 'spaceElevator');
 const tv1 = new THREE.Vector3(), tv2 = new THREE.Vector3(), tv3 = new THREE.Vector3();
 const WHITE = new THREE.Color(1, 1, 1);
@@ -620,6 +621,7 @@ export class SystemView implements View {
   private star!: THREE.Group;
   private starR = 1;
   private swarm: ReturnType<typeof pointCloud> | null = null;
+  private works = new StarWorks();
   private trails = new Trails(512, 512, 1.8);
   private edge = 60;
 
@@ -647,6 +649,7 @@ export class SystemView implements View {
     this.star.add(glowSprite(sc.getHex(), lumR * 9, 0.9));
     this.star.add(glowSprite(sc.getHex(), lumR * 26, 0.35, flareTex));
     this.group.add(this.star);
+    this.works.reset();
     this.group.add(makeSky(sys.id + 3));
 
     const planets = sys.bodies.map((id) => ctx.world.bodies[id]).filter((b) => b.parent < 0).sort((a, b) => a.a - b.a);
@@ -707,14 +710,15 @@ export class SystemView implements View {
 
   sync(ctx: Ctx): void {
     this.build(ctx);
-    let mega = false;
+    let mega = false, top = -1;
     for (const v of this.vis) {
       const st = stageOf(ctx.snap, v.id);
       const m = v.marker.material as THREE.SpriteMaterial;
       if (alive(st)) {
         m.color.set(STAGE_COLORS[st]); m.opacity = 0.55;
         v.marker.scale.setScalar(v.visR * (3 + st * 0.6));
-        if (st === STAGE.MEGA) mega = true;
+        if (tierRank(st) >= 2) mega = true;
+        if (tierRank(st) > tierRank(top)) top = st;
       } else m.opacity = st === STAGE.SURVEY ? 0.15 : 0;
       applyPlanetLook(v.mesh, ctx.snap, v.id, ctx.year, alive(st) ? cityLights(popOf(ctx.snap, v.id)) : 0);
     }
@@ -730,6 +734,8 @@ export class SystemView implements View {
       }
       this.group.add(this.swarm.pts);
     } else if (!mega && this.swarm) { this.group.remove(this.swarm.pts); this.swarm = null; }
+    this.works.sync(this.star, this.starR, top);
+    if (this.swarm) this.swarm.pts.visible = !this.works.brain;
   }
 
   frame(ctx: Ctx): void {
@@ -751,6 +757,7 @@ export class SystemView implements View {
       v.marker.position.copy(v.mesh.position);
     }
     if (this.swarm) this.swarm.pts.rotation.y = ctx.tm * 0.03;
+    this.works.frame(ctx.tm, REDUCED_MOTION);
     this.drawShips(ctx);
   }
 
@@ -831,14 +838,15 @@ export class PlanetView implements View {
   private planet!: THREE.Mesh;
   private cities: ReturnType<typeof pointCloud> | null = null;
   private cityPos: THREE.Vector3[] = [];
-  private habitats: THREE.InstancedMesh[] = [];
-  private ringWorld: THREE.Mesh | null = null;
+  private works = new Orbitals();
+  private sun: THREE.Sprite | null = null;
+  private starCol = new THREE.Color();
   private pivot = new THREE.Group();
   private orbit = new THREE.Group();
   private sats: ReturnType<typeof pointCloud> | null = null;
   private elevators: THREE.Group[] = [];
   private elevSince = -1;
-  private cityKey = ''; private habKey = -1; private satKey = -1; private elevKey = -1; private archKey = '';
+  private cityKey = ''; private satKey = -1; private elevKey = -1; private archKey = '';
   private arch: THREE.InstancedMesh | null = null;
 
   enter(ctx: Ctx): void {
@@ -872,7 +880,8 @@ export class PlanetView implements View {
     this.group.add(this.pivot);
     this.group.add(makeSky(b.id));
     const sys = ctx.world.systems[b.system];
-    const sun = glowSprite(specColor(sys.spec).getHex(), 60, 0.9, flareTex);
+    const sun = (this.sun = glowSprite(specColor(sys.spec).getHex(), 60, 0.9, flareTex));
+    this.starCol.copy(specColor(sys.spec));
     sun.position.set(400, 80, 120);
     this.group.add(sun);
     mat.uniforms.uSun.value.copy(sun.position).normalize();
@@ -882,8 +891,8 @@ export class PlanetView implements View {
     this.group.add(light, new THREE.AmbientLight(0x404a5a, 0.35));
     this.orbit = new THREE.Group();
     this.group.add(this.orbit);
-    this.cities = null; this.habitats = []; this.ringWorld = null; this.sats = null; this.elevators = [];
-    this.cityKey = ''; this.habKey = -1; this.satKey = -1; this.elevKey = -1; this.archKey = ''; this.arch = null;
+    this.cities = null; this.works.reset(); this.sats = null; this.elevators = [];
+    this.cityKey = ''; this.satKey = -1; this.elevKey = -1; this.archKey = ''; this.arch = null;
   }
 
   sync(ctx: Ctx): void {
@@ -944,29 +953,9 @@ export class PlanetView implements View {
         this.pivot.add(im);
       }
     }
-    // orbital habitats for cities and up: O'Neill cylinders and Stanford tori, lit by the star
-    const nHab = st >= STAGE.CITY && on ? Math.min(400, Math.floor(Math.pow(st - 4, 2) * 18)) : 0;
-    if (this.habKey !== nHab) {
-      this.habKey = nHab;
-      this.orbit.remove(...this.habitats);
-      for (const h of this.habitats) h.geometry.dispose();
-      this.habitats = [];
-      if (nHab > 0) {
-        const r = new Rng(b * 13), m = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
-        const nTor = Math.floor(nHab * 0.25);
-        const cyl = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.04, 0.04, 0.24, 12, 1), HAB_MAT, nHab - nTor);
-        const tor = new THREE.InstancedMesh(new THREE.TorusGeometry(0.1, 0.022, 8, 24), HAB_MAT, Math.max(1, nTor));
-        tor.count = nTor;
-        for (let i = 0; i < nHab; i++) {
-          const R = 14 + r.next() * 9, th = r.range(0, Math.PI * 2), inc = r.gauss() * 0.15;
-          q.setFromEuler(new THREE.Euler(r.next() * 3, r.next() * 3, 0));
-          m.compose(tv1.set(Math.cos(th) * R, Math.sin(inc) * R, Math.sin(th) * R), q, one);
-          if (i < nTor) tor.setMatrixAt(i, m); else cyl.setMatrixAt(i - nTor, m);
-        }
-        this.habitats = [cyl, tor];
-        this.orbit.add(cyl, tor);
-      }
-    }
+    // orbital works by age and stage: tori, O'Neill pairs, Bishop rings, swarm panels, ring worlds
+    this.works.sync(this.orbit, this.group, ctx.snap, ctx.year, b, st, on);
+    if (this.sun) { (this.sun.material as THREE.SpriteMaterial).opacity = 0.9 * this.works.starLight; (this.sun.material as THREE.SpriteMaterial).color.copy(this.starCol).multiply(this.works.starTint); }
     // satellites on a few inclined shells, more as the place grows
     const nSat = on ? Math.min(900, 30 + st * st * 22) : 0;
     if (this.satKey !== nSat) {
@@ -986,12 +975,6 @@ export class PlanetView implements View {
         dirty(this.sats.pts);
         this.orbit.add(this.sats.pts);
       }
-    }
-    if (this.ringWorld && st !== STAGE.MEGA) { this.group.remove(this.ringWorld); this.ringWorld = null; }
-    if (!this.ringWorld && st === STAGE.MEGA) {
-      this.ringWorld = new THREE.Mesh(new THREE.TorusGeometry(17, 0.1, 12, 256), new THREE.MeshStandardMaterial({ color: 0xb8ad9e, metalness: 0.5, roughness: 0.5, transparent: true, opacity: 0.4, depthWrite: false }));
-      this.ringWorld.rotation.x = Math.PI / 2 + 0.2;
-      this.group.add(this.ringWorld);
     }
     // space elevators once the tech exists: tether from the equator to a counterweight past synchronous orbit
     const elev = ctx.snap && on && st >= STAGE.COLONY && ctx.snap.techDone[ELEVATOR] >= 0 ? (st >= STAGE.HUB ? 3 : 1) : 0;
@@ -1022,6 +1005,7 @@ export class PlanetView implements View {
     this.pivot.rotation.y = ctx.tm * 0.02;
     (this.planet.material as THREE.ShaderMaterial).uniforms.uTime.value = ctx.t;
     this.orbit.rotation.y = ctx.tm * 0.015;
+    this.works.frame(ctx.tm);
     if (this.sats) this.sats.pts.rotation.y = ctx.tm * 0.05;
     for (const g of this.elevators) {
       const c = g.userData.climber as THREE.Sprite;
