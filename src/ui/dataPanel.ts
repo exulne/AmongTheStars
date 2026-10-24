@@ -20,6 +20,8 @@ export interface DataHost {
   setHighlight(ids: Iterable<number> | null): void;
   /** show a series key in the bottom charts */
   showSeries(key: string): void;
+  /** move the timeline to a year */
+  pickYear?(y: number): void;
 }
 
 /** One tab of the desk. `refresh` runs when the year, run or selection changes while it shows. */
