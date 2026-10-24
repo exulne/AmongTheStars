@@ -413,7 +413,7 @@ export class StreetView implements View {
       this.group.add(new THREE.LineSegments(new THREE.WireframeGeometry(new THREE.SphereGeometry(R * 1.04, 36, 10, 0, Math.PI * 2, 0, Math.PI / 2)),
         new THREE.LineBasicMaterial({ color: 0x9fd8ff, transparent: true, opacity: 0.07, blending: THREE.AdditiveBlending, depthWrite: false })));
     }
-    if (pl.st === STAGE.MEGA || st.spinHabs) {
+    if ((pl.st >= STAGE.MEGA && alive(pl.st)) || st.spinHabs) {
       const ring = new THREE.Mesh(new THREE.TorusGeometry(R * 2.8, R * 0.05, 10, 240), new THREE.MeshStandardMaterial({ color: 0x8b909a, roughness: 0.5, metalness: 0.5, emissive: 0x1a2230 }));
       ring.position.set(0, R * 0.4, -R * 1.2);
       ring.rotation.set(1.15, 0.2, 0);

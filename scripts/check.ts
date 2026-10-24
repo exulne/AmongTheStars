@@ -4,12 +4,12 @@
 import { availableParallelism } from 'node:os';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { Engine, YEAR0, type SimState } from '../src/sim/engine.ts';
-import { ERAS, EVENT_NAMES, STAGE, TECHS } from '../src/sim/catalog.ts';
+import { ERAS, EVENT_NAMES, STAGE, TECHS, isAlive } from '../src/sim/catalog.ts';
 import { F, GM, NF, NGM } from '../src/sim/metrics.ts';
 import { buildWorld, type World } from '../src/sim/world.ts';
 
 const SNAP_EVERY = 20; // same as the worker
-const LIVING = (s: number) => s >= STAGE.OUTPOST && s <= STAGE.MEGA;
+const LIVING = isAlive;
 const techAt = (id: string) => TECHS.findIndex((t) => t.id === id);
 
 interface SeedResult {

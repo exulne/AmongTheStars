@@ -2,7 +2,7 @@
 // All mutable state lives in typed arrays inside `SimState` so that a snapshot
 // is a handful of array copies, and replaying from a snapshot is exact.
 
-import { ERA_FX, ERA_MATRIX, ERAS, EV, STAGE, STAGE_CAP, TECHS, type Tech } from './catalog.ts';
+import { ERA_FX, ERA_MATRIX, ERAS, EV, STAGE, STAGE_CAP, STAGE_TECH, TECHS, isAlive, type Tech } from './catalog.ts';
 import { F, GM, HIST_FIELDS, NF, NGM } from './metrics.ts';
 import { AGE_W, CREW_AGES, FERT_SHARE, GM_A0, GM_B0, GM_b0, MIGRANT_AGES, NAGE, binHazard, earthBins, infantHazard, lifeExpectancyBins, medianAge, tfrTransition } from './ages.ts';
 import { EFFECTS, compat, effectFor, effectSize, isAdd, isDown, spineField, FIELDS, type Field } from './invent.ts';
@@ -318,7 +318,7 @@ export class Engine {
     const earthOffer = migD[0];
     for (let n = 0; n < st.nSettled; n++) {
       const b = st.settled[n], o = b * NF, stg = S[o + F.stage];
-      if (b === earth || stg < STAGE.OUTPOST || stg > STAGE.MEGA) continue;
+      if (b === earth || !isAlive(stg)) continue;
       if (stg <= STAGE.CITY) migW[this.bSys[b]] += Math.max(0, S[o + F.capacity] - S[o + F.pop]) ** 0.5;
       if (stg >= STAGE.COLONY) migD[this.bSys[b]] += S[o + F.pop] * MIGRATE;
     }
@@ -330,7 +330,7 @@ export class Engine {
     for (let n = 0; n < st.nSettled; n++) {
       const b = st.settled[n], o = b * NF, stg = S[o + F.stage], sy = this.bSys[b];
       recv[b] = 0; sent[b] = 0;
-      if (stg < STAGE.OUTPOST || stg > STAGE.MEGA || migW[sy] <= 0 || migD[sy] <= 0) continue;
+      if (!isAlive(stg) || migW[sy] <= 0 || migD[sy] <= 0) continue;
       if (b === earth || stg >= STAGE.COLONY) push(senders, sy, b);
       if (b !== earth && stg <= STAGE.CITY) {
         const room = Math.max(0, S[o + F.capacity] - S[o + F.pop]);
@@ -349,7 +349,7 @@ export class Engine {
     for (let n = 0; n < st.nSettled; n++) {
       const b = st.settled[n], o = b * NF;
       const stg = S[o + F.stage];
-      if (stg < STAGE.OUTPOST || stg > STAGE.MEGA) {
+      if (!isAlive(stg)) {
         S[o + F.births] = 0; S[o + F.deaths] = 0; S[o + F.gdp] = 0; S[o + F.energy] = stg === STAGE.SURVEY ? 2e3 : 0; S[o + F.research] = 0;
         continue;
       }
@@ -365,7 +365,10 @@ export class Engine {
       // cylinders exist, orbital habitats built from local metal (at most ~100 Island Threes)
       const dense = 1 + 0.25 * Math.log(fx.habitat);
       const hf = (0.15 + 0.85 * h) * dense;
-      const room = 1e10 * this.bArea[b] * hf + (fx.orbital ? Math.min(1e9, STAGE_CAP[stg] * (0.1 + 0.2 * this.bRes[b * 5 + 1])) : 0);
+      // the tiers above Megastructure add orbital room: rings, then swarm habitats (Bishop rings
+      // ~3e12 m² each, so 1e9 people per tier is a handful of rings at Earth density)
+      const room = 1e10 * this.bArea[b] * hf + (fx.orbital ? Math.min(1e9, STAGE_CAP[stg] * (0.1 + 0.2 * this.bRes[b * 5 + 1])) : 0) +
+        (stg > STAGE.MEGA ? 1e9 * (stg - STAGE.MEGA) * (0.5 + this.bRes[b * 5 + 1]) : 0);
       const cap = isEarth ? 1.15e10 * dense : Math.min(STAGE_CAP[stg] * hf * Math.pow(fx.lifeSupport, 0.25), room);
       S[o + F.capacity] = cap;
 
@@ -509,7 +512,7 @@ export class Engine {
     const tradeEff = fx.extract > 1.6 ? 0.85 : 0.6;
     for (let n = 0; n < st.nSettled; n++) {
       const b = st.settled[n], o = b * NF, stg = S[o + F.stage];
-      if (stg < STAGE.OUTPOST || stg > STAGE.MEGA) continue;
+      if (!isAlive(stg)) continue;
       const net = sysNet.get(this.bSys[b])!;
       let exp = 0, imp = 0;
       for (let k = 0; k < 3; k++) {
@@ -591,16 +594,24 @@ export class Engine {
       }
       return;
     }
-    if (stg >= STAGE.MEGA || pop < cap * 0.65 || pop < STAGE_CAP[stg] * 0.2) return;
+    if (stg >= STAGE.UPLOADED || pop < cap * 0.65 || pop < STAGE_CAP[stg] * 0.2) return;
+    // the far-future ladder: each tier needs its technology, and the star-scale ones a share
+    // of the star's light actually captured (W, against L* in watts)
+    const Lstar = this.sysLum[this.bSys[b]] * 3.846e26, E = S[o + F.energy];
     const gate =
       stg === STAGE.OUTPOST ? has('closedLoop') :
       stg === STAGE.BASE ? has('isru') :
       stg === STAGE.COLONY ? has('synthBio') :
       stg === STAGE.TOWN ? has('regolith') && (has('fusion') || this.bFlux[b] > 0.3) :
       stg === STAGE.CITY ? has('asteroidMining') && has('orbitalHabitats') :
-      stg === STAGE.HUB ? has('dyson1') || has('bishopRings') : false;
+      stg === STAGE.HUB ? has('dyson1') || has('bishopRings') :
+      stg === STAGE.MEGA ? has(STAGE_TECH[STAGE.RING]!) && E >= pop * 1e4 :
+      stg === STAGE.RING ? has(STAGE_TECH[STAGE.SWARM]!) && E >= 1e-4 * Lstar :
+      stg === STAGE.SWARM ? has(STAGE_TECH[STAGE.BRAIN]!) && E >= 1e-2 * Lstar :
+      stg === STAGE.BRAIN ? has(STAGE_TECH[STAGE.LIFTED]!) && E >= 0.1 * Lstar :
+      stg === STAGE.LIFTED ? has(STAGE_TECH[STAGE.UPLOADED]!) && E >= pop * 1e6 : false;
     if (!gate) return;
-    const p = dt * [0, 0.12, 0.06, 0.04, 0.025, 0.015, 0.006][stg];
+    const p = dt * (stg < STAGE.MEGA ? [0, 0.12, 0.06, 0.04, 0.025, 0.015, 0.006][stg] : 0.004);
     if (this.rand() < p) {
       S[o + F.stage] = stg + 1;
       this.log(stg + 1 === STAGE.MEGA ? EV['Megastructure complete'] : EV['Stage up'], b, stg + 1);
@@ -743,7 +754,7 @@ export class Engine {
     }
     for (let n = 0; n < st.nSettled; n++) {
       const b = st.settled[n], o = b * NF, stg = S[o + F.stage];
-      if (stg < STAGE.BASE || stg > STAGE.MEGA || S[o + F.stability] < 0.35) continue;
+      if (stg < STAGE.BASE || !isAlive(stg) || S[o + F.stability] < 0.35) continue;
       const isEarth = b === earth;
       const gdp = S[o + F.gdp];
       // in-system: send a crew to a surveyed or empty body in the same system
@@ -867,7 +878,7 @@ export class Engine {
       if (this.rand() < pOk) {
         const ts = st.S[to * NF + F.stage];
         // someone got there first (a local crew): the ship just adds people
-        const joined = ts >= STAGE.OUTPOST && ts <= STAGE.MEGA;
+        const joined = isAlive(ts);
         if (joined) {
           st.S[to * NF + F.pop] += colonists;
           st.S[to * NF + F.stage] = Math.max(ts, colonists > 2000 ? STAGE.COLONY : STAGE.BASE);
@@ -903,7 +914,7 @@ export class Engine {
     // independence
     for (let n = 0; n < st.nSettled; n++) {
       const b = st.settled[n], o = b * NF, stg = S[o + F.stage];
-      if (stg < STAGE.COLONY || stg > STAGE.MEGA || S[o + F.faction] === b) continue;
+      if (stg < STAGE.COLONY || !isAlive(stg) || S[o + F.faction] === b) continue;
       const lag = this.lagToCapital(b);
       const sol = this.bSys[b] === 0;
       const p = dt * fx.secession * (1 - S[o + F.stability]) * (sol ? (S[o + F.pop] > 1e6 ? 0.008 : 0) : 0.012 * Math.sqrt(lag / 5));
@@ -921,7 +932,7 @@ export class Engine {
     const sysFac = new Map<number, number[]>();
     for (let n = 0; n < st.nSettled; n++) {
       const b = st.settled[n], o = b * NF;
-      if (S[o + F.stage] < STAGE.OUTPOST || S[o + F.stage] > STAGE.MEGA) continue;
+      if (!isAlive(S[o + F.stage])) continue;
       const f = S[o + F.faction], s = this.bSys[b];
       const l = sysFac.get(s);
       if (!l) sysFac.set(s, [f]);
@@ -942,7 +953,7 @@ export class Engine {
       for (let n = 0; n < st.nSettled; n++) {
         const c = st.settled[n], o = c * NF;
         const f = S[o + F.faction];
-        if ((f !== a && f !== bF) || S[o + F.stage] < STAGE.OUTPOST || S[o + F.stage] > STAGE.MEGA) continue;
+        if ((f !== a && f !== bF) || !isAlive(S[o + F.stage])) continue;
         if (this.dist(c, a) > 25 && fx.ftl === 0) continue;
         const k = sev * (0.5 + this.rand());
         S[o + F.pop] *= 1 - k; S[o + F.capital] *= 1 - k; S[o + F.stability] = Math.max(0, S[o + F.stability] - 0.15);
@@ -996,7 +1007,7 @@ export class Engine {
         const b = st.settled[n];
         if (b === this.world.earth || this.dist(b, centre) > radius) continue;
         const o = b * NF;
-        if (S[o + F.stage] >= STAGE.OUTPOST && S[o + F.stage] <= STAGE.MEGA) { S[o + F.pop] *= 0.1; killed++; }
+        if (isAlive(S[o + F.stage])) { S[o + F.pop] *= 0.1; killed++; }
       }
       if (killed) this.log(this.rand() < 0.5 ? EV.Supernova : EV['Gamma-ray burst'], centre, killed, radius);
     }
@@ -1014,7 +1025,7 @@ export class Engine {
     for (let n = 0; n < st.nSettled; n++) {
       const b = st.settled[n], o = b * NF, stg = S[o + F.stage];
       if (stg === STAGE.SURVEY) { row[GM.surveyed]++; continue; }
-      if (stg < STAGE.OUTPOST || stg > STAGE.MEGA) continue;
+      if (!isAlive(stg)) continue;
       const pop = S[o + F.pop];
       row[GM.pop] += pop;
       if (b !== earth) row[GM.offEarth] += pop;

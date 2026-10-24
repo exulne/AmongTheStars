@@ -167,13 +167,24 @@ export const STAGE = {
   CITY: 5,
   HUB: 6,        // industrial / trade hub, exports ships
   MEGA: 7,       // megastructure: swarm, ring, world-city
-  ABANDONED: 8,
-  DEAD: 9,
+  // the far-future ladder (each gated by its technology plus people and power)
+  RING: 8,       // Ring world: Bishop rings spun up around the planet
+  SWARM: 9,      // Swarm-world: the system's Dyson swarm is mostly its habitats
+  BRAIN: 10,     // Brain-star: a Matrioshka shell around the star does the thinking
+  LIFTED: 11,    // Lifted star: the star itself is being mined
+  UPLOADED: 12,  // Uploaded: most of the people live as minds
+  ABANDONED: 13,
+  DEAD: 14,
 } as const;
 
-export const STAGE_NAMES = ['Survey', 'Outpost', 'Base', 'Colony', 'Town', 'City', 'Hub', 'Megastructure', 'Abandoned', 'Dead'];
+/** A settlement with people in it (Outpost through Uploaded). */
+export function isAlive(stage: number): boolean { return stage >= STAGE.OUTPOST && stage <= STAGE.UPLOADED; }
+
+export const STAGE_NAMES = ['Survey', 'Outpost', 'Base', 'Colony', 'Town', 'City', 'Hub', 'Megastructure', 'Ring world', 'Swarm-world', 'Brain-star', 'Lifted star', 'Uploaded', 'Abandoned', 'Dead'];
 /** Base population capacity per stage before habitability and tech. */
-export const STAGE_CAP = [0, 60, 2_000, 150_000, 3_000_000, 80_000_000, 1_000_000_000, 10_000_000_000, 0, 0];
+export const STAGE_CAP = [0, 60, 2_000, 150_000, 3_000_000, 80_000_000, 1_000_000_000, 10_000_000_000, 11_000_000_000, 12_000_000_000, 13_000_000_000, 14_000_000_000, 15_000_000_000, 0, 0];
+/** Technology that unlocks each stage above Megastructure. */
+export const STAGE_TECH: Partial<Record<number, string>> = { 8: 'bishopRings', 9: 'dyson2', 10: 'matrioshka', 11: 'starLifting', 12: 'mindUpload' };
 
 // ---------------------------------------------------------------------------
 // Technologies. cost = knowledge points. Effects compose multiplicatively

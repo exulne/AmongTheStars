@@ -155,5 +155,6 @@ export function specColor(spec: string): THREE.Color {
   return new THREE.Color(t[spec[0]] ?? 0xffffff);
 }
 
-export const STAGE_COLORS = [0x56606e, 0x6f9bd8, 0x79c3e6, 0x8fe0c8, 0xd8e6a0, 0xf3d27a, 0xf6a35c, 0xff6fa8, 0x4b4440, 0xa33b2f];
+// Survey … Megastructure, then the far-future tiers (Ring world, Swarm-world, Brain-star, Lifted star, Uploaded; placeholders for the UI to restyle), Abandoned, Dead
+export const STAGE_COLORS = [0x56606e, 0x6f9bd8, 0x79c3e6, 0x8fe0c8, 0xd8e6a0, 0xf3d27a, 0xf6a35c, 0xff6fa8, 0xe58cff, 0xb48cff, 0x8ca8ff, 0xffe08c, 0xf2f2ff, 0x4b4440, 0xa33b2f];
 export const STAGE_CSS = STAGE_COLORS.map((c) => '#' + c.toString(16).padStart(6, '0'));
