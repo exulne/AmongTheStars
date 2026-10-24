@@ -24,7 +24,8 @@ import { EraBanner, eraRun, eraTitle } from './ui/eraBanner.ts';
 import { EraMood } from './view/eraMood.ts';
 import { ShipConsole } from './ship/console.ts';
 import { Voyage } from './ship/voyage.ts';
-import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionCss, stageLegend, type ColorMode } from './view/colorModes.ts';
+import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionCss, faithCss, stageLegend, type ColorMode } from './view/colorModes.ts';
+import { names as naming } from './ui/names.ts';
 import { StreetView } from './view/street.ts';
 import { Picker } from './explain/picker.ts';
 import { explainLocate, explainName, explainerFor } from './explain/registry.ts';
@@ -168,6 +169,8 @@ const eraBanner = new EraBanner();
 app.append(eraBanner.el);
 const calendar = new LocalCalendar(world, (a, b, c, d) => sim.events(a, b, c, d));
 timeline.local = (y) => calendar.text(y);
+calendar.nameOf = (b) => naming.place(world, b);
+naming.onChange = () => { refreshPanels(); renderLegend(); renderCrumbs(); timeline.refresh(); };
 calendar.onChange = () => timeline.refresh();
 const ctx: Ctx = { world, snap: null, year: 0, camera, controls, system: 0, body: world.mars, selected: null, t: 0, tm: 0, colorBy: 'stage', city: 0 };
 let events: SimEvent[] = [];
@@ -220,12 +223,21 @@ const legendKeys = legendEl.querySelector<HTMLElement>('.legend-keys')!;
 function legendHtml(mode: ColorMode): string {
   if (mode === 'heat') return `<span class="ramp" style="--g:${HEAT_CSS}"></span><span class="ramp-ends num"><span>1</span><span>people per system</span><span>40B</span></span>`;
   if (mode === 'founded') return `<span class="ramp" style="--g:${AGE_CSS}"></span><span class="ramp-ends num"><span>2040</span><span>first settled</span><span>${Math.round(2040 + ctx.year)}</span></span>`;
+  if (mode === 'faith') {
+    // the biggest faith of each settlement, weighted by its people
+    const fs = new Map<number, number>();
+    const snap = ctx.snap;
+    if (snap) for (const b of snap.settled) if (alive(stageOf(snap, b))) { const n = snap.S[b * NF + F.culture]; fs.set(n, (fs.get(n) ?? 0) + popOf(snap, b)); }
+    const top = [...fs].sort((a, b) => b[1] - a[1]);
+    return top.slice(0, 8).map(([n, pop]) => `<span><i style="background:${faithCss(n)}"></i>${naming.faith(n)} <span class="num">${fmtNum(pop)}</span></span>`).join('')
+      + (top.length > 8 ? `<span class="more">and ${top.length - 8} more</span>` : '');
+  }
   if (mode === 'faction') {
     const facs = new Map<number, number>();
     const snap = ctx.snap;
     if (snap) for (const b of snap.settled) if (alive(stageOf(snap, b))) { const f = snap.S[b * NF + F.faction]; facs.set(f, (facs.get(f) ?? 0) + popOf(snap, b)); }
     const top = [...facs].sort((a, b) => b[1] - a[1]);
-    const name = (f: number) => (f === world.earth ? 'Earth' : world.bodies[f].name);
+    const name = (f: number) => (f === world.earth ? 'Earth' : naming.place(world, f));
     return top.slice(0, 8).map(([f, pop]) => `<span><i style="background:${factionCss(f, world.earth)}"></i>${name(f)} <span class="num">${fmtNum(pop)}</span></span>`).join('')
       + (top.length > 8 ? `<span class="more">and ${top.length - 8} more</span>` : '');
   }
@@ -347,7 +359,7 @@ function setLevel(next: Level, focus: Ref | null = null, prep?: () => void, anim
 function renderCrumbs(): void {
   const names: Record<Level, string> = {
     universe: 'Local Group', galaxy: 'Milky Way', local: 'Nearby stars',
-    system: world.systems[ctx.system].name, planet: world.bodies[ctx.body].name,
+    system: world.systems[ctx.system].name, planet: naming.place(world, ctx.body),
     street: ctx.city === 0 ? 'Capital' : `Settlement ${ctx.city}`,
   };
   const idx = LEVELS.indexOf(level);
@@ -366,8 +378,8 @@ function renderHere(): void {
   const b = world.bodies[ctx.body], st = stageOf(ctx.snap, ctx.body), pop = popOf(ctx.snap, ctx.body);
   const n = cityCount(st, pop), city = Math.min(ctx.city, Math.max(0, n - 1));
   hereText.textContent = level === 'street'
-    ? `${city === 0 ? 'The capital' : `Settlement ${city}`} of ${n} on ${b.name}, ${world.systems[b.system].name}`
-    : `${n ? `${n} settlement${n > 1 ? 's' : ''}` : 'No settlements'} on ${b.name}, ${world.systems[b.system].name}`;
+    ? `${city === 0 ? 'The capital' : `Settlement ${city}`} of ${n} on ${naming.place(world, ctx.body)}, ${world.systems[b.system].name}`
+    : `${n ? `${n} settlement${n > 1 ? 's' : ''}` : 'No settlements'} on ${naming.place(world, ctx.body)}, ${world.systems[b.system].name}`;
   const g = hereCanvas.getContext('2d')!, dpr = Math.min(devicePixelRatio, 2), S = 64;
   if (hereCanvas.width !== S * dpr) { hereCanvas.width = hereCanvas.height = S * dpr; }
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -551,7 +563,7 @@ function hover(now: number): void {
   // backdrop stars don't stop the orbits; anything else does, so it can be clicked
   hovering = !!p && !(p.kind === 'thing' && /^(sky|bgal|dust)/.test(p.ex ?? ''));
   tooltip.hidden = !p;
-  if (p) { tooltip.textContent = p.name; tooltip.style.transform = `translate(${x + 14}px, ${y + 10}px)`; }
+  if (p) { tooltip.textContent = p.kind === 'body' ? naming.place(world, p.id) : p.name; tooltip.style.transform = `translate(${x + 14}px, ${y + 10}px)`; }
   canvas.style.cursor = p ? 'pointer' : '';
 }
 let downAt = { x: 0, y: 0 };
@@ -619,7 +631,9 @@ function drawLabels(): void {
   const used = new Set<string>();
   for (const c of cand) {
     let e = labelEls.get(c.key);
-    const html = `<b>${c.l.text}</b>${c.l.sub ? `<span>${c.l.sub}</span>` : ''}`;
+    const own = c.l.ref?.kind === 'body' ? naming.local(c.l.ref.id) : null; // a world by its own name, the catalogue's underneath
+    const text = own ?? c.l.text, sub = own ? (c.l.sub ? `${c.l.text} · ${c.l.sub}` : c.l.text) : c.l.sub;
+    const html = `<b>${text}</b>${sub ? `<span>${sub}</span>` : ''}`;
     if (!e) {
       const el = document.createElement('div');
       el.className = 'label';
@@ -631,7 +645,7 @@ function drawLabels(): void {
     if (e.html !== html) {
       e.el.innerHTML = html; e.html = html;
       // estimated from glyph counts so placement never forces a layout
-      e.w = 10 + Math.max(c.l.text.length * 6, (c.l.sub?.length ?? 0) * 6); e.h = c.l.sub ? 26 : 15;
+      e.w = 10 + Math.max(text.length * 6, (sub?.length ?? 0) * 6); e.h = sub ? 26 : 15;
     }
     // try the label to the right of its point, then to the left
     const fits = (x0: number, x1: number) => {
@@ -912,7 +926,7 @@ function startRun(seed: number): void {
   resetShips();
   ctx.snap = null; lastStep = -1; wanted = -1; inFlight = false; events = []; history = null; fc = null;
   ticker.clear(); tickFrom = 0;
-  eraBanner.reset(); calendar.reset();
+  eraBanner.reset(); calendar.reset(); naming.load(sim);
   sim.run(seed);
   timeline.set(0);
   ctx.year = 0;
