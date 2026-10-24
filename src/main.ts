@@ -5,14 +5,14 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import './style.css';
-import { STAGE_NAMES } from './sim/catalog.ts';
+import { STAGE_NAMES, TECHS } from './sim/catalog.ts';
 import { forecast, type Forecast } from './ml/forecaster.ts';
 import { fanFor, oddsHtml } from './ui/psychohistory.ts';
 import { SimClient, type HistoryMsg, type SimEvent, type StateMsg } from './sim/client.ts';
 import { F, GM, HIST_FIELDS, NF, NGM, SETTLEMENT_LABELS } from './sim/metrics.ts';
 import { GALAXIES, buildWorld } from './sim/world.ts';
 import { ChartStrip, globalSeries, type Series } from './ui/charts.ts';
-import { fmtNum, parseCount } from './ui/format.ts';
+import { fmtNum, fmtYear, parseCount } from './ui/format.ts';
 import { Inspector } from './ui/inspector.ts';
 import { Search, type Hit } from './ui/search.ts';
 import { NOTABLE, Ticker, describe } from './ui/ticker.ts';
@@ -424,7 +424,7 @@ function measureOccluders(): void {
   }
 }
 const occRO = new ResizeObserver(measureOccluders);
-occRO.observe(document.body); occRO.observe(inspector.el); occRO.observe(bottom);
+occRO.observe(document.body); occRO.observe(inspector.el); occRO.observe(bottom); occRO.observe(legendEl);
 const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
 function drawLabels(): void {
   const list = views[level].labels(ctx);
@@ -706,6 +706,8 @@ help.querySelector('button')!.addEventListener('click', () => { help.hidden = tr
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
+  // typing a name anywhere goes to search, so letters never fire shortcuts
+  if (e.key.length === 1 && /[\p{L}\p{N}#]/u.test(e.key)) { e.preventDefault(); search.focus(e.key); return; }
   if (e.code === 'Space') { e.preventDefault(); timeline.toggle(); }
   else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); timeline.step(e.key === 'ArrowRight' ? 1 : -1, e.shiftKey); }
   else if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; else select(null); }
@@ -743,7 +745,7 @@ function scoreBodies(q: string): { h: Hit; s: number }[] {
     const m = matchScore(n, q);
     if (!m) return;
     const st = stageOf(ctx.snap, id);
-    out.push({ h: { kind: 'body', id, name: world.bodies[id].name, sub: '' }, s: m * 10 + (alive(st) ? 8 + Math.log10(1 + popOf(ctx.snap, id)) : st >= 0 ? 2 : 0) });
+    out.push({ h: { kind: 'body', id, name: world.bodies[id].name, sub: '' }, s: m * 10 + (alive(st) ? 5 + 0.3 * Math.log10(1 + popOf(ctx.snap, id)) : st >= 0 ? 1 : 0) });
   });
   return out.sort((a, b) => b.s - a.s).slice(0, 12).map((x) => ({ h: { ...x.h, sub: bodySub(x.h.id) }, s: x.s }));
 }
@@ -772,8 +774,14 @@ function find(raw: string): Hit[] {
     const s = world.systems[id], sum = systemSummary(world, ctx.snap, id);
     hits.push({
       h: { kind: 'system', id, name: s.name, sub: `${s.spec} star · ${s.dist < 0.01 ? 'home' : `${fmtNum(s.dist)} ly`}${sum.n ? ` · ${sum.n} settlement${sum.n > 1 ? 's' : ''}, ${fmtNum(sum.pop)}` : ''}` },
-      s: m * 10 + (sum.n ? 7 + Math.log10(1 + sum.pop) * 0.5 : 0) + (s.real ? 3 : 0),
+      s: m * 10 + (sum.n ? 6 + 0.3 * Math.log10(1 + sum.pop) : 0) + (s.real ? 3 : 0),
     });
+  });
+  TECHS.forEach((t, i) => {
+    const m = Math.max(matchScore(t.name.toLowerCase(), q), matchScore(t.id.toLowerCase(), q));
+    if (!m) return;
+    const y = ctx.snap?.techDone[i] ?? -1;
+    hits.push({ h: { kind: 'tech', id: i, name: t.name, sub: y >= 0 ? `technology · invented ${fmtYear(y)}` : 'technology · not yet invented' }, s: m * 10 + 2 });
   });
   // a system ranks just above its own worlds
   for (const h of hits) h.s += 1;
@@ -784,6 +792,7 @@ const search = new Search(find);
 app.querySelector('.search-slot')!.replaceWith(search.el);
 search.onPick = (h) => {
   pull = null;
+  if (h.kind === 'tech') { inspector.showTech(h.id); select(null); refreshPanels(); return; }
   if (h.kind === 'galaxy') {
     const name = GALAXIES[h.id].name;
     select({ kind: 'galaxy', id: h.id, name, pos: new THREE.Vector3() });
