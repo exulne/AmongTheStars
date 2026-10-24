@@ -81,6 +81,11 @@ button, select, input { font: inherit; color: inherit; }
 .legend-keys .more { font-style: italic; }
 .legend-modes { pointer-events: auto; margin-bottom: 0.45rem; padding-bottom: 0.35rem; border-bottom: 1px solid var(--faint); line-height: 1.7; }
 .legend-modes[hidden] { display: none; }
+.legend-war { margin-top: 0.45rem; padding-top: 0.35rem; border-top: 1px solid var(--faint); line-height: 1.45; }
+.legend-war:empty { display: none; }
+.legend-war .war-who { color: var(--ink); pointer-events: auto; cursor: help; }
+.legend-war .up { color: #f0a89c; }
+.legend-war .down { color: #9cd3c0; }
 .legend-modes .link { color: var(--quiet); margin-left: 0.15em; }
 .legend-modes .link[aria-pressed="true"] { color: var(--accent); text-decoration: none; }
 .legend .ramp { display: block; width: 11rem; height: 0.35rem; background: var(--g); box-shadow: 0 0 8px rgba(0, 0, 0, 0.8); margin: 0.2rem 0 0.15rem; }

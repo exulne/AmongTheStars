@@ -8,6 +8,7 @@ import {
   H, HG, MAX_GRUDGE, MAX_PEND, MAX_WAR, NH, NWC, OUTCOME, PEND, WAR_CAUSE, WAR_KIND, WC, FC, NFC,
   GRIEV, MAX_POL, NPC, PC, REGIME, type Civ,
 } from './civ.ts';
+import { MAX_ROUNDS, TERMS, type PressCand, type StrikeCand, type WarMind } from './warMind.ts';
 
 const LIVING = isAlive;
 const C = 299_792_458;          // m/s
@@ -43,6 +44,10 @@ interface Agg { f: number; pop: number; mil: number; short: number; res: number;
 
 export class Politics {
   private c: Civ;
+  /** who decides war and peace; null: the random rules below */
+  mind: WarMind | null = null;
+  /** with a mind: people each faction lost to war since the mind last cleared it */
+  losses = new Map<number, number>();
   private firstFac: Float64Array; private contested: Uint8Array;
   constructor(c: Civ) {
     this.c = c;
@@ -55,10 +60,11 @@ export class Politics {
   step(dt: number, year: number, eraWar: number): { rivals: number; wars: number; dead: number } {
     this.regimes(dt, year, eraWar);
     this.independence(dt, year);
+    this.mind?.begin(year, dt);
     const out = this.localWars(dt, year, eraWar);
     out.wars += this.kineticWars(dt, year, eraWar);
     out.dead += this.effects(year);
-    this.resolve(year);
+    out.dead += this.resolve(year);
     this.decayGrudges(dt);
     return out;
   }
@@ -102,7 +108,7 @@ export class Politics {
     }
     X.hg[HG.nGrudge] = n;
   }
-  private atWar(a: number, b: number): boolean {
+  atWar(a: number, b: number): boolean {
     const W = this.X.war, n = this.X.hg[HG.nWar];
     for (let i = n - 1; i >= 0; i--) {
       const o = i * NWC;
@@ -119,7 +125,7 @@ export class Politics {
     X.hg[HG.nPend] = n + 1;
   }
   /** Military a faction can bring to bear on a place: forces further away count for less. */
-  private reach(f: number, at: number): { mil: number; systems: number; pop: number } {
+  reach(f: number, at: number): { mil: number; systems: number; pop: number } {
     const st = this.e.st, S = st.S;
     let mil = 0, pop = 0;
     const sys = new Set<number>();
@@ -148,6 +154,7 @@ export class Politics {
     const r = p >= 0 ? this.X.pol[p * NPC + PC.regime] : -1;
     return r >= 0 ? REGIME_FX[r] : NEUTRAL;
   }
+  private lost(f: number, n: number): void { this.losses.set(f, (this.losses.get(f) ?? 0) + n); }
   private markWar(o: number, a: number, b: number): void {
     const X = this.X, pa = this.polityOf(a), pb = this.polityOf(b);
     X.war[o + WC.pA] = pa; X.war[o + WC.pB] = pb;
@@ -331,7 +338,7 @@ export class Politics {
       }
     }
     let rivals = 0;
-    const pairs: { sy: number; A: Agg; B: Agg; w: number; cause: number }[] = [];
+    const pairs: { sy: number; A: Agg; B: Agg; w: number; cause: number; terms: number[] }[] = [];
     let W = 0;
     for (const [sy, m] of bySys) {
       if (m.size < 2) continue;
@@ -356,12 +363,25 @@ export class Politics {
         let cause = 0;
         for (let k = 1; k < 4; k++) if (terms[k] > terms[cause]) cause = k;
         const w = (0.3 + resT + faithT + indepT + grudgeT) * Math.sqrt(this.c.warMul(A.f) * this.c.warMul(B.f));
-        pairs.push({ sy, A, B, w, cause });
+        pairs.push({ sy, A, B, w, cause, terms });
         W += w;
       }
     }
     const out = { rivals, wars: 0, dead: 0 };
     if (!pairs.length) return out;
+    if (this.mind) {
+      const cands: PressCand[] = pairs.map((p) => ({ sy: p.sy, a: p.A.f, b: p.B.f, cause: p.cause, res: p.terms[0], faith: p.terms[1], indep: p.terms[2], grudge: p.terms[3] }));
+      const first = this.mind.press(cands, year);
+      const busy = new Set<number>();
+      for (let k = 0; k < pairs.length && out.wars < 4; k++) {
+        const p = pairs[k];
+        if (first[k] < 0 || busy.has(p.A.f) || busy.has(p.B.f)) continue;
+        busy.add(p.A.f); busy.add(p.B.f);
+        out.dead += this.startLocal(year, p.sy, p.A, p.B, p.cause, first[k]);
+        out.wars++;
+      }
+      return out;
+    }
     const R = dt * 0.004 * eraWar * fx.war * Math.sqrt(Math.min(pairs.length, 16));
     if (this.e.rand() < R * Math.min(3, W / pairs.length / 0.8)) {
       let x = this.e.rand() * W, k = 0;
@@ -373,14 +393,14 @@ export class Politics {
     return out;
   }
 
-  private startLocal(year: number, sy: number, A0: Agg, B0: Agg, cause: number): number {
+  private startLocal(year: number, sy: number, A0: Agg, B0: Agg, cause: number, first = -1): number {
     const X = this.X, st = this.e.st, S = st.S, Hh = X.H;
     const n = X.hg[HG.nWar];
     if (n >= MAX_WAR) return 0;
     // who strikes first: the hungry side in a resource war, the old master against a rebel, else the stronger
     let A = A0, B = B0;
     const sh = (a: Agg) => (a.pop > 0 ? a.short / a.pop : 0);
-    if (cause === WAR_CAUSE.RESOURCES ? sh(B) > sh(A) : cause === WAR_CAUSE.INDEPENDENCE ? Hh[A.f * NH + H.indepFrom] === B.f : B.mil > A.mil) { A = B0; B = A0; }
+    if (first >= 0 ? first === B.f : cause === WAR_CAUSE.RESOURCES ? sh(B) > sh(A) : cause === WAR_CAUSE.INDEPENDENCE ? Hh[A.f * NH + H.indepFrom] === B.f : B.mil > A.mil) { A = B0; B = A0; }
     const front = A.bodies.reduce((x, y) => (S[y * NF + F.pop] > S[x * NF + F.pop] ? y : x));
     const target = B.bodies.reduce((x, y) => (S[y * NF + F.pop] > S[x * NF + F.pop] ? y : x));
     const ra = this.reach(A.f, front).mil, rb = this.reach(B.f, front).mil;
@@ -397,18 +417,7 @@ export class Politics {
     Wt[o + WC.indep] = Hh[A.f * NH + H.indepFrom] === B.f ? Hh[A.f * NH + H.indep] : Hh[B.f * NH + H.indepFrom] === A.f ? Hh[B.f * NH + H.indep] : -1;
     X.hg[HG.nWar] = n + 1;
     // fighting happens where both sides are: the theatre system, within light-seconds
-    let killed = 0, dead = 0;
-    const lossA = Math.min(1.7, Math.max(0.3, 2 / (1 + R))), lossB = Math.min(1.7, Math.max(0.3, (2 * R) / (1 + R)));
-    for (const [side, loss] of [[A, lossA], [B, lossB]] as const) {
-      for (const c of side.bodies) {
-        const oc = c * NF;
-        const k = Math.min(0.6, sev * (0.5 + this.e.rand()) * loss);
-        killed += S[oc + F.pop] * k;
-        S[oc + F.pop] *= 1 - k; S[oc + F.capital] *= 1 - k; S[oc + F.stability] = Math.max(0, S[oc + F.stability] - 0.15);
-        Hh[c * NH + H.lastWar] = year;
-        if (S[oc + F.stage] <= STAGE.BASE && this.e.rand() < sev) { S[oc + F.stage] = STAGE.DEAD; S[oc + F.pop] = 0; dead++; }
-      }
-    }
+    const [killed, dead] = this.battle(year, A.bodies, B.bodies, R, sev);
     Wt[o + WC.killed] = killed;
     // everyone else in both factions hears of it at light speed and mobilises then
     for (let m = 0; m < st.nSettled; m++) {
@@ -423,6 +432,25 @@ export class Politics {
     return dead;
   }
 
+  /** One round of fighting in a system: each side loses in proportion to the other's force (R = A's over B's). */
+  private battle(year: number, aBodies: number[], bBodies: number[], R: number, sev: number): [killed: number, dead: number] {
+    const S = this.e.st.S, Hh = this.X.H;
+    let killed = 0, dead = 0;
+    const lossA = Math.min(1.7, Math.max(0.3, 2 / (1 + R))), lossB = Math.min(1.7, Math.max(0.3, (2 * R) / (1 + R)));
+    for (const [bodies, loss] of [[aBodies, lossA], [bBodies, lossB]] as const) {
+      for (const c of bodies) {
+        const oc = c * NF;
+        const k = Math.min(0.6, sev * (0.5 + this.e.rand()) * loss);
+        killed += S[oc + F.pop] * k;
+        if (this.mind) this.lost(S[oc + F.faction], S[oc + F.pop] * k);
+        S[oc + F.pop] *= 1 - k; S[oc + F.capital] *= 1 - k; S[oc + F.stability] = Math.max(0, S[oc + F.stability] - 0.15);
+        Hh[c * NH + H.lastWar] = year;
+        if (S[oc + F.stage] <= STAGE.BASE && this.e.rand() < sev) { S[oc + F.stage] = STAGE.DEAD; S[oc + F.pop] = 0; dead++; }
+      }
+    }
+    return [killed, dead];
+  }
+
   // ---------------------------------------------------------------- relativistic kinetic war between stars
 
   private kineticWars(dt: number, year: number, eraWar: number): number {
@@ -430,6 +458,7 @@ export class Politics {
     const beta = Math.min(0.5, fx.shipSpeed);
     if (beta < 0.05) return 0;
     let wars = 0;
+    const cands: StrikeCand[] = [];
     for (let i = 0; i < X.hg[HG.nGrudge]; i++) {
       const v = G[i * 3 + 2];
       if (v < 0.4) continue;
@@ -438,6 +467,7 @@ export class Politics {
       if (this.c.bSys[a] === this.c.bSys[b]) continue;
       const d = this.c.sysDistLy(a, b);
       if (d > 60 || this.atWar(a, b)) continue;
+      if (this.mind) { cands.push({ a, b, d, grudge: v, beta }); continue; }
       const pMax = dt * 0.006 * eraWar * fx.war * (v - 0.4) * Math.sqrt(Math.max(this.c.warMul(a), this.c.warMul(b)));
       const u = this.e.rand();
       if (u >= pMax) continue;
@@ -447,6 +477,15 @@ export class Politics {
       const deter = 1 + 0.8 * Math.pow(Math.max(0, rb.systems - 1), 1.3);
       if (u >= pMax * Math.sqrt(this.c.warMul(a) / Math.max(this.c.warMul(a), this.c.warMul(b))) / deter) continue;
       wars += this.launchStrike(year, a, b, ra, rb, d, beta);
+    }
+    if (this.mind && cands.length) {
+      const who = this.mind.strike(cands, year);
+      for (let k = 0; k < cands.length; k++) {
+        if (who[k] < 0) continue;
+        const c = cands[k], a = who[k], b = a === c.a ? c.b : c.a;
+        if (this.atWar(a, b)) continue;
+        wars += this.launchStrike(year, a, b, this.reach(a, a), this.reach(b, b), c.d, beta);
+      }
     }
     return wars;
   }
@@ -494,6 +533,7 @@ export class Politics {
         else if (kind === PEND.STRIKE) {
           const k = Math.min(0.7, mag / (Math.max(S[ob + F.pop], 1) * 2e13));
           X.war[w * NWC + WC.killed] += S[ob + F.pop] * k;
+          if (this.mind) this.lost(S[ob + F.faction], S[ob + F.pop] * k);
           S[ob + F.pop] *= 1 - k; S[ob + F.capital] *= 1 - k; S[ob + F.stability] = Math.max(0, S[ob + F.stability] - 0.2);
           Hh[b * NH + H.lastWar] = year;
           this.c.onDisaster(b, EV['Kinetic strike'], k, year);
@@ -507,8 +547,9 @@ export class Politics {
     return dead;
   }
 
-  private resolve(year: number): void {
+  private resolve(year: number): number {
     const X = this.X, Wt = X.war, st = this.e.st, S = st.S;
+    let fallen = 0;
     for (let i = 0; i < X.hg[HG.nWar]; i++) {
       const o = i * NWC;
       if (Wt[o + WC.outcome] !== OUTCOME.ONGOING || Wt[o + WC.end] > year) continue;
@@ -531,7 +572,22 @@ export class Politics {
           if (f === winner) { wPop += S[oc + F.pop]; wCap += S[oc + F.capital]; wBodies.push(c); }
           else if (f === loser) { lPop += S[oc + F.pop]; lCap += S[oc + F.capital]; lBodies.push(c); }
         }
-        if (ratio > 3 && lBodies.length && lPop < 0.3 * wPop) {
+        let choice = -1;
+        if (this.mind) {
+          const canAnnex = ratio > 3 && lBodies.length > 0 && lPop < 0.3 * wPop, canRep = ratio > 1.5 && lCap > 0 && wBodies.length > 0;
+          const canFight = Wt[o + WC.rounds] < MAX_ROUNDS && lBodies.length > 0 && wBodies.length > 0;
+          choice = this.mind.terms({ war: i, winner, loser, ratio, can: [true, canRep, canAnnex, canFight] }, year);
+          if (choice === TERMS.FIGHT_ON && canFight) {
+            // another round where the war is: the end moves out, nothing is signed yet
+            const [killed, dead] = winner === a ? this.battle(year, wBodies, lBodies, R, Wt[o + WC.sev]) : this.battle(year, lBodies, wBodies, 1 / Math.max(R, 1e-9), Wt[o + WC.sev]);
+            Wt[o + WC.killed] += killed; Wt[o + WC.rounds]++;
+            Wt[o + WC.end] = year + 2 + this.e.rand() * 6;
+            fallen += dead;
+            continue;
+          }
+          if (!(choice === TERMS.ANNEX && canAnnex) && !(choice === TERMS.REPARATIONS && canRep)) choice = TERMS.PEACE;
+        }
+        if (choice < 0 ? ratio > 3 && lBodies.length && lPop < 0.3 * wPop : choice === TERMS.ANNEX) {
           // annexation: the small settlements of the loser in this system change flags
           outcome = OUTCOME.ANNEX;
           const whole = this.c.bSys[loser] === sy && lTot < 0.3 * wPop;
@@ -541,7 +597,7 @@ export class Politics {
             if (whole || (this.c.bSys[c] === sy && c !== loser)) S[oc + F.faction] = winner;
           }
           this.addGrudge(a, b, 1);
-        } else if (ratio > 1.5 && lCap > 0 && wBodies.length) {
+        } else if (choice < 0 ? ratio > 1.5 && lCap > 0 && wBodies.length : choice === TERMS.REPARATIONS) {
           // reparations: a tenth of the loser's capital here, paid to the winner's settlements here
           outcome = OUTCOME.REPARATIONS;
           const pay = 0.1 * lCap;
@@ -555,6 +611,7 @@ export class Politics {
       const at = Wt[o + WC.kind] === WAR_KIND.LOCAL ? Wt[o + WC.front] : b;
       this.c.log(EV.Treaty, at, i, outcome);
     }
+    return fallen;
   }
 }
 

@@ -21,6 +21,7 @@ import { NOTABLE, Ticker, describe } from './ui/ticker.ts';
 import { Timeline } from './ui/timeline.ts';
 import { LocalCalendar } from './ui/calendar.ts';
 import { EraBanner, eraRun, eraTitle } from './ui/eraBanner.ts';
+import { wayOfWarHtml } from './ui/wayOfWar.ts';
 import { EraMood } from './view/eraMood.ts';
 import { ShipConsole } from './ship/console.ts';
 import { Voyage } from './ship/voyage.ts';
@@ -60,6 +61,7 @@ app.innerHTML = `
   <div class="legend">
     <div class="legend-modes" role="group" aria-label="Colour settled stars by">Colour by ${COLOR_MODES.map((m) => `<button class="link" type="button" data-mode="${m.id}" aria-pressed="${m.id === 'stage'}">${m.label}</button>`).join(' ')}</div>
     <div class="legend-keys"></div>
+    <div class="legend-war" aria-label="The way of war"></div>
   </div>
   <div class="sel-ring" aria-hidden="true" hidden><i></i><i></i></div>
   <div class="tooltip" hidden></div>
@@ -766,6 +768,15 @@ function showEra(m: StateMsg): void {
   timeline.setEra(eraTitle(r));
   eraMood.setEra(m.globals.era);
   eraBanner.show(r);
+  showWar(m.globals.year);
+}
+
+const warEl = app.querySelector<HTMLElement>('.legend-war')!;
+let warTimer = 0;
+/** The way of war at this year, a moment after time stops moving. */
+function showWar(year: number): void {
+  clearTimeout(warTimer);
+  warTimer = window.setTimeout(() => sim.wayOfWar(year).then((m) => { warEl.innerHTML = wayOfWarHtml(m.way); }), 250);
 }
 
 let evTimer = 0;

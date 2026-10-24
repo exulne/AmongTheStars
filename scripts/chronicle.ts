@@ -1,11 +1,14 @@
 // Print a future's Chronicle in the terminal, for reading the history the sim tells.
-//   node scripts/chronicle.ts [seed=1] [--types=War,Treaty] [--min=4] [--from=0] [--to=10000] [--limit=80] [--bio=N]
+//   node scripts/chronicle.ts [seed=1] [--types=War,Treaty] [--min=4] [--from=0] [--to=10000] [--limit=80] [--bio=N] [--minds]
+//   --minds: polities decide war with the trained generations in src/ml/warWeights.ts
 import { Engine } from '../src/sim/engine.ts';
 import { EVENT_NAMES } from '../src/sim/catalog.ts';
 import { Chronicle } from '../src/sim/chronicle.ts';
 import { Lives } from '../src/sim/lives.ts';
 import { periodOf } from '../src/sim/ledger.ts';
 import { buildWorld } from '../src/sim/world.ts';
+import { NetMind } from '../src/ml/netMind.ts';
+import { loadWarGens } from '../src/ml/warGens.ts';
 
 const args = process.argv.slice(2);
 const opt = (k: string, d: string) => args.find((a) => a.startsWith(`--${k}=`))?.split('=')[1] ?? d;
@@ -13,6 +16,12 @@ const seed = Number(args.find((a) => !a.startsWith('--')) ?? 1);
 const types = opt('types', '').split(',').filter(Boolean);
 const t0 = performance.now();
 const e = new Engine(buildWorld(), seed);
+if (args.includes('--minds')) {
+  const g = await loadWarGens();
+  if (!g) throw new Error('no trained generations in src/ml/warWeights.ts');
+  const m = new NetMind(e, g.nets, () => 0, seed);
+  m.byYear = g.genAt; e.civ.pol.mind = m;
+}
 while (!e.done) e.step();
 const t1 = performance.now();
 const L = new Lives(e);

@@ -9,8 +9,11 @@ import { Chronicle, type Annals, type Entry } from './chronicle.ts';
 import { Lives, type Biography, type PersonBrief } from './lives.ts';
 import { SocietyModel, type Society } from './society.ts';
 import { buildWorld } from './world.ts';
+import { HG, NWC, OUTCOME, WAR_KIND, WC } from './civ.ts';
 import { periodOf } from './ledger.ts';
 import { handleData, isDataReq, type DataReq, type DataRes } from './dataApi.ts';
+import { NetMind } from '../ml/netMind.ts';
+import { loadWarGens, type WarGens } from '../ml/warGens.ts';
 
 const SNAP_EVERY = 20;
 // event types whose `a` is a second body (source, opponent, old capital); elsewhere it is a stage, tech or era index
@@ -30,7 +33,8 @@ export type ToWorker =
   | { type: 'placeNames'; id: number }
   | DataReq
   | { type: 'ship'; id: number; from: number; to: number; depart: number }
-  | { type: 'annals'; id: number };
+  | { type: 'annals'; id: number }
+  | { type: 'wayOfWar'; id: number; year: number; span: number };
 
 export type FromWorker =
   | { type: 'progress'; seed: number; step: number; years: number[]; series: Float64Array; done: boolean; ms: number }
@@ -47,7 +51,13 @@ export type FromWorker =
   | { type: 'placeNames'; id: number; pending?: boolean; names: [number, string][] }
   | DataRes
   | { type: 'ship'; id: number; pending?: boolean; ship: ShipInfo | null }
-  | { type: 'annals'; id: number; pending?: boolean; annals: Annals | null };
+  | { type: 'annals'; id: number; pending?: boolean; annals: Annals | null }
+  | { type: 'wayOfWar'; id: number; way: WayOfWar };
+
+/** Wars begun in a span of years, and how they went. */
+export interface WarSpan { wars: number; kinetic: number; killed: number; annex: number; rep: number; peace: number; rounds: number; years: number }
+/** How this future fights at a year: which trained generation (if any), now and in the span before. */
+export interface WayOfWar { run: string; gen: number; gens: number; now: WarSpan; before: WarSpan }
 
 /** A ship in transit, as the people model knows it: its name, who boarded, and the Chronicle's launch entry (with its captain). */
 export interface ShipInfo { name: string; n: number; generation: boolean; launch: Entry | null }
@@ -82,12 +92,28 @@ function people(): Lives | null {
 
 const post = (m: FromWorker, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage(m, transfer);
 
+/** Polities fight with the trained generation for their year, when there are trained generations. */
+function minds(e: Engine, seed: number, gens: WarGens | null): void {
+  if (!gens) return;
+  const m = new NetMind(e, gens.nets, () => 0, seed);
+  m.byYear = gens.genAt;
+  e.civ.pol.mind = m;
+}
+
+let warGens: WarGens | null = null;
+
 function run(seed: number): void {
   const token = ++runToken;
+  loadWarGens().catch(() => null).then((gens) => { if (token === runToken) { warGens = gens; start(seed, token, gens); } });
+}
+
+function start(seed: number, token: number, gens: WarGens | null): void {
   main = new Engine(world, seed);
+  minds(main, seed, gens);
   lives = null; chron = null; society = null;
   replay = new Engine(world, seed);
   replay.logEvents = false;
+  minds(replay, seed, gens);
   snaps = [main.snapshot()];
   const t0 = performance.now();
   let sent = 0;
@@ -120,7 +146,28 @@ function stateAt(step: number): Engine {
   return replay;
 }
 
-const dataEnv = { world, main: () => main, snaps: () => snaps, stateAt, post: (m: DataRes, t: Transferable[] = []) => post(m, t), faithName: (f: number) => (people() && chron ? chron.faithName(f) : null) };
+function warSpan(e: Engine, from: number, to: number): WarSpan {
+  const X = e.st.hx, W = X.war, out: WarSpan = { wars: 0, kinetic: 0, killed: 0, annex: 0, rep: 0, peace: 0, rounds: 0, years: Math.max(0, to - from) };
+  for (let w = 0; w < X.hg[HG.nWar]; w++) {
+    const o = w * NWC, y = W[o + WC.start];
+    if (y < from || y >= to) continue;
+    out.wars++; out.killed += W[o + WC.killed]; out.rounds += W[o + WC.rounds];
+    if (W[o + WC.kind] === WAR_KIND.KINETIC) out.kinetic++;
+    const r = W[o + WC.outcome];
+    if (r === OUTCOME.ANNEX) out.annex++; else if (r === OUTCOME.REPARATIONS) out.rep++; else if (r === OUTCOME.PEACE) out.peace++;
+  }
+  return out;
+}
+
+function wayOfWar(year: number, span: number): WayOfWar {
+  const e = main!, y = Math.min(year, e.year);
+  return {
+    run: warGens?.run ?? '', gen: warGens ? warGens.genAt(y) : -1, gens: warGens?.nets.length ?? 0,
+    now: warSpan(e, Math.max(0, y - span), y), before: warSpan(e, Math.max(0, y - 2 * span), Math.max(0, y - span)),
+  };
+}
+
+const dataEnv = { world, main: () => main, snaps: () => snaps, stateAt, post: (m: DataRes, t: Transferable[] = []) => post(m, t), faithName: (f: number) => (people() && chron ? chron.faithName(f) : null), minds: (e: Engine) => minds(e, e.seed, warGens) };
 
 self.onmessage = (ev: MessageEvent<ToWorker>) => {
   const m = ev.data;
@@ -169,6 +216,8 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
   } else if (m.type === 'ship') {
     const L = people();
     post({ type: 'ship', id: m.id, pending: !L, ship: L ? shipInfo(L, m.from, m.to, m.depart) : null });
+  } else if (m.type === 'wayOfWar') {
+    if (main) post({ type: 'wayOfWar', id: m.id, way: wayOfWar(m.year, m.span) });
   } else if (m.type === 'annals') {
     const ok = people() && chron;
     post({ type: 'annals', id: m.id, pending: !ok, annals: ok ? chron!.annals() : null });
