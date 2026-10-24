@@ -353,7 +353,9 @@ function pickAt(x: number, y: number): Pickable | null {
     if (proj.z > 1) continue;
     const sx = (proj.x * 0.5 + 0.5) * r.width, sy = (-proj.y * 0.5 + 0.5) * r.height;
     const d = Math.hypot(sx - (x - r.left), sy - (y - r.top));
-    if (d < bestD) { bestD = d; best = p; }
+    if (d > 16) continue;
+    const score = d - (p.weight ?? 0);
+    if (score < bestD) { bestD = score; best = p; }
   }
   return best;
 }
@@ -381,25 +383,75 @@ canvas.addEventListener('dblclick', (e) => {
 
 // ------------------------------------------------------------------ labels
 
-const labelPool: HTMLElement[] = [];
+// Keyed by what they name so an element keeps its text as the set changes.
+// Greedy by priority: a label is drawn only if its box hits no higher-priority
+// label and no panel. Labels shown last time get a bonus so they don't flicker.
+interface LabelEl { el: HTMLElement; html: string; w: number; h: number; ref?: Ref; shown: boolean }
+const labelEls = new Map<string, LabelEl>();
+const occluders: DOMRect[] = [];
+function measureOccluders(): void {
+  occluders.length = 0;
+  for (const el of [inspector.el, bottom, app.querySelector<HTMLElement>('.intro')!, app.querySelector<HTMLElement>('.run')!, legendEl]) {
+    if (el.offsetParent !== null || el === bottom) occluders.push(el.getBoundingClientRect());
+  }
+}
+new ResizeObserver(measureOccluders).observe(document.body);
+const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
 function drawLabels(): void {
   const list = views[level].labels(ctx);
   const r = canvas.getBoundingClientRect();
-  let n = 0;
+  if (!occluders.length) measureOccluders();
+  const cand: { l: (typeof list)[number]; key: string; x: number; y: number; p: number }[] = [];
   for (const l of list) {
     proj.copy(l.pos).project(camera);
     if (proj.z > 1 || Math.abs(proj.x) > 1.05 || Math.abs(proj.y) > 1.05) continue;
-    let el = labelPool[n];
-    if (!el) { el = document.createElement('div'); el.className = 'label'; labelsEl.append(el); labelPool.push(el); }
-    const html = `<b>${l.text}</b>${l.sub ? `<span>${l.sub}</span>` : ''}`;
-    if (el.innerHTML !== html) el.innerHTML = html;
-    el.classList.toggle('strong', !!l.strong);
-    el.style.transform = `translate(${((proj.x * 0.5 + 0.5) * r.width).toFixed(1)}px, ${((-proj.y * 0.5 + 0.5) * r.height).toFixed(1)}px)`;
-    el.hidden = false;
-    n++;
+    const key = l.ref ? `${l.ref.kind}:${l.ref.id}` : l.text;
+    cand.push({ l, key, x: (proj.x * 0.5 + 0.5) * r.width, y: (-proj.y * 0.5 + 0.5) * r.height, p: (l.prio ?? (l.strong ? 10 : 0)) + (labelEls.get(key)?.shown ? 1.5 : 0) });
   }
-  for (let i = n; i < labelPool.length; i++) labelPool[i].hidden = true;
+  cand.sort((a, b) => b.p - a.p);
+  placed.length = 0;
+  const used = new Set<string>();
+  for (const c of cand) {
+    let e = labelEls.get(c.key);
+    const html = `<b>${c.l.text}</b>${c.l.sub ? `<span>${c.l.sub}</span>` : ''}`;
+    if (!e) {
+      const el = document.createElement('div');
+      el.className = 'label';
+      labelsEl.append(el);
+      e = { el, html: '', w: 0, h: 0, shown: false };
+      labelEls.set(c.key, e);
+    }
+    e.ref = c.l.ref;
+    if (e.html !== html) {
+      e.el.innerHTML = html; e.html = html;
+      // estimated from glyph counts so placement never forces a layout
+      e.w = 10 + Math.max(c.l.text.length * 6, (c.l.sub?.length ?? 0) * 6); e.h = c.l.sub ? 26 : 15;
+    }
+    // .label draws from (x + 0, y - 0.6em)
+    const box = { x0: c.x - 4, y0: c.y - e.h * 0.45, x1: c.x + e.w, y1: c.y + e.h * 0.6 };
+    const ax = r.left + c.x, ay = r.top + c.y;
+    let ok = box.y0 > 4 && box.x1 < r.width - 4 && !occluders.some((o) => ax + e.w > o.left && ax - 4 < o.right && ay + e.h * 0.6 > o.top && ay - e.h * 0.45 < o.bottom);
+    if (ok) for (const q of placed) if (box.x0 < q.x1 && box.x1 > q.x0 && box.y0 < q.y1 && box.y1 > q.y0) { ok = false; break; }
+    if (!ok) continue;
+    placed.push(box);
+    used.add(c.key);
+    e.el.classList.toggle('strong', !!c.l.strong);
+    e.el.style.transform = `translate(${c.x.toFixed(1)}px, ${c.y.toFixed(1)}px)`;
+  }
+  for (const [k, e] of labelEls) {
+    const on = used.has(k);
+    if (on !== e.shown || e.el.hidden === on) { e.el.hidden = !on; e.shown = on; }
+  }
+  if (labelEls.size > 400) for (const [k, e] of labelEls) if (!e.shown) { e.el.remove(); labelEls.delete(k); }
 }
+
+function labelRef(t: EventTarget | null): Ref | undefined {
+  const el = (t as HTMLElement).closest<HTMLElement>('.label');
+  for (const e of labelEls.values()) if (e.el === el) return e.ref;
+  return undefined;
+}
+labelsEl.addEventListener('click', (e) => { const ref = labelRef(e.target); if (ref) select(asPick(ref)); });
+labelsEl.addEventListener('dblclick', (e) => { const ref = labelRef(e.target); if (ref && !busy) { select(asPick(ref)); dive(ref); } });
 
 // ------------------------------------------------------------------ selection ring
 

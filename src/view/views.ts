@@ -33,10 +33,12 @@ export interface Ctx {
 }
 
 export type PickKind = 'galaxy' | 'system' | 'body' | 'city' | 'humanspace';
-export interface Pickable { pos: THREE.Vector3; kind: PickKind; id: number; name: string }
+/** `weight` (px) lets important things win near-ties when picking */
+export interface Pickable { pos: THREE.Vector3; kind: PickKind; id: number; name: string; weight?: number }
 /** Enough to find a thing again in any view. */
 export interface Ref { kind: PickKind; id: number; name?: string }
-export interface Label { pos: THREE.Vector3; text: string; sub?: string; strong?: boolean }
+/** Higher `prio` labels win when two would overlap on screen. */
+export interface Label { pos: THREE.Vector3; text: string; sub?: string; strong?: boolean; ref?: Ref; prio?: number }
 
 export interface View {
   level: Level;
@@ -240,7 +242,7 @@ export class UniverseView implements View {
   labels(): Label[] {
     return this.centres.map((c) => {
       const n = this.colonies.get(c.name) ?? 0;
-      return { pos: c.pos, text: c.name, sub: n ? `${fmtNum(n)} settlements` : 'untouched', strong: n > 0 };
+      return { pos: c.pos, text: c.name, sub: n ? `${fmtNum(n)} settlements` : 'untouched', strong: n > 0, ref: { kind: 'galaxy' as const, id: GALAXIES.findIndex((g) => g.name === c.name), name: c.name }, prio: c.name === 'Milky Way' ? 10 : 5 - c.pos.length() / 1000 };
     });
   }
 }
@@ -316,7 +318,7 @@ export class GalaxyView implements View {
   pickables(ctx: Ctx): Pickable[] {
     const out: Pickable[] = [{ pos: this.sol, kind: 'humanspace', id: 0, name: 'Human space' }];
     this.farIds.forEach((id, i) => {
-      if (this.far.size[i] > 0) out.push({ pos: new THREE.Vector3(this.far.pos[i * 3], this.far.pos[i * 3 + 1], this.far.pos[i * 3 + 2]), kind: 'system', id, name: ctx.world.systems[id].name });
+      if (this.far.size[i] > 0) out.push({ pos: new THREE.Vector3(this.far.pos[i * 3], this.far.pos[i * 3 + 1], this.far.pos[i * 3 + 2]), kind: 'system', id, name: ctx.world.systems[id].name, weight: 4 });
     });
     return out;
   }
@@ -338,7 +340,7 @@ export class GalaxyView implements View {
 
   labels(): Label[] {
     return [
-      { pos: this.sol, text: 'Human space', sub: this.reach > 0 ? `${fmtNum(this.reach)} ly across the dark` : 'one star system', strong: true },
+      { pos: this.sol, text: 'Human space', sub: this.reach > 0 ? `${fmtNum(this.reach)} ly across the dark` : 'one star system', strong: true, ref: { kind: 'humanspace', id: 0 }, prio: 10 },
       { pos: new THREE.Vector3(0, 0, 0), text: 'Sagittarius A*', sub: '26,000 ly' },
     ];
   }
@@ -356,6 +358,8 @@ export class LocalView implements View {
   private shipHeads: ReturnType<typeof pointCloud>;
   private base: Float32Array;
   private sums: SystemSum[] = [];
+  private ranked: Label[] = [];
+  private rankedFor: SystemSum[] | null = null;
 
   constructor(world: World) {
     this.ids = world.systems.filter((s) => s.region === 'local' || s.region === 'sol').map((s) => s.id);
@@ -443,8 +447,11 @@ export class LocalView implements View {
     dirty(this.shipHeads.pts);
   }
 
+  private picks: Pickable[] | null = null;
   pickables(ctx: Ctx): Pickable[] {
-    return this.ids.map((id, i) => ({ pos: new THREE.Vector3(this.stars.pos[i * 3], this.stars.pos[i * 3 + 1], this.stars.pos[i * 3 + 2]), kind: 'system' as const, id, name: ctx.world.systems[id].name }));
+    this.picks ??= this.ids.map((id, i) => ({ pos: new THREE.Vector3(this.stars.pos[i * 3], this.stars.pos[i * 3 + 1], this.stars.pos[i * 3 + 2]), kind: 'system' as const, id, name: ctx.world.systems[id].name }));
+    this.picks.forEach((p, i) => { const s = this.sums[i]; p.weight = s && alive(s.stage) ? 8 : ctx.world.systems[p.id].real ? 5 : 0; });
+    return this.picks;
   }
 
   locate(ctx: Ctx, r: Ref): THREE.Vector3 | null {
@@ -459,17 +466,24 @@ export class LocalView implements View {
   labels(ctx: Ctx): Label[] {
     const out: Label[] = [];
     const cam = ctx.camera.position;
-    const ranked = this.ids
-      .map((id, i) => ({ id, i, s: this.sums[i] }))
-      .filter((x) => x.s && (alive(x.s.stage) || ctx.world.systems[x.id].real))
-      .sort((a, b) => (b.s.pop - a.s.pop) || (ctx.world.systems[a.id].dist - ctx.world.systems[b.id].dist))
-      .slice(0, 60);
-    for (const r of ranked) {
-      const p = new THREE.Vector3(this.stars.pos[r.i * 3], this.stars.pos[r.i * 3 + 1], this.stars.pos[r.i * 3 + 2]);
-      if (p.distanceTo(cam) > 900) continue;
-      const sys = ctx.world.systems[r.id];
-      out.push({ pos: p, text: sys.name, sub: alive(r.s.stage) ? `${STAGE_NAMES[r.s.stage]} · ${fmtNum(r.s.pop)}` : `${sys.dist.toFixed(1)} ly`, strong: alive(r.s.stage) });
+    // ranking only changes with the year; recompute on sync, not per frame
+    if (this.rankedFor !== this.sums) {
+      this.rankedFor = this.sums;
+      this.ranked = this.ids
+        .map((id, i) => ({ id, i, s: this.sums[i] }))
+        .filter((x) => x.s && (alive(x.s.stage) || ctx.world.systems[x.id].real))
+        .sort((a, b) => (b.s.pop - a.s.pop) || (ctx.world.systems[a.id].dist - ctx.world.systems[b.id].dist))
+        .slice(0, 120)
+        .map((r) => {
+          const sys = ctx.world.systems[r.id], on = alive(r.s.stage);
+          return {
+            pos: new THREE.Vector3(this.stars.pos[r.i * 3], this.stars.pos[r.i * 3 + 1], this.stars.pos[r.i * 3 + 2]),
+            text: sys.name, sub: on ? `${STAGE_NAMES[r.s.stage]} · ${fmtNum(r.s.pop)}` : `${sys.dist.toFixed(1)} ly`, strong: on,
+            ref: { kind: 'system' as const, id: r.id }, prio: on ? 10 + Math.log10(1 + r.s.pop) : 6 - sys.dist / 10,
+          };
+        });
     }
+    for (const l of this.ranked) if (l.pos.distanceTo(cam) < 900) out.push(l);
     return out;
   }
 }
@@ -622,7 +636,7 @@ export class SystemView implements View {
   }
 
   pickables(ctx: Ctx): Pickable[] {
-    return this.vis.map((v) => ({ pos: v.mesh.position.clone(), kind: 'body' as const, id: v.id, name: ctx.world.bodies[v.id].name }));
+    return this.vis.map((v) => ({ pos: v.mesh.position.clone(), kind: 'body' as const, id: v.id, name: ctx.world.bodies[v.id].name, weight: alive(stageOf(ctx.snap, v.id)) ? 6 : v.parent < 0 ? 3 : 0 }));
   }
 
   locate(ctx: Ctx, r: Ref): THREE.Vector3 | null {
@@ -650,6 +664,8 @@ export class SystemView implements View {
         text: b.name,
         sub: alive(st) ? `${STAGE_NAMES[st]} · ${fmtNum(popOf(ctx.snap, v.id))}` : st === STAGE.SURVEY ? 'surveyed' : st >= STAGE.ABANDONED ? STAGE_NAMES[st].toLowerCase() : undefined,
         strong: alive(st),
+        ref: { kind: 'body' as const, id: v.id },
+        prio: alive(st) ? 10 + Math.log10(1 + popOf(ctx.snap, v.id)) : v.parent < 0 ? 5 + v.visR : v.visR,
       };
     });
   }
@@ -778,7 +794,7 @@ export class PlanetView implements View {
   labels(ctx: Ctx): Label[] {
     const b = ctx.world.bodies[ctx.body];
     const st = stageOf(ctx.snap, ctx.body);
-    const out: Label[] = [{ pos: new THREE.Vector3(0, 11.5, 0), text: b.name, sub: alive(st) ? `${STAGE_NAMES[st]} · ${fmtNum(popOf(ctx.snap, ctx.body))} people` : st >= 0 ? STAGE_NAMES[st] : 'never settled', strong: true }];
+    const out: Label[] = [{ pos: new THREE.Vector3(0, 11.5, 0), text: b.name, sub: alive(st) ? `${STAGE_NAMES[st]} · ${fmtNum(popOf(ctx.snap, ctx.body))} people` : st >= 0 ? STAGE_NAMES[st] : 'never settled', strong: true, ref: { kind: 'body', id: ctx.body }, prio: 10 }];
     return out;
   }
 }
