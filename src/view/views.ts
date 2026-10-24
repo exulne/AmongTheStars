@@ -259,12 +259,14 @@ export class UniverseView implements View {
       let obj: THREE.Object3D;
       if (gal.kind === 'spiral') {
         const R = gal.radius * U * G;
-        obj = makeGalaxy({ seed: gal.name.length * 31, count: gal.name === 'Milky Way' ? 90000 : gal.name === 'Andromeda' ? 120000 : 30000, radius: R, arms: gal.name === 'Triangulum' ? 2 : 4, pitch: gal.name === 'Andromeda' ? 9 : 13, bar: gal.name === 'Milky Way' ? 0.25 : 0.1, thickness: 0.03, sizeScale: R * 0.006 });
+        // seen whole, each galaxy's stars pile up into a few hundred pixels (Andromeda nearly edge-on): keep each one faint
+        const bright = gal.name === 'Andromeda' ? 0.34 : gal.name === 'Milky Way' ? 0.45 : 0.6;
+        obj = makeGalaxy({ seed: gal.name.length * 31, count: gal.name === 'Milky Way' ? 90000 : gal.name === 'Andromeda' ? 120000 : 30000, radius: R, arms: gal.name === 'Triangulum' ? 2 : 4, pitch: gal.name === 'Andromeda' ? 9 : 13, bar: gal.name === 'Milky Way' ? 0.25 : 0.1, thickness: 0.03, sizeScale: R * 0.006, brightness: bright, core: 0.36 });
         if (gal.name === 'Andromeda') obj.rotation.set(1.35, 0.6, 0.2);
         if (gal.name === 'Triangulum') obj.rotation.set(0.9, -0.4, 0);
       } else {
         const R = gal.radius * U * G;
-        obj = makeGalaxy({ seed: gal.name.length * 7, count: 12000, radius: R, arms: 1, pitch: 30, bar: 0.4, thickness: 0.2, sizeScale: R * 0.012, brightness: 0.8, dust: 0.05 });
+        obj = makeGalaxy({ seed: gal.name.length * 7, count: 12000, radius: R, arms: 1, pitch: 30, bar: 0.4, thickness: 0.2, sizeScale: R * 0.012, brightness: 0.5, dust: 0.05 });
         obj.rotation.set(0.7, 0.3, 0.4);
       }
       obj.position.copy(pos);
@@ -296,7 +298,7 @@ export class UniverseView implements View {
       const p = a.clone().lerp(b, t).add(new THREE.Vector3(r.gauss(), r.gauss(), r.gauss()).multiplyScalar(90));
       if (p.length() < 400) p.setLength(400 + r.next() * 300);
       const tex = r.pick(texes);
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.5 + r.next() * 0.5, rotation: r.range(0, 6.28) }));
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.35 + r.next() * 0.45, rotation: r.range(0, 6.28) }));
       s.position.copy(p);
       s.scale.setScalar(6 + Math.pow(r.next(), 3) * 30);
       this.group.add(s);
@@ -324,7 +326,7 @@ export class UniverseView implements View {
     }
     for (const c of this.centres) {
       const n = this.colonies.get(c.name) ?? 0;
-      (c.glow.material as THREE.SpriteMaterial).opacity = c.name === 'Milky Way' ? Math.min(0.5, n / 2000) : n > 0 ? 0.6 : 0;
+      (c.glow.material as THREE.SpriteMaterial).opacity = c.name === 'Milky Way' ? Math.min(0.22, n / 4000) : n > 0 ? 0.3 : 0;
     }
   }
 
@@ -371,7 +373,7 @@ export class GalaxyView implements View {
   private glow: THREE.Sprite;
 
   constructor(world: World) {
-    const mw = makeGalaxy({ seed: 2040, count: 420000, radius: 500, arms: 4, pitch: 12, bar: 0.22, thickness: 0.018, sizeScale: 2.1, brightness: 1, dust: 0.3 });
+    const mw = makeGalaxy({ seed: 2040, count: 420000, radius: 500, arms: 4, pitch: 12, bar: 0.22, thickness: 0.018, sizeScale: 2.1, brightness: 0.82, dust: 0.3, core: 0.4 });
     this.group.add(mw);
     explainGalaxy(world, { key: 'g', seed: 1, name: 'Milky Way', data: mw.userData.galaxy, obj: mw, scaleLy: 100, centre: [GALACTIC_CENTRE[0], 0, 0], starsPer: 2.5e11 / 420000 });
     this.sol = toScene(0, 0, 0, this.U, GALACTIC_CENTRE[0]);
@@ -513,7 +515,8 @@ export class GalaxyView implements View {
   labels(): Label[] {
     return [
       { pos: this.sol, text: 'Human space', sub: this.reach > 0 ? `${fmtNum(this.reach)} ly across the dark` : 'one star system', strong: true, ref: { kind: 'humanspace', id: 0 }, prio: 10 },
-      { pos: new THREE.Vector3(0, 18, 0), text: 'Sagittarius A*', sub: '26,000 ly', ref: { kind: 'thing', id: 0, ex: 'coreg', name: 'Sagittarius A*' } },
+      // lifted clear of the bulge so it reads against the dark, not the core
+      { pos: new THREE.Vector3(0, 75, 0), text: 'Sagittarius A*', sub: '26,000 ly', ref: { kind: 'thing', id: 0, ex: 'coreg', name: 'Sagittarius A*' } },
     ];
   }
 }
@@ -620,7 +623,7 @@ export class LocalView implements View {
         // route and ship look follow the drive known when it left; generation ships trail amber
         const st = shipStyle(snap, sh), tc = st.trail, hc = st.head;
         pos.set([pa.x, pa.y, pa.z, pb.x, pb.y, pb.z], n * 6);
-        col.set([tc.r * 0.2, tc.g * 0.2, tc.b * 0.2, tc.r * 0.8, tc.g * 0.8, tc.b * 0.8], n * 6);
+        col.set([tc.r * 0.15, tc.g * 0.15, tc.b * 0.15, tc.r * 0.6, tc.g * 0.6, tc.b * 0.6], n * 6);
         this.shipIds[n] = id;
         n++;
         const f = Math.min(1, Math.max(0, (ctx.year - sh.depart) / (sh.arrive - sh.depart)));
@@ -629,13 +632,13 @@ export class LocalView implements View {
         if (st.plume > 0) {
           const tail = tv1.lerpVectors(pa, pb, Math.max(0, f - 0.12));
           pos.set([tail.x, tail.y, tail.z, hp.x, hp.y, hp.z], n * 6);
-          col.set([0, 0, 0, hc.r * 2 * st.plume, hc.g * 2 * st.plume, hc.b * 2 * st.plume], n * 6);
+          col.set([0, 0, 0, hc.r * 1.3 * st.plume, hc.g * 1.3 * st.plume, hc.b * 1.3 * st.plume], n * 6);
           this.shipIds[n] = id;
           n++;
         }
         if (st.beam) {
           pos.set([pa.x, pa.y, pa.z, hp.x, hp.y, hp.z], n * 6);
-          col.set([BEAM.r * 1.6, BEAM.g * 1.6, BEAM.b * 1.6, BEAM.r * 0.3, BEAM.g * 0.3, BEAM.b * 0.3], n * 6);
+          col.set([BEAM.r * 0.9, BEAM.g * 0.9, BEAM.b * 0.9, BEAM.r * 0.2, BEAM.g * 0.2, BEAM.b * 0.2], n * 6);
           this.shipIds[n] = id;
           n++;
         }

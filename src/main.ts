@@ -101,7 +101,7 @@ chartsToggle.addEventListener('click', () => {
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 0.92; // each level sets its own (view/eraMood.ts LEVEL_LOOKS)
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x020204);
 const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 1e7);
@@ -116,10 +116,10 @@ composer.addPass(new RenderPass(scene, camera));
 // the Starship rides in its own layer over the sim (before bloom, so its engines glow)
 const voyage = new Voyage(renderer);
 composer.addPass(voyage.pass);
-const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.7, 0.5, 0.55);
+const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.48, 0.45, 0.7);
 composer.addPass(bloom);
 // the era tints the whole picture: grey and stuttering in a collapse, warm in a golden age
-const eraMood = new EraMood(bloom);
+const eraMood = new EraMood(bloom, renderer);
 composer.addPass(eraMood.pass);
 composer.addPass(new OutputPass());
 
@@ -206,6 +206,7 @@ function enterLevel(next: Level): void {
   const v = views[level];
   v.group.visible = true;
   sky.visible = level === 'galaxy' || level === 'local';
+  eraMood.setLevel(level);
   v.enter(ctx);
   v.sync(ctx);
   controls.minDistance = v.limits[0];
