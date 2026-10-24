@@ -103,7 +103,7 @@ export function galaxySpriteTex(seed: number): THREE.CanvasTexture {
  * additive. `sizeScale` lets one geometry serve many zoom levels.
  */
 export function pointsMaterial(opts: { sizeScale?: number; attenuate?: boolean; opacity?: number; blending?: THREE.Blending; minPx?: number; maxPx?: number } = {}): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
+  const m = new THREE.ShaderMaterial({
     uniforms: {
       uScale: { value: opts.sizeScale ?? 1 },
       uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
@@ -147,6 +147,9 @@ export function pointsMaterial(opts: { sizeScale?: number; attenuate?: boolean; 
     depthWrite: false,
     blending: opts.blending ?? THREE.AdditiveBlending,
   });
+  // the picker rebuilds this point's size from the same uniforms
+  m.userData.attenuate = opts.attenuate !== false;
+  return m;
 }
 
 /** Colour of a star from its spectral class. */

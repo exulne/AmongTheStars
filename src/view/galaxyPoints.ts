@@ -23,6 +23,26 @@ export interface GalaxyParams {
 const CORE = [new THREE.Color(0xffe2b0), new THREE.Color(0xffc488), new THREE.Color(0xffb070)];
 const ARM = [new THREE.Color(0xa8c4ff), new THREE.Color(0xd4e2ff), new THREE.Color(0x8fb0ff), new THREE.Color(0xfff2e0)];
 const HII = new THREE.Color(0xff5c8a);
+/** Palette slot of each particle (meta bits 8–11): 0–2 core, 3–6 arm, 7 halo, 15 a sim star system recoloured to its own type. */
+export const PALETTE = [...CORE, ...ARM, new THREE.Color(0xffe8cc)];
+export const META = { BULGE: 0, ARM: 1, HALO: 2, HII: 1 << 5, STRAY: 1 << 6, INNER: 1 << 7, LINKED: 15 } as const;
+export const metaComp = (m: number) => m & 3;
+export const metaArm = (m: number) => (m >> 2) & 7;
+export const metaPal = (m: number) => (m >> 8) & 15;
+
+/** What makeGalaxy records so every particle can be explained later. */
+export interface GalaxyData {
+  stars: THREE.Points;
+  meta: Uint16Array;     // component, arm, flags, palette
+  bri: Uint8Array;       // brightness multiplier × 200, before the global brightness
+  dust: THREE.Points;
+  nebulae: THREE.Sprite[];
+  nebKind: number[];     // 0 pink emission, 1 blue reflection, 2 orange superbubble
+  core: THREE.Sprite;
+  R: number;
+  arms: number;
+  bright: number;
+}
 
 export function makeGalaxy(p: GalaxyParams): THREE.Group {
   const r = new Rng(p.seed);
@@ -33,6 +53,7 @@ export function makeGalaxy(p: GalaxyParams): THREE.Group {
   const R = p.radius;
   const bright = p.brightness ?? 1;
   const c = new THREE.Color();
+  const meta = new Uint16Array(n), bri = new Uint8Array(n);
 
   for (let i = 0; i < n; i++) {
     const u = r.next();
@@ -46,7 +67,9 @@ export function makeGalaxy(p: GalaxyParams): THREE.Group {
       x = along * Math.cos(ang) - across * Math.sin(ang);
       y = along * Math.sin(ang) + across * Math.cos(ang);
       z = r.gauss() * R * 0.035;
-      c.copy(CORE[r.int(0, 2)]).multiplyScalar(0.35 + r.next() * 0.45);
+      const pi = r.int(0, 2), m = 0.35 + r.next() * 0.45;
+      c.copy(CORE[pi]).multiplyScalar(m);
+      meta[i] = META.BULGE | (pi << 8); bri[i] = Math.round(m * 200);
       size[i] = (0.7 + r.next() * 1.2) * p.sizeScale;
     } else if (u < 0.96) {
       // spiral arms: log spiral with scatter that grows outward
@@ -60,16 +83,20 @@ export function makeGalaxy(p: GalaxyParams): THREE.Group {
       x = Math.cos(th) * rr; y = Math.sin(th) * rr;
       z = r.gauss() * R * p.thickness * (1 - 0.5 * rr / R);
       const inner = rr < R * 0.25;
-      c.copy(inner ? CORE[r.int(0, 2)] : ARM[r.int(0, 3)]).multiplyScalar(0.35 + r.next() * 0.75);
+      const pi = inner ? r.int(0, 2) : 3 + r.int(0, 3), m = 0.35 + r.next() * 0.75;
+      c.copy(PALETTE[pi]).multiplyScalar(m);
+      meta[i] = META.ARM | (arm << 2) | (stray ? META.STRAY : 0) | (inner ? META.INNER : 0) | (pi << 8); bri[i] = Math.round(m * 200);
       size[i] = (0.6 + Math.pow(r.next(), 3) * 3) * p.sizeScale;
       // star-forming knots sit on the arm's spine and tint rather than dot it
-      if (!inner && !stray && Math.abs(gz) < 0.35 && r.next() < 0.012) { c.lerp(HII, 0.55).multiplyScalar(0.8); size[i] *= 1.6; }
+      if (!inner && !stray && Math.abs(gz) < 0.35 && r.next() < 0.012) { c.lerp(HII, 0.55).multiplyScalar(0.8); size[i] *= 1.6; meta[i] |= META.HII; }
     } else {
       // halo
       const rr = R * Math.pow(r.next(), 0.5) * 1.2;
       const th = r.range(0, Math.PI * 2), ph = Math.acos(r.range(-1, 1));
       x = rr * Math.sin(ph) * Math.cos(th); y = rr * Math.sin(ph) * Math.sin(th); z = rr * Math.cos(ph) * 0.6;
-      c.set(0xffe8cc).multiplyScalar(0.25 + r.next() * 0.3);
+      const m = 0.25 + r.next() * 0.3;
+      c.set(0xffe8cc).multiplyScalar(m);
+      meta[i] = META.HALO | (7 << 8); bri[i] = Math.round(m * 200);
       size[i] = 0.6 * p.sizeScale;
     }
     // scene is y-up: galaxy plane is x-z
@@ -109,6 +136,7 @@ export function makeGalaxy(p: GalaxyParams): THREE.Group {
   const core = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffc98a, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.6 * bright }));
   core.scale.setScalar(R * 0.32);
   group.add(core);
+  const nebulae: THREE.Sprite[] = [], nebKind: number[] = [];
   const neb = [nebulaTex(p.seed + 1, [255, 90, 130]), nebulaTex(p.seed + 2, [120, 160, 255]), nebulaTex(p.seed + 3, [255, 190, 140])];
   for (let i = 0; i < 70; i++) {
     const rr = R * r.range(0.15, 0.8);
@@ -118,6 +146,9 @@ export function makeGalaxy(p: GalaxyParams): THREE.Group {
     sp.position.set(Math.cos(th) * rr, 0, Math.sin(th) * rr);
     sp.scale.setScalar(R * r.range(0.04, 0.11));
     group.add(sp);
+    nebulae.push(sp); nebKind.push(i % 3);
   }
+  const data: GalaxyData = { stars, meta, bri, dust, nebulae, nebKind, core, R, arms: p.arms, bright };
+  group.userData.galaxy = data;
   return group;
 }

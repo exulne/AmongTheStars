@@ -10,6 +10,8 @@ import { fmtNum, fmtUnit, fmtYear, parseCount } from './format.ts';
 import { periodOf } from '../sim/ledger.ts';
 import type { Biography, PersonBrief } from '../sim/lives.ts';
 import { biographyHtml, residentsHtml } from './peoplePanel.ts';
+import { explainHtml, galaxyFactsHtml } from '../explain/card.ts';
+import { explain } from '../explain/registry.ts';
 
 type Residents = { total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] };
 type SocietyView = { government: string; governmentWhy: string; language: string; faith: string | null; art: string; architecture: { name: string; materials: string }; daily: Record<string, string>; mood: string; sentences: string[] };
@@ -190,6 +192,10 @@ export class Inspector {
     else if (s.kind === 'system') html = this.system(c, s.id);
     else if (s.kind === 'body') html = this.bodyView(c, s.id);
     else if (s.kind === 'city') html = this.bodyView(c, c.body, s.id);
+    else if (s.kind === 'thing') {
+      const e = s.ex ? explain(s.ex, s.id, { world: c.world, snap: c.snap, year: c.year }) : null;
+      html = e ? explainHtml(e, segsHtml) : `<h2>${esc(s.name)}</h2><p class="muted">Not drawn in this view.</p>`;
+    }
     if (s && !this.personId) html = `<button class="insp-close" type="button" data-act="close" aria-label="Close and show all of humanity">×</button>${html}`;
     const scroll = this.el.scrollTop;
     this.body.innerHTML = html;
@@ -281,7 +287,8 @@ export class Inspector {
     }
     return `<h2>${esc(s.name)}</h2>${this.kv([['Settlements', fmtNum(n)], ['Population', fmtNum(pop)]])}
       <p class="muted">${n ? 'Humans live here.' : s.name === 'Milky Way' ? '' : 'No human has arrived. Reaching another galaxy needs traversable wormholes, which most futures never get.'}</p>
-      ${s.name === 'Milky Way' ? '<p><button class="link" data-act="dive-system" data-id="0" type="button">Go to the Sun</button></p>' : ''}`;
+      ${s.name === 'Milky Way' ? '<p><button class="link" data-act="dive-system" data-id="0" type="button">Go to the Sun</button></p>' : ''}
+      <h3>The galaxy</h3>${galaxyFactsHtml(s.name)}`;
   }
 
   private system(c: InspectorCtx, id: number): string {
