@@ -8,6 +8,8 @@ import type { SimEvent, StateMsg } from '../sim/client.ts';
 import { F, NF } from '../sim/metrics.ts';
 import { hash01 } from '../sim/rng.ts';
 import type { World } from '../sim/world.ts';
+import type { Annals } from '../sim/chronicle.ts';
+import { polityAt } from './annals.ts';
 
 /** Years after the Landing before the local reckoning appears. */
 export const LOCAL_FROM = 1000;
@@ -24,13 +26,15 @@ export class LocalCalendar {
   private since = new Map<number, { asOf: number; years: number[] }>();
   private asking = new Set<number>();
   private gen = 0;
+  /** The run's named polities: when set, the reckoning counts from the real polity's founding, by its real name. */
+  annals: Annals | null = null;
 
   constructor(private world: World, private events: Events) {
     this.nameOf = (b) => world.bodies[b]?.name ?? '';
   }
 
   /** A new future: forget every founding. */
-  reset(): void { this.gen++; this.since.clear(); this.asking.clear(); this.faction = -1; }
+  reset(): void { this.annals = null; this.gen++; this.since.clear(); this.asking.clear(); this.faction = -1; }
 
   /** The place being looked at (or -1), at the state now shown; `upTo` is how far the run has simulated. */
   place(snap: StateMsg | null, body: number, year: number, upTo: number): void {
@@ -57,6 +61,8 @@ export class LocalCalendar {
     const al = `AL ${Math.floor(year)}`;
     const f = this.faction;
     if (f < 0) return al;
+    const p = this.annals ? polityAt(this.annals, f, year) : null;
+    if (p) return `${al} · year ${(Math.floor(year - p.founded) + 1).toLocaleString('en-US')} of ${p.name}`;
     const ys = this.since.get(f)?.years ?? [];
     let y0 = -1;
     for (const y of ys) if (y <= year) y0 = y;

@@ -460,7 +460,9 @@ inspector.api = {
   residents: (b, y, o, n) => sim.residents(b, y, o, n),
   person: (id, y) => sim.person(id, y),
   residentAt: (b, y, k) => sim.residentAt(b, y, k),
+  annals: () => sim.annals(),
 };
+inspector.onAnnals = (a) => { timeline.setAges(a?.ages ?? []); calendar.annals = a; timeline.refresh(); };
 inspector.onSelect = (p) => select(p);
 setShipApi((f, t, d) => sim.ship(f, t, d), () => refreshPanels());
 inspector.onYear = (y) => timeline.set(y, true);
@@ -893,7 +895,7 @@ sim.onProgress = () => {
   statusEl.textContent = sim.done ? `simulated in ${(sim.ms / 1000).toFixed(1)}s` : `simulating… year ${Math.round(sim.years[sim.frontier]).toLocaleString('en-US')}`;
   charts.draw();
   if (!ctx.snap) requestState(ctx.year);
-  if (sim.done) refreshForecast();
+  if (sim.done) { refreshForecast(); inspector.annals(); }
   // a reseed drops the place history; ask again as the new run fills in
   if (!history && (sim.done || sim.frontier % 40 === 0)) fetchHistory();
   // a year from the URL waits until the run has reached it
@@ -944,7 +946,7 @@ function startRun(seed: number): void {
   resetShips();
   ctx.snap = null; lastStep = -1; wanted = -1; inFlight = false; events = []; history = null; fc = null;
   ticker.clear(); tickFrom = 0;
-  eraBanner.reset(); calendar.reset(); naming.load(sim);
+  eraBanner.reset(); calendar.reset(); naming.load(sim); timeline.setAges([]);
   sim.run(seed);
   timeline.set(0);
   ctx.year = 0;

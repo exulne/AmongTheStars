@@ -536,7 +536,10 @@ export class Chronicle {
     const OUT = ['stalemate', 'annexation', 'reparations'];
     const history = new Map<number, { year: number; regime: string }[]>();
     for (const ev of this.e.events) if (ev.type === EV['Regime change']) {
-      const h = history.get(ev.a) ?? []; h.push({ year: ev.year, regime: REGIME_NAMES[ev.b % 16] }); history.set(ev.a, h);
+      const h = history.get(ev.a) ?? [];
+      // the first change also tells what it was founded as
+      if (!h.length) h.push({ year: P[ev.a * NPC + PC.year], regime: REGIME_NAMES[Math.floor(ev.b / 16) % 16] });
+      h.push({ year: ev.year, regime: REGIME_NAMES[ev.b % 16] }); history.set(ev.a, h);
     }
     const faiths: Annals['faiths'] = [];
     for (let f = 0; f < X.hg[HG.nFaith]; f++) {

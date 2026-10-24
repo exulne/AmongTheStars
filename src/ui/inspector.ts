@@ -13,9 +13,11 @@ import type { Biography, PersonBrief } from '../sim/lives.ts';
 import { biographyHtml, residentsHtml } from './peoplePanel.ts';
 import { explainHtml, galaxyFactsHtml, starFactsHtml } from '../explain/card.ts';
 import { explain } from '../explain/registry.ts';
+import type { Annals } from '../sim/chronicle.ts';
+import { ageAt, humanityAnnalsHtml, polityCardHtml, polityLink } from './annals.ts';
 
 type Residents = { total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] };
-type SocietyView = { government: string; governmentWhy: string; language: string; faith: string | null; art: string; architecture: { name: string; materials: string }; daily: Record<string, string>; mood: string; sentences: string[] };
+type SocietyView = { polity: { id: number; name: string; regime: string; since: number } | null; government: string; governmentWhy: string; language: string; faith: string | null; art: string; architecture: { name: string; materials: string }; daily: Record<string, string>; mood: string; sentences: string[] };
 type Seg = string | { t: string; kind: 'person' | 'body'; id: string | number };
 type Entry = { year: number; type: number; segs: Seg[]; weight: number };
 export function segsHtml(segs: Seg[]): string {
@@ -30,6 +32,7 @@ export interface PeopleApi {
   residents(body: number, year: number, offset: number, count: number): Promise<Residents & { pending?: boolean }>;
   person(id: string, year: number): Promise<{ bio: Biography | null; pending?: boolean }>;
   residentAt(body: number, year: number, k: number): Promise<{ person: string | null; pending?: boolean }>;
+  annals(): Promise<{ annals: Annals | null; pending?: boolean }>;
 }
 const PER_PAGE = 12;
 
@@ -67,13 +70,23 @@ export class Inspector {
   private lastBio: Biography | null = null;
   private inflight = new Set<string>();
   /** drop everything cached for the previous future */
-  resetPeople(): void { this.socCache.clear(); this.residentsCache.clear(); this.bioCache.clear(); this.chronCache.clear(); this.inv = null; this.lastBio = null; this.personId = null; }
+  resetPeople(): void { this.socCache.clear(); this.residentsCache.clear(); this.bioCache.clear(); this.chronCache.clear(); this.inv = null; this.ann = null; this.polityOpen = null; this.lastBio = null; this.personId = null; }
   chronicleOpen = false;
   private chronQuery = '';
   private chronBig = true;
   private chronCache = new Map<string, Entry[]>();
   private inv: Map<number, Entry | null> | null = null;
   private socCache = new Map<string, SocietyView | null>();
+  private ann: Annals | null = null;
+  /** the open polity card, if any */
+  polityOpen: number | null = null;
+
+  /** The ages, peoples, wars and faiths of this future (once the run is done). */
+  annals(): Annals | null {
+    if (!this.ann) this.fetch('annals', () => this.api!.annals(), (v: { annals: Annals | null }) => { this.ann = v.annals; this.onAnnals(this.ann); });
+    return this.ann;
+  }
+  onAnnals: (a: Annals | null) => void = () => {};
 
   private society(c: InspectorCtx, body: number): string {
     const key = `${body}:${Math.floor(c.year / 4)}`;
@@ -84,7 +97,7 @@ export class Inspector {
     });
     if (!soc) return '<p class="muted">Asking around…</p>';
     return `<p class="society-portrait">${soc.sentences.map(esc).join(' ')}</p>
-      <dl class="kv"><dt>Government</dt><dd>${esc(soc.government)}</dd><dt>Language</dt><dd>${esc(soc.language)}</dd>${soc.faith ? `<dt>Faith</dt><dd>${esc(soc.faith)}</dd>` : ''}<dt>Art</dt><dd>${esc(soc.art)}</dd><dt>Buildings</dt><dd>${esc(soc.architecture.materials)}</dd><dt>Mood</dt><dd>${esc(soc.mood)}</dd></dl>`;
+      <dl class="kv">${soc.polity && this.ann?.polities[soc.polity.id] ? `<dt>Ruled by</dt><dd>${polityLink(this.ann, soc.polity.id, true)}</dd>` : ''}<dt>Government</dt><dd>${esc(soc.government)}</dd><dt>Language</dt><dd>${esc(soc.language)}</dd>${soc.faith ? `<dt>Faith</dt><dd>${esc(soc.faith)}</dd>` : ''}<dt>Art</dt><dd>${esc(soc.art)}</dd><dt>Buildings</dt><dd>${esc(soc.architecture.materials)}</dd><dt>Mood</dt><dd>${esc(soc.mood)}</dd></dl>`;
   }
   onYear: (y: number) => void = () => {};
 
@@ -139,6 +152,7 @@ export class Inspector {
       const t = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
       if (!t || !this.last) return;
       const act = t.dataset.act!, id = Number(t.dataset.id);
+      if (/^(body|system|dive-body|dive-system|goto-body|close)$/.test(act)) this.polityOpen = null;
       if (act === 'close') this.onClose();
       if (act === 'techs') { this.allTechs = !this.allTechs; this.render(this.last); }
       if (act === 'system') this.onSelect({ kind: 'system', id, name: this.last.world.systems[id].name, pos: null! });
@@ -149,6 +163,8 @@ export class Inspector {
       if (act === 'open-person') this.openPerson(t.dataset.pid!);
       if (act === 'close-person') this.openPerson(null);
       if (act === 'close-chronicle') { this.chronicleOpen = false; this.render(this.last); }
+      if (act === 'polity') { this.polityOpen = id; this.personId = null; this.toTop(); this.render(this.last); }
+      if (act === 'close-polity') { this.polityOpen = null; this.render(this.last); }
       if (act === 'year') this.onYear(Number(t.dataset.id));
       if (act === 'goto-body') { this.openPerson(null); this.onSelect({ kind: 'body', id, name: this.last.world.bodies[id].name, pos: null! }); }
     });
@@ -188,6 +204,10 @@ export class Inspector {
     let html = '';
     if (this.personId) html = `<button class="insp-close" type="button" data-act="close-person" aria-label="Close this person">×</button>${this.person(c, this.personId)}`;
     else if (this.chronicleOpen) html = `<button class="insp-close" type="button" data-act="close-chronicle" aria-label="Close the chronicle">×</button>${this.chronicle(c)}`;
+    else if (this.polityOpen !== null) {
+      const A = this.annals();
+      html = `<button class="insp-close" type="button" data-act="close-polity" aria-label="Close this polity">×</button>${A ? polityCardHtml(A, this.polityOpen, c.world, c.year, (b) => names.place(c.world, b)) : '<p class="muted">Reading the record…</p>'}`;
+    }
     else if (!s || s.kind === 'humanspace') html = this.global(c);
     else if (s.kind === 'galaxy') html = this.galaxy(c, s);
     else if (s.kind === 'system') html = this.system(c, s.id);
@@ -197,7 +217,7 @@ export class Inspector {
       const e = s.ex ? explain(s.ex, s.id, { world: c.world, snap: c.snap, year: c.year }) : null;
       html = e ? explainHtml(e, segsHtml) : `<h2>${esc(s.name)}</h2><p class="muted">Not drawn in this view.</p>`;
     }
-    if (s && !this.personId) html = `<button class="insp-close" type="button" data-act="close" aria-label="Close and show all of humanity">×</button>${html}`;
+    if (s && !this.personId && this.polityOpen === null) html = `<button class="insp-close" type="button" data-act="close" aria-label="Close and show all of humanity">×</button>${html}`;
     const scroll = this.el.scrollTop;
     this.body.innerHTML = html;
     this.el.scrollTop = scroll;
@@ -229,13 +249,15 @@ export class Inspector {
     const def = (k: string) => GLOBAL_METRICS[GM[k]];
     const row = (k: string): [string, string] => [def(k).label, fmtUnit(g(k), def(k).unit)];
     const done = c.snap ? TECHS.map((t, i) => ({ t, y: c.snap!.techDone[i] })).filter((x) => x.y >= 0).sort((a, b) => b.y - a.y) : [];
+    const A = this.annals(), age = A ? ageAt(A, c.year) : null;
     const next = c.snap ? TECHS.filter((t, i) => c.snap!.techDone[i] < 0 && t.req.every((r) => c.snap!.techDone[TECHS.findIndex((x) => x.id === r)] >= 0)) : [];
     return `
       <h2>Humanity in ${fmtYear(c.year)}</h2>
-      <p class="lede">${esc(c.snap?.globals.era ?? '')} era. ${fmtNum(g('pop'))} people in ${fmtNum(g('settlements'))} settlements across ${fmtNum(g('systems'))} star system${g('systems') === 1 ? '' : 's'}.</p>
+      <p class="lede">${esc(c.snap?.globals.era ?? '')} era${age ? `, ${esc(age.name)}` : ''}. ${fmtNum(g('pop'))} people in ${fmtNum(g('settlements'))} settlements across ${fmtNum(g('systems'))} star system${g('systems') === 1 ? '' : 's'}.</p>
       ${this.kv(['pop', 'offEarth', 'interstellarPop', 'energy', 'kardashev', 'gdp', 'knowledge', 'research', 'stability', 'factions', 'wars', 'shipsInTransit', 'reach', 'shortage'].map(row))}
       ${c.forecast ? `<h3>Psychohistory forecast</h3>${c.forecast}` : ''}
       <h3>Largest places</h3>${this.largest(c)}
+      ${A ? humanityAnnalsHtml(A, c.world, c.year, (b) => names.place(c.world, b)) : ''}
       <h3>Technology <span class="muted num">${done.length} / ${TECHS.length}</span></h3>
       ${this.techList(c, done, next)}
       <h3>Recent events</h3>
