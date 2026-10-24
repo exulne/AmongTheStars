@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "sim": "node --experimental-strip-types scripts/headless.ts",
     "check": "node scripts/check.ts && node scripts/people-check.ts",
-    "check:people": "node scripts/people-check.ts"
+    "check:people": "node scripts/people-check.ts",
+    "check:data": "node scripts/query-check.ts && node scripts/data-check.ts"
   },
   "devDependencies": {
     "@types/three": "^0.186.0",
