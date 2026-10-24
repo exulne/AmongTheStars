@@ -19,7 +19,7 @@ import { NOTABLE, Ticker, describe } from './ui/ticker.ts';
 import { Timeline } from './ui/timeline.ts';
 import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionCss, stageLegend, type ColorMode } from './view/colorModes.ts';
 import { StreetView } from './view/street.ts';
-import { GalaxyView, LocalView, LEVELS, PlanetView, SystemView, UniverseView, alive, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
+import { GalaxyView, LocalView, LEVELS, PlanetView, SystemView, UniverseView, alive, cityCount, cityDir, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
 
 // ------------------------------------------------------------------ DOM
 
@@ -34,6 +34,7 @@ app.innerHTML = `
       <h1>2SOON2026</h1>
       <p>Humanity lands on Mars in 2040. This is one possible next ten thousand years, simulated settlement by settlement. Drag time. Click anything. Double-click, or scroll into it, to go closer. Press ? for keys.</p>
       <nav class="crumbs" aria-label="Zoom level"></nav>
+      <div class="here" hidden><canvas width="64" height="64" aria-hidden="true"></canvas><span></span></div>
     </div>
     <div class="run">
       <div class="search-slot"></div>
@@ -177,6 +178,8 @@ function enterLevel(next: Level): void {
   renderLegend();
   writeHash();
   streetMood();
+  // on a phone the street needs the screen: keep the sheet folded until someone is tapped
+  if (level === 'street' && matchMedia('(max-width: 40rem)').matches) inspector.el.classList.remove('open');
 }
 
 // ------------------------------------------------------------------ legend and colour modes
@@ -322,13 +325,56 @@ function renderCrumbs(): void {
   crumbsEl.innerHTML = LEVELS.slice(0, idx + 1)
     .map((l, i) => i === idx ? `<span aria-current="page">${names[l]}</span>` : `<button class="link" type="button" data-level="${l}">${names[l]}</button>`)
     .join('<span class="sep" aria-hidden="true">/</span>');
+  renderHere();
 }
+// you are here: on a world or in one of its settlements, a small globe turned to face it
+const hereEl = app.querySelector<HTMLElement>('.here')!;
+const hereCanvas = hereEl.querySelector('canvas')!, hereText = hereEl.querySelector('span')!;
+function renderHere(): void {
+  const on = level === 'planet' || level === 'street';
+  hereEl.hidden = !on;
+  if (!on) return;
+  const b = world.bodies[ctx.body], st = stageOf(ctx.snap, ctx.body), pop = popOf(ctx.snap, ctx.body);
+  const n = cityCount(st, pop), city = Math.min(ctx.city, Math.max(0, n - 1));
+  hereText.textContent = level === 'street'
+    ? `${city === 0 ? 'The capital' : `Settlement ${city}`} of ${n} on ${b.name}, ${world.systems[b.system].name}`
+    : `${n ? `${n} settlement${n > 1 ? 's' : ''}` : 'No settlements'} on ${b.name}, ${world.systems[b.system].name}`;
+  const g = hereCanvas.getContext('2d')!, dpr = Math.min(devicePixelRatio, 2), S = 64;
+  if (hereCanvas.width !== S * dpr) { hereCanvas.width = hereCanvas.height = S * dpr; }
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, S, S);
+  const R = 26, cx = S / 2, cy = S / 2;
+  const col = new THREE.Color(b.color);
+  const grad = g.createRadialGradient(cx - 8, cy - 8, 2, cx, cy, R);
+  grad.addColorStop(0, `#${col.clone().multiplyScalar(0.8).getHexString()}`);
+  grad.addColorStop(1, `#${col.clone().multiplyScalar(0.18).getHexString()}`);
+  g.fillStyle = grad; g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = 'rgba(242,242,242,0.25)'; g.lineWidth = 1; g.stroke();
+  // turn the globe so the settlement we're in faces us
+  const f = n ? cityDir(ctx.body, city) : new THREE.Vector3(0, 0, 1);
+  const e1 = new THREE.Vector3(0, 1, 0).cross(f).normalize(), e2 = f.clone().cross(e1);
+  for (let i = 0; i < n; i++) {
+    const d = cityDir(ctx.body, i), z = d.dot(f);
+    if (z < 0) continue;
+    const x = cx + d.dot(e1) * R, y = cy - d.dot(e2) * R;
+    const here = level === 'street' && i === city;
+    g.fillStyle = here ? '#7fe3ff' : `rgba(255,214,160,${0.35 + 0.5 * z})`;
+    g.beginPath(); g.arc(x, y, here ? 2.6 : 1.4, 0, Math.PI * 2); g.fill();
+    if (here) { g.strokeStyle = 'rgba(127,227,255,0.6)'; g.beginPath(); g.arc(x, y, 6, 0, Math.PI * 2); g.stroke(); }
+  }
+}
+
 crumbsEl.addEventListener('click', (e) => {
   const l = (e.target as HTMLElement).dataset.level as Level | undefined;
   if (l) { pull = null; setLevel(l); }
 });
 
 function dive(p: Ref): void {
+  // whatever we go into becomes the selection, so a stale one (from the URL, say) can't linger
+  if (p.kind === 'city' && level === 'planet') {
+    const b = world.bodies[ctx.body].name;
+    if (ctx.selected?.kind !== 'city' || ctx.selected.id !== p.id) select({ kind: 'city', id: p.id, name: p.id === 0 ? `${b} capital` : `${b} settlement ${p.id}`, pos: new THREE.Vector3() });
+  } else if ((p.kind === 'body' || p.kind === 'system') && (ctx.selected?.kind !== p.kind || ctx.selected.id !== p.id)) select(asPick(p));
   if (p.kind === 'galaxy' && (p.name ?? GALAXIES[p.id]?.name) !== 'Milky Way') {
     // no deeper level for other galaxies yet: frame it in the Local Group
     const at = level === 'universe' ? views.universe.locate(ctx, p) : null;
@@ -627,6 +673,7 @@ function requestState(year: number): void {
     views[level].sync(ctx);
     timeline.setEra(m.globals.era);
     streetMood();
+    renderHere();
     refreshPanels();
     renderLegend();
     if (wanted !== ask) requestState(sim.years[wanted]);
