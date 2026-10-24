@@ -7,14 +7,14 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import './style.css';
 import { STAGE_NAMES } from './sim/catalog.ts';
 import { SimClient, type HistoryMsg, type SimEvent, type StateMsg } from './sim/client.ts';
-import { GM, HIST_FIELDS, NGM, SETTLEMENT_LABELS } from './sim/metrics.ts';
+import { F, GM, HIST_FIELDS, NF, NGM, SETTLEMENT_LABELS } from './sim/metrics.ts';
 import { GALAXIES, buildWorld } from './sim/world.ts';
 import { ChartStrip, globalSeries, type Series } from './ui/charts.ts';
 import { fmtNum } from './ui/format.ts';
 import { Inspector } from './ui/inspector.ts';
 import { Search, type Hit } from './ui/search.ts';
 import { Timeline } from './ui/timeline.ts';
-import { STAGE_CSS } from './view/textures.ts';
+import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionCss, stageLegend, type ColorMode } from './view/colorModes.ts';
 import { GalaxyView, LocalView, LEVELS, PlanetView, SystemView, UniverseView, alive, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
 
 // ------------------------------------------------------------------ DOM
@@ -37,7 +37,10 @@ app.innerHTML = `
       <span class="status num" aria-live="polite"></span>
     </div>
   </header>
-  <div class="legend" aria-label="Settlement stages">${STAGE_NAMES.map((n, i) => `<span><i style="background:${STAGE_CSS[i]}"></i>${n}</span>`).join('')}</div>
+  <div class="legend">
+    <div class="legend-modes" role="group" aria-label="Colour settled stars by">Colour by ${COLOR_MODES.map((m) => `<button class="link" type="button" data-mode="${m.id}" aria-pressed="${m.id === 'stage'}">${m.label}</button>`).join(' ')}</div>
+    <div class="legend-keys"></div>
+  </div>
   <div class="tooltip" hidden></div>
   <footer class="bottom">
     <button class="charts-toggle link" type="button" aria-expanded="true">Hide charts</button>
@@ -103,7 +106,7 @@ new ResizeObserver(resize).observe(canvas);
 
 const world = buildWorld();
 const sim = new SimClient();
-const ctx: Ctx = { world, snap: null, year: 0, camera, controls, system: 0, body: world.mars, selected: null, t: 0 };
+const ctx: Ctx = { world, snap: null, year: 0, camera, controls, system: 0, body: world.mars, selected: null, t: 0, colorBy: 'stage' };
 let events: SimEvent[] = [];
 let history: HistoryMsg | null = null;
 
@@ -130,7 +133,45 @@ function enterLevel(next: Level): void {
   controls.minDistance = v.limits[0];
   controls.maxDistance = v.limits[1];
   renderCrumbs();
+  renderLegend();
 }
+
+// ------------------------------------------------------------------ legend and colour modes
+
+const legendEl = app.querySelector<HTMLElement>('.legend')!;
+const legendModes = legendEl.querySelector<HTMLElement>('.legend-modes')!;
+const legendKeys = legendEl.querySelector<HTMLElement>('.legend-keys')!;
+
+function legendHtml(mode: ColorMode): string {
+  if (mode === 'heat') return `<span class="ramp" style="--g:${HEAT_CSS}"></span><span class="ramp-ends num"><span>1</span><span>people per system</span><span>40B</span></span>`;
+  if (mode === 'founded') return `<span class="ramp" style="--g:${AGE_CSS}"></span><span class="ramp-ends num"><span>2040</span><span>first settled</span><span>${Math.round(2040 + ctx.year)}</span></span>`;
+  if (mode === 'faction') {
+    const facs = new Map<number, number>();
+    const snap = ctx.snap;
+    if (snap) for (const b of snap.settled) if (alive(stageOf(snap, b))) { const f = snap.S[b * NF + F.faction]; facs.set(f, (facs.get(f) ?? 0) + popOf(snap, b)); }
+    const top = [...facs].sort((a, b) => b[1] - a[1]);
+    const name = (f: number) => (f === world.earth ? 'Earth' : world.bodies[f].name);
+    return top.slice(0, 8).map(([f, pop]) => `<span><i style="background:${factionCss(f, world.earth)}"></i>${name(f)} <span class="num">${fmtNum(pop)}</span></span>`).join('')
+      + (top.length > 8 ? `<span class="more">and ${top.length - 8} more</span>` : '');
+  }
+  return stageLegend();
+}
+
+function renderLegend(): void {
+  const modal = level === 'local' || level === 'galaxy';
+  legendModes.hidden = !modal;
+  const html = legendHtml(modal ? ctx.colorBy : 'stage');
+  if (legendKeys.innerHTML !== html) legendKeys.innerHTML = html;
+}
+
+legendModes.addEventListener('click', (e) => {
+  const m = (e.target as HTMLElement).closest<HTMLElement>('[data-mode]')?.dataset.mode as ColorMode | undefined;
+  if (!m) return;
+  ctx.colorBy = m;
+  for (const b of legendModes.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === m));
+  views[level].sync(ctx);
+  renderLegend();
+});
 
 // ------------------------------------------------------------------ camera flights
 
@@ -367,6 +408,7 @@ function requestState(year: number): void {
     views[level].sync(ctx);
     timeline.setEra(m.globals.era);
     refreshPanels();
+    renderLegend();
     if (wanted !== ask) requestState(sim.years[wanted]);
     else refreshEvents();
   });

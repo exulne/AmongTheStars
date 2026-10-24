@@ -10,6 +10,7 @@ import { F, NF } from '../sim/metrics.ts';
 import { Rng, hash01 } from '../sim/rng.ts';
 import { GALACTIC_CENTRE, GALAXIES, galToXYZ, type Body, type World } from '../sim/world.ts';
 import { fmtNum } from '../ui/format.ts';
+import { ageColor, factionColor, heatColor, type ColorMode } from './colorModes.ts';
 import { makeGalaxy } from './galaxyPoints.ts';
 import { atmosphereMaterial, planetMaterial } from './planetShader.ts';
 import { STAGE_COLORS, flareTex, galaxySpriteTex, glowTex, pointsMaterial, specColor } from './textures.ts';
@@ -27,6 +28,7 @@ export interface Ctx {
   body: number;     // focused body
   selected: Pickable | null;
   t: number;        // seconds since start
+  colorBy: ColorMode;
 }
 
 export type PickKind = 'galaxy' | 'system' | 'body' | 'city' | 'humanspace';
@@ -67,16 +69,33 @@ export function popOf(snap: StateMsg | null, b: number): number {
 }
 export function alive(stage: number): boolean { return stage >= STAGE.OUTPOST && stage <= STAGE.MEGA; }
 
-export function systemSummary(world: World, snap: StateMsg | null, sys: number): { stage: number; pop: number; n: number } {
-  let stage = -1, pop = 0, n = 0;
+export interface SystemSum { stage: number; pop: number; n: number; faction: number; founded: number }
+
+/** Stage is the most developed settlement; faction that of the most populous; founded the earliest. */
+export function systemSummary(world: World, snap: StateMsg | null, sys: number): SystemSum {
+  let stage = -1, pop = 0, n = 0, faction = -1, founded = Infinity, top = -1;
   for (const b of world.systems[sys].bodies) {
     const s = stageOf(snap, b);
     if (s < 0) continue;
-    if (alive(s)) { n++; pop += popOf(snap, b); stage = Math.max(stage, s); }
+    if (alive(s)) {
+      n++;
+      const p = popOf(snap, b);
+      pop += p; stage = Math.max(stage, s);
+      if (p > top) { top = p; faction = snap!.S[b * NF + F.faction]; }
+      founded = Math.min(founded, snap!.S[b * NF + F.founded]);
+    }
     else if (stage < 0) stage = s === STAGE.SURVEY ? STAGE.SURVEY : s;
     else if (s === STAGE.SURVEY && stage > STAGE.MEGA) stage = STAGE.SURVEY;
   }
-  return { stage, pop, n };
+  return { stage, pop, n, faction, founded };
+}
+
+/** Colour of a living system under the current colour mode. */
+export function modeColor(ctx: Ctx, s: SystemSum, out: THREE.Color): THREE.Color {
+  if (ctx.colorBy === 'faction') return factionColor(s.faction, ctx.world.earth, out);
+  if (ctx.colorBy === 'heat') return heatColor(s.pop, out);
+  if (ctx.colorBy === 'founded') return ageColor(s.founded, ctx.year, out);
+  return out.set(STAGE_COLORS[s.stage]);
 }
 
 function pointCloud(n: number, mat: THREE.ShaderMaterial): { pts: THREE.Points; pos: Float32Array; col: Float32Array; size: Float32Array } {
@@ -268,7 +287,7 @@ export class GalaxyView implements View {
     this.farIds.forEach((id, i) => {
       const sum = systemSummary(ctx.world, snap, id);
       const on = alive(sum.stage);
-      tmpC.set(on ? STAGE_COLORS[sum.stage] : 0x000000);
+      if (on) modeColor(ctx, sum, tmpC); else tmpC.set(0x000000);
       this.far.col.set([tmpC.r, tmpC.g, tmpC.b], i * 3);
       this.far.size[i] = on ? 3 + Math.log10(1 + sum.pop) * 0.5 : 0;
     });
@@ -322,7 +341,7 @@ export class LocalView implements View {
   private shipLines: THREE.LineSegments;
   private shipHeads: ReturnType<typeof pointCloud>;
   private base: Float32Array;
-  private sums: { stage: number; pop: number; n: number }[] = [];
+  private sums: SystemSum[] = [];
 
   constructor(world: World) {
     this.ids = world.systems.filter((s) => s.region === 'local' || s.region === 'sol').map((s) => s.id);
@@ -365,10 +384,10 @@ export class LocalView implements View {
     this.ids.forEach((_, i) => {
       const s = this.sums[i];
       if (alive(s.stage)) {
-        tmpC.set(STAGE_COLORS[s.stage]).multiplyScalar(1.4);
+        modeColor(ctx, s, tmpC).multiplyScalar(1.4);
         this.stars.size[i] = 2.2 + Math.log10(1 + s.pop) * 0.55;
       } else if (s.stage === STAGE.SURVEY) {
-        tmpC.set(STAGE_COLORS[0]).multiplyScalar(1.6);
+        tmpC.set(STAGE_COLORS[0]).multiplyScalar(ctx.colorBy === 'stage' ? 1.6 : 0.9);
         this.stars.size[i] = 1.6;
       } else if (s.stage >= STAGE.ABANDONED) {
         tmpC.set(STAGE_COLORS[s.stage]);
