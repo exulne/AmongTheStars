@@ -1186,6 +1186,8 @@ function shipLight(): void {
 
 // ------------------------------------------------------------------ go
 
+// the app only ever replaces the hash, so a change here is someone pasting or editing a link: go there
+window.addEventListener('hashchange', () => location.reload());
 const fromHash = readHash();
 if (fromHash.seed) seedInput.value = String(fromHash.seed);
 startRun(fromHash.seed || 1);
