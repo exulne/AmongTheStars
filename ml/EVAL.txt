@@ -1,0 +1,30 @@
+held-out futures: 40 × 4 starting points, 16 samples each, 21.2s
+
+metric      horizon  model err  baseline err  improvement  truth inside 80% band
+pop            50y      0.019         0.029          36%          66%
+pop           100y      0.027         0.058          54%          61%
+pop           200y      0.040         0.107          63%          67%
+pop           400y      0.060         0.207          71%          64%
+energy         50y      0.009         0.311          97%          83%
+energy        100y      0.019         0.625          97%          73%
+energy        200y      0.043         1.248          97%          67%
+energy        400y      0.089         2.507          96%          71%
+systems        50y      0.007         0.016          56%          84%
+systems       100y      0.013         0.032          59%          83%
+systems       200y      0.017         0.061          73%          79%
+systems       400y      0.035         0.129          72%          76%
+techs          50y      0.120         0.100         -20%          96%
+techs         100y      0.205         0.275          26%          96%
+techs         200y      0.305         0.537          43%          94%
+techs         400y      0.527         1.081          51%          91%
+stability      50y      0.051         0.049          -5%          87%
+stability     100y      0.046         0.044          -4%          96%
+stability     200y      0.050         0.051           3%          95%
+stability     400y      0.056         0.041         -38%          99%
+reach          50y      0.023         0.012         -89%          93%
+reach         100y      0.036         0.026         -40%          95%
+reach         200y      0.054         0.050          -7%          93%
+reach         400y      0.122         0.148          18%          89%
+
+next-decade era: model 84% correct, "same era continues" 86%
+(errors are in feature units: log10 for counts and amounts, raw for kardashev/techs/stability)
