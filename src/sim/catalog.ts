@@ -295,6 +295,8 @@ export const EVENT_NAMES = [
   'Kessler cascade', 'Supernova', 'Gamma-ray burst', 'First contact', 'Dark forest strike',
   'Technology', 'Era change', 'Probe survey', 'Abandoned', 'Reactor accident', 'Baby boom',
   'AI schism', 'Megastructure complete', 'Ship launched', 'Ship arrived', 'Invention', 'No-go theorem',
+  // history that remembers (civ.ts)
+  'Schism', 'Faith extinct', 'Faith spreads',
 ] as const;
 export type EventName = typeof EVENT_NAMES[number];
 export const EV = Object.fromEntries(EVENT_NAMES.map((n, i) => [n, i])) as Record<EventName, number>;

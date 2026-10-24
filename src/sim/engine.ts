@@ -8,6 +8,7 @@ import { EFFECTS, compat, effectFor, effectSize, isAdd, isDown, spineField, FIEL
 import { FLOW, GENERATION, Ledger, NPERIODS, isPeriodBoundary, periodOf } from './ledger.ts';
 import { next, seedRng, type RngState } from './rng.ts';
 import type { World } from './world.ts';
+import { Civ, H, HG, cloneCiv, type CivState } from './civ.ts';
 
 export const YEAR0 = 2040;
 export const HORIZON = 10000;
@@ -53,6 +54,7 @@ export interface SimState {
   settled: Int32Array;     // body ids with a settlement, in founding order
   shipRetry: Float64Array; // per system: year before which a failed ship search is not retried
   gen: Float64Array;       // generated inventions, MAX_GEN × GC (see GC)
+  hx: CivState;            // faiths, polities, wars, languages... (civ.ts)
   nSettled: number;
   rng: RngState;
 }
@@ -85,6 +87,8 @@ export class Engine {
   feasible: Uint8Array;
   wanderlust: number;
   fx!: Fx;
+  /** faiths, polities, wars and the rest of remembered history (civ.ts) */
+  civ: Civ;
   logEvents = true;
   events: SimEvent[] = [];
   /** who moved where, per demography period; main run only (null on replay engines) */
@@ -157,6 +161,7 @@ export class Engine {
     this.feasible = Uint8Array.from(TECHS, (t) => (next(rng) < (t.feasible ?? 1) ? 1 : 0));
     // how keen this civilization is on colony ships: the main source of spread in reach
     this.wanderlust = Math.exp(0.6 * Math.sqrt(-2 * Math.log(Math.max(1e-9, next(rng)))) * Math.cos(2 * Math.PI * next(rng)));
+    this.civ = new Civ(this, (t, b, a = 0, bb = 0) => this.log(t, b, a, bb));
     this.st = this.initialState(rng);
     this.recomputeFx();
     this.record(0);
@@ -171,7 +176,7 @@ export class Engine {
       step: 0, S, g: new Float64Array(NG), techProg: new Float64Array(TECHS.length),
       techDone: new Float64Array(TECHS.length).fill(-1), ships: new Float64Array(MAX_SHIPS * NSH),
       settled: new Int32Array(nb), nSettled: 0, rng, shipRetry: new Float64Array(this.world.systems.length),
-      gen: new Float64Array(MAX_GEN * NGC),
+      gen: new Float64Array(MAX_GEN * NGC), hx: this.civ.init(nb),
     };
     st.g[G.era] = 0;
     st.g[G.launchCap] = 5000;
@@ -213,6 +218,7 @@ export class Engine {
     S[o + F.capital] = Math.max(S[o + F.capital], pop * 4e5 + (stage >= STAGE.OUTPOST ? 2e9 : 1e8));
     S[o + F.water] = pop * 5; S[o + F.metals] = pop * 2; S[o + F.volatiles] = pop * 2;
     S[o + F.energyRatio] = 1;
+    this.civ.onFound(st.hx, body, parent, stage);
   }
 
   recomputeFx(): void {
@@ -394,7 +400,7 @@ export class Engine {
 
       // people
       const crowd = cap > 0 ? pop / cap : 2;
-      const bRate = (isEarth ? 0.011 : 0.016) * fx.growth * E.growth * (1 - short) * (0.6 + 0.8 * S[o + F.happiness]);
+      const bRate = (isEarth ? 0.011 : 0.016) * fx.growth * E.growth * this.civ.mul(b, H.mGrowth) * (1 - short) * (0.6 + 0.8 * S[o + F.happiness]);
       const dRate = (isEarth ? 0.0085 : 0.009) * fx.death * E.death * (1 + 4 * short * short + (1 - h) * 0.4) * (crowd > 1 ? 1 + (crowd - 1) * 2 : 1);
       // logistic: near capacity, births settle to replace baseline deaths
       const dBase = (isEarth ? 0.0085 : 0.009) * fx.death;
@@ -422,7 +428,7 @@ export class Engine {
       S[o + F.robots] = S[o + F.capital] / 2e6 * (fx.productivity > 1.4 ? 3 : 1);
 
       // research
-      const r = Math.pow(pop / 1e9, 0.7) * Math.pow(Math.max(gdp / Math.max(pop, 1), 1) / 17400, 0.6) * 9 * RESEARCH * fx.research * E.research + S[o + F.robots] * 1e-9 * fx.research;
+      const r = Math.pow(pop / 1e9, 0.7) * Math.pow(Math.max(gdp / Math.max(pop, 1), 1) / 17400, 0.6) * 9 * RESEARCH * fx.research * E.research * this.civ.mul(b, H.mResearch) + S[o + F.robots] * 1e-9 * fx.research;
       S[o + F.research] = r;
       research += r;
 
@@ -436,7 +442,7 @@ export class Engine {
       const ageT = 16 + 22 * (dRate / (bRate + 0.002)) * (fx.death < 0.5 ? 2.2 : 1);
       S[o + F.medianAge] += (Math.min(ageT, 160) - S[o + F.medianAge]) * Math.min(1, 0.05 * dt);
       const div0 = S[o + F.divergence];
-      S[o + F.divergence] += dt * 0.0006 * fx.divergence * Math.pow(Math.abs(1 - this.bG[b]), 1.5) * (this.bSys[b] === 0 ? 0.4 : 1) * (isEarth ? 0 : 1);
+      S[o + F.divergence] += dt * 0.0006 * fx.divergence * this.civ.mul(b, H.mDiv) * Math.pow(Math.abs(1 - this.bG[b]), 1.5) * (this.bSys[b] === 0 ? 0.4 : 1) * (isEarth ? 0 : 1);
       if (div0 < 1 && S[o + F.divergence] >= 1) this.log(EV.Speciation, b);
       if (fx.hab > 0.1 && h < 0.8 && stg >= STAGE.CITY) S[o + F.terraform] = Math.min(0.5, S[o + F.terraform] + dt * 0.0008 * fx.hab);
 
@@ -477,6 +483,8 @@ export class Engine {
     this.ships(year);
     this.politics(dt, year, E.war);
     this.globalEvents(dt, year);
+    this.civ.step(dt, year);
+    g[G.faiths] = 6 + st.hx.hg[HG.living]; // Earth's old faiths plus the living new ones
 
     // series row k always describes the state at years[k], the same state a snapshot at step k holds
     st.step++;
@@ -484,6 +492,7 @@ export class Engine {
     this.record(st.step);
     if (this.ledger && (isPeriodBoundary(g[G.year]) || this.done)) {
       const p = this.done ? NPERIODS - 1 : periodOf(g[G.year]) - 1;
+      this.civ.record(p);
       this.ledger.close(p, (fn) => {
         for (let n = 0; n < st.nSettled; n++) {
           const b = st.settled[n];
@@ -555,27 +564,27 @@ export class Engine {
     const r = () => this.rand();
     const pop = S[o + F.pop];
     if (b === this.world.earth) {
-      if (r() < dt * 0.003 * ERA_FX[this.st.g[G.era]].death) { S[o + F.pop] *= 0.97; this.log(EV.Plague, b, 0.03); }
+      if (r() < dt * 0.003 * ERA_FX[this.st.g[G.era]].death) { S[o + F.pop] *= 0.97; this.log(EV.Plague, b, 0.03); this.civ.onDisaster(b, EV.Plague, 0.03, this.year); }
       return;
     }
     const rel = Math.min(0.9, fx.reliability);
     if (stg <= STAGE.COLONY && r() < dt * 0.012 * (1 - rel)) {
       // a lost module: a few people, or up to 2% of a bigger place
-      const k = Math.min(0.5, r() * 0.02 + (2 + r() * 8) / Math.max(pop, 1)); S[o + F.pop] *= 1 - k; S[o + F.stability] -= 0.03; this.log(EV['Habitat breach'], b, k);
+      const k = Math.min(0.5, r() * 0.02 + (2 + r() * 8) / Math.max(pop, 1)); S[o + F.pop] *= 1 - k; S[o + F.stability] -= 0.03; this.log(EV['Habitat breach'], b, k); this.civ.onDisaster(b, EV['Habitat breach'], k, this.year);
     }
     if (this.bSys[b] === 0 && this.bFlux[b] > 0.2 && stg <= STAGE.TOWN && r() < dt * 0.01) {
       const k = 0.001 + r() * 0.01; S[o + F.pop] *= 1 - k; this.log(EV['Solar storm'], b, k);
     }
     if (r() < dt * 0.00015) {
-      const k = 0.1 + r() * 0.6; S[o + F.pop] *= 1 - k; S[o + F.capital] *= 1 - k; this.log(EV['Asteroid strike'], b, k);
+      const k = 0.1 + r() * 0.6; S[o + F.pop] *= 1 - k; S[o + F.capital] *= 1 - k; this.log(EV['Asteroid strike'], b, k); this.civ.onDisaster(b, EV['Asteroid strike'], k, this.year);
       if (k > 0.65 && stg <= STAGE.COLONY) { S[o + F.stage] = STAGE.DEAD; S[o + F.pop] = 0; this.st.g[G.dead]++; return; }
     }
     if (pop > 1e5 && r() < dt * 0.0015 * ERA_FX[this.st.g[G.era]].death) {
-      const k = 0.02 + r() * 0.15; S[o + F.pop] *= 1 - k; this.log(EV.Plague, b, k);
+      const k = 0.02 + r() * 0.15; S[o + F.pop] *= 1 - k; this.log(EV.Plague, b, k); this.civ.onDisaster(b, EV.Plague, k, this.year);
     }
-    if (short > 0.3 && r() < dt * 0.1) { S[o + F.pop] *= 1 - short * 0.1; this.log(EV.Famine, b, short); }
+    if (short > 0.3 && r() < dt * 0.1) { S[o + F.pop] *= 1 - short * 0.1; this.log(EV.Famine, b, short); this.civ.onDisaster(b, EV.Famine, short, this.year); }
     if (S[o + F.stability] < 0.3 && r() < dt * 0.05) { S[o + F.capital] *= 0.9; S[o + F.stability] += 0.1; this.log(EV.Revolt, b); }
-    if (pop > 1e6 && r() < dt * 0.0006) { this.st.g[G.faiths]++; S[o + F.culture] = this.st.g[G.faiths]; this.log(EV['New faith'], b, this.st.g[G.faiths]); }
+    if (r() < this.civ.faithChance(b, dt, this.year)) this.civ.newFaith(b, this.year);
     if (stg <= STAGE.TOWN && r() < dt * 0.003) {
       const k = Math.floor(r() * 5); S[o + F.water + k] += pop * 40 + 1e4; this.log(EV['Rich deposit found'], b, k);
     }
@@ -690,7 +699,7 @@ export class Engine {
       const isEarth = b === earth;
       const gdp = S[o + F.gdp];
       // in-system: send a crew to a surveyed or empty body in the same system
-      const pLocal = dt * 0.03 * eraLaunch * Math.min(3, Math.pow(gdp / 5e10, 0.25)) * (isEarth ? 2 : 1);
+      const pLocal = dt * 0.03 * eraLaunch * this.civ.mul(b, H.mLaunch) * Math.min(3, Math.pow(gdp / 5e10, 0.25)) * (isEarth ? 2 : 1);
       if (this.rand() < pLocal) {
         const sysB = this.sysBodies[this.bSys[b]];
         let best = -1, bestS = 0;
@@ -715,7 +724,7 @@ export class Engine {
       // interstellar: needs a drive, a colony with money, and a stable home
       if (fx.shipSpeed <= 0 || stg < STAGE.CITY) continue;
       const shipCost = 4e12 / Math.sqrt(fx.productivity);
-      const pShip = dt * 0.0008 * this.wanderlust * eraLaunch * Math.min(4, Math.sqrt(gdp / shipCost)) * (isEarth ? 3 : 1);
+      const pShip = dt * 0.0008 * this.wanderlust * eraLaunch * this.civ.mul(b, H.mLaunch) * Math.min(4, Math.sqrt(gdp / shipCost)) * (isEarth ? 3 : 1);
       if (this.rand() < pShip && S[o + F.capital] > shipCost) {
         let target = -1, ftlTrip = false;
         if (fx.ftl > 0 && stg >= STAGE.HUB && this.rand() < 0.25 * fx.ftl) {
@@ -813,6 +822,7 @@ export class Engine {
         const joined = ts >= STAGE.OUTPOST && ts <= STAGE.MEGA;
         if (joined) {
           st.S[to * NF + F.pop] += colonists;
+          this.civ.onArrive(from, to, colonists);
           st.S[to * NF + F.stage] = Math.max(ts, colonists > 2000 ? STAGE.COLONY : STAGE.BASE);
         }
         else {
@@ -1007,7 +1017,7 @@ export class Engine {
     return {
       step: st.step, S: st.S.slice(), g: st.g.slice(), techProg: st.techProg.slice(), techDone: st.techDone.slice(),
       ships: st.ships.slice(0, st.g[G.nShips] * NSH), settled: st.settled.slice(0, st.nSettled), nSettled: st.nSettled, rng: st.rng.slice(),
-      shipRetry: st.shipRetry.slice(), gen: st.gen.slice(0, st.g[G.nGen] * NGC),
+      shipRetry: st.shipRetry.slice(), gen: st.gen.slice(0, st.g[G.nGen] * NGC), hx: cloneCiv(st.hx),
     };
   }
 
@@ -1018,7 +1028,7 @@ export class Engine {
     this.st = {
       step: s.step, S: s.S.slice(), g: s.g.slice(), techProg: s.techProg.slice(), techDone: s.techDone.slice(),
       ships, settled, nSettled: s.nSettled, rng: s.rng.slice(), shipRetry: s.shipRetry.slice(),
-      gen: (() => { const g = new Float64Array(MAX_GEN * NGC); g.set(s.gen); return g; })(),
+      gen: (() => { const g = new Float64Array(MAX_GEN * NGC); g.set(s.gen); return g; })(), hx: cloneCiv(s.hx),
     };
     this.rebuildPairs();
     this.surveyCursor = this.nbr.start.slice();

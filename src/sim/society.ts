@@ -7,12 +7,14 @@ import { EV, STAGE, TECHS } from './catalog.ts';
 import type { Engine } from './engine.ts';
 import { F, NF } from './metrics.ts';
 import { hash01 } from './rng.ts';
+import { H, NH, type CivState } from './civ.ts';
 
 export interface Society {
   year: number;
   government: string; governmentWhy: string;
   language: string; languageDrift: number;      // 0 = Earth's languages, 1 = unrecognisable
   faith: string | null;
+  faiths: { id: number; name: string; share: number; tenets: string }[]; // the top three, from the faith table
   art: string;
   architecture: { name: string; hue: number; height: number; curvature: number; density: number; glow: number; materials: string };
   daily: { work: string; food: string; dress: string; transport: string; family: string; lifespan: string };
@@ -27,21 +29,21 @@ const ART_FORMS = ['{X}ism', 'the {X} School', 'Neo-{X}', 'the Long {X}', '{X} R
 
 export class SocietyModel {
   private e: Engine;
-  private faiths = new Map<number, { year: number; n: number }[]>();
+  /** names and tenets of faith f (from the Chronicle) */
+  faithInfo: (f: number) => { name: string; tenets: string } = (f) => ({ name: `faith ${f}`, tenets: '' });
   private indep = new Map<number, number>();
   private specia = new Map<number, number>();
 
-  constructor(e: Engine, private faithName: (b: number, n: number) => string, private coined: (b: number, n: number) => string) {
+  constructor(e: Engine, private coined: (b: number, n: number) => string) {
     this.e = e;
     for (const ev of e.events) {
-      if (ev.type === EV['New faith']) { const a = this.faiths.get(ev.body) ?? []; a.push({ year: ev.year, n: ev.a }); this.faiths.set(ev.body, a); }
       if (ev.type === EV.Independence && !this.indep.has(ev.body)) this.indep.set(ev.body, ev.year);
       if (ev.type === EV.Speciation && !this.specia.has(ev.body)) this.specia.set(ev.body, ev.year);
     }
   }
 
   /** Society at body b in `year`, given that year's settlement row S (from the state snapshot). */
-  at(b: number, year: number, S: Float64Array, techDone: Float64Array, era: number): Society {
+  at(b: number, year: number, S: Float64Array, techDone: Float64Array, era: number, hx?: CivState): Society {
     const v = (f: keyof typeof F) => S[b * NF + F[f]];
     const has: Has = (id) => { const i = TECHS.findIndex((t) => t.id === id); return i >= 0 && techDone[i] >= 0 && techDone[i] <= year; };
     const w = this.e.world, body = w.bodies[b], sys = w.systems[body.system];
@@ -57,7 +59,7 @@ export class SocietyModel {
     else if (era === 6 || stab < 0.25) { government = 'Emergency committee'; why = 'the collapse left nothing else standing'; }
     else if (has('mindUpload') && stage >= STAGE.HUB) { government = 'Consensus mesh'; why = 'uploaded minds vote continuously on everything'; }
     else if (has('psychohistory') && stab > 0.7) { government = 'Forecast technocracy'; why = 'policy is set by predictive models the citizens audit'; }
-    else if (this.recentFaith(b, year, 150) && stab < 0.6) { government = 'Covenant theocracy'; why = 'a young faith fills the space a shaky state left'; }
+    else if (faithsTop(hx, b) > 0.6 && stab < 0.6) { government = 'Covenant theocracy'; why = 'one faith holds most hearts and the state is shaky'; }
     else if (!independent && b !== w.earth) { government = stage >= STAGE.CITY ? 'Self-governing territory' : 'Colonial charter'; why = `still answers to ${w.bodies[v('faction')]?.name ?? 'its founders'}`; }
     else if (gini > 0.5) { government = 'Corporate republic'; why = 'a few families own most of the habitat'; }
     else if (has('neuralLace')) { government = 'Direct democracy'; why = 'every adult votes through their interface, weekly'; }
@@ -67,9 +69,16 @@ export class SocietyModel {
     const drift = Math.min(1, Math.max(0, (age > 0 ? age : 0) / 1500 + Math.log10(1 + sys.dist) / 2.5 + (independent ? 0.1 : 0)));
     const language = drift < 0.15 ? 'Earth languages, mostly English and Mandarin' : drift < 0.4 ? `${this.coined(b, 3)} creole, still readable by Earth` : drift < 0.7 ? `${this.coined(b, 4)}, a daughter language of Earth's` : `${this.coined(b, 5)}, unrelated to anything spoken on Earth`;
 
-    // faith: the most recent founded here, else none
-    const fl = (this.faiths.get(b) ?? []).filter((f) => f.year <= year);
-    const faith = fl.length ? this.faithName(b, fl[fl.length - 1].n) : b === w.earth ? "Earth's old religions, much diluted" : null;
+    // faith: the shares this settlement holds in the faith table; the rest keep Earth's old religions
+    const faiths: Society['faiths'] = [];
+    if (hx) for (let k = 0; k < 3; k++) {
+      const f = hx.H[b * NH + H.fa0 + 2 * k];
+      if (f >= 0) faiths.push({ id: f, share: hx.H[b * NH + H.sh0 + 2 * k], ...this.faithInfo(f) });
+    }
+    const old = 1 - faiths.reduce((a, x) => a + x.share, 0);
+    const faith = faiths.length
+      ? `${faiths.map((x) => `${x.name} (${Math.round(x.share * 100)}%)`).join(', ')}${old > 0.05 ? `; ${Math.round(old * 100)}% keep Earth's old religions` : ''}`
+      : b === w.earth ? "Earth's old religions, much diluted" : null;
 
     // art movement of this century
     const century = Math.floor((2040 + year) / 100);
@@ -101,16 +110,15 @@ export class SocietyModel {
     const name = body.name;
     const sentences = [
       `${name} in ${Math.round(2040 + year)}: ${government.toLowerCase()} (${why}).`,
-      `People speak ${language}${faith ? `, and many follow ${faith}` : ''}. The fashionable art is ${art}.`,
+      `People speak ${language}${faiths.length ? `, and many follow ${faiths[0].name}, which teaches ${faiths[0].tenets}` : ''}. The fashionable art is ${art}.`,
       `They live in ${arch.name}. Work is ${work}; food is ${food}; they wear ${dress} and get around by ${transport}.`,
       `${family[0].toUpperCase() + family.slice(1)}, and ${lifespan}. The mood is ${mood}.`,
     ];
     if (this.specia.has(b) && (this.specia.get(b) ?? Infinity) <= year) sentences.push(`Since ${Math.round(2040 + this.specia.get(b)!)} they are their own species.`);
     void h;
-    return { year, government, governmentWhy: why, language, languageDrift: drift, faith, art, architecture: arch, daily: { work, food, dress, transport, family, lifespan }, mood, sentences };
+    return { year, government, governmentWhy: why, language, languageDrift: drift, faith, faiths, art, architecture: arch, daily: { work, food, dress, transport, family, lifespan }, mood, sentences };
   }
 
-  private recentFaith(b: number, year: number, within: number): boolean {
-    return (this.faiths.get(b) ?? []).some((f) => f.year <= year && year - f.year < within);
-  }
 }
+
+function faithsTop(hx: CivState | undefined, b: number): number { return hx && hx.H[b * NH + H.fa0] >= 0 ? hx.H[b * NH + H.sh0] : 0; }
