@@ -177,6 +177,12 @@ function checkSeed(world: World, seed: number, samples: number, det: boolean): R
     const m = D.mother(id), f = D.father(id);
     if (m) { links++; if (!kids(m).some((c) => same(c, id))) fail(`${idStr(id)}: mother ${idStr(m)} does not list them`); if (sexOf(D, m) !== 0) fail(`${idStr(id)}: mother ${idStr(m)} is male`); }
     if (f) { links++; if (!kids(f).some((c) => same(c, id))) fail(`${idStr(id)}: father ${idStr(f)} does not list them`); if (sexOf(D, f) !== 1) fail(`${idStr(id)}: father ${idStr(f)} is female`); }
+    // both parents were alive and living at the birthplace at the end of the birth period
+    for (const par of [m, f]) {
+      if (!par) continue;
+      const here = D.life(par)?.some((s) => s.body === id.b && s.from <= id.q && id.q <= s.to && (id.q < s.to || s.end === 'alive'));
+      if (!here) fail(`${idStr(id)}: parent ${idStr(par)} was not alive on ${id.b} in period ${id.q}`);
+    }
     for (const c of kids(id)) {
       links++;
       if (!same(D.mother(c), id) && !same(D.father(c), id)) fail(`${idStr(id)}: child ${idStr(c)} names other parents`);
