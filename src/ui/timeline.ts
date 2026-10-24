@@ -16,6 +16,7 @@ export class Timeline {
   frontier = 0;
   playing = false;
   onChange: (year: number) => void = () => {};
+  onToggle: (playing: boolean) => void = () => {};
 
   constructor() {
     this.el = document.createElement('div');
@@ -62,6 +63,7 @@ export class Timeline {
     this.playBtn.textContent = this.playing ? 'Pause' : 'Play';
     this.playBtn.setAttribute('aria-label', this.playing ? 'Pause' : 'Play');
     if (this.playing && this.year >= Math.min(HORIZON, this.frontier) - 1) this.set(0, true);
+    this.onToggle(this.playing);
   }
 
   /** Called every frame while playing: constant speed in slider space. */
