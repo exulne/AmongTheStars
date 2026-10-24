@@ -26,6 +26,7 @@ const app = document.getElementById('app')!;
 app.innerHTML = `
   <canvas class="scene" aria-label="3D view of human space"></canvas>
   <div class="labels" aria-hidden="true"></div>
+  <div class="scrim" aria-hidden="true"></div>
   <canvas class="xfade" aria-hidden="true"></canvas>
   <header class="top">
     <div class="intro">
