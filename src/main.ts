@@ -14,6 +14,7 @@ import { GALAXIES, buildWorld } from './sim/world.ts';
 import { ChartStrip, globalSeries, type Series } from './ui/charts.ts';
 import { fmtNum, fmtYear, parseCount } from './ui/format.ts';
 import { Inspector } from './ui/inspector.ts';
+import { DataPanel } from './ui/dataPanel.ts';
 import { Search, type Hit } from './ui/search.ts';
 import { NOTABLE, Ticker, describe } from './ui/ticker.ts';
 import { Timeline } from './ui/timeline.ts';
@@ -39,6 +40,7 @@ app.innerHTML = `
       <label for="seed">Future #</label><input id="seed" inputmode="numeric" value="1" size="6">
       <button id="reroll" class="link" type="button">Another future</button>
       <button id="chronicle" class="link" type="button">Chronicle</button>
+      <button id="data" class="link" type="button" aria-pressed="false">Data</button>
       <span class="status num" aria-live="polite"></span>
     </div>
   </header>
@@ -147,6 +149,15 @@ const sim = new SimClient();
 const ctx: Ctx = { world, snap: null, year: 0, camera, controls, system: 0, body: world.mars, selected: null, t: 0, tm: 0, colorBy: 'stage' };
 let events: SimEvent[] = [];
 let history: HistoryMsg | null = null;
+const dataPanel = new DataPanel({
+  world, sim, year: () => ctx.year,
+  selectBody: (b) => select(asPick({ kind: 'body', id: b })),
+  selectedBody: () => (ctx.selected?.kind === 'body' ? ctx.selected.id : -1),
+});
+app.append(dataPanel.el);
+const dataBtn = app.querySelector<HTMLButtonElement>('#data')!;
+dataBtn.addEventListener('click', () => { dataPanel.toggle(); dataBtn.setAttribute('aria-pressed', String(dataPanel.open)); });
+dataPanel.onClose = () => dataBtn.setAttribute('aria-pressed', 'false');
 
 const views: Record<Level, View> = {
   universe: new UniverseView(),
@@ -629,6 +640,7 @@ function refreshPanels(): void {
     forecast: fcOn && fc ? oddsHtml(fc, (k) => row(GM[k])) : undefined,
   });
   charts.setYear(ctx.year);
+  dataPanel.refresh();
 }
 
 charts.setSource((key): Series | null => {

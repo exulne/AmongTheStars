@@ -8,6 +8,7 @@ import { HIST_FIELDS, NGM } from './metrics.ts';
 import { Chronicle, type Entry } from './chronicle.ts';
 import { Lives, type Biography, type PersonBrief } from './lives.ts';
 import { buildWorld } from './world.ts';
+import { handleData, isDataReq, type DataReq, type DataRes } from './dataApi.ts';
 
 const SNAP_EVERY = 20;
 // event types whose `a` is a second body (source, opponent, old capital); elsewhere it is a stage, tech or era index
@@ -22,7 +23,8 @@ export type ToWorker =
   | { type: 'person'; id: number; person: string; year: number }
   | { type: 'residentAt'; id: number; body: number; year: number; k: number }
   | { type: 'chronicle'; id: number; from: number; to: number; body?: number; query?: string; limit?: number; minWeight?: number }
-  | { type: 'inventions'; id: number };
+  | { type: 'inventions'; id: number }
+  | DataReq;
 
 export type FromWorker =
   | { type: 'progress'; seed: number; step: number; years: number[]; series: Float64Array; done: boolean; ms: number }
@@ -33,7 +35,8 @@ export type FromWorker =
   | { type: 'person'; id: number; pending?: boolean; bio: Biography | null }
   | { type: 'residentAt'; id: number; pending?: boolean; person: string | null }
   | { type: 'chronicle'; id: number; pending?: boolean; entries: Entry[] }
-  | { type: 'inventions'; id: number; pending?: boolean; list: { tech: number; year: number; entry: Entry | null }[] };
+  | { type: 'inventions'; id: number; pending?: boolean; list: { tech: number; year: number; entry: Entry | null }[] }
+  | DataRes;
 
 const world = buildWorld();
 let main: Engine | null = null;
@@ -93,9 +96,12 @@ function stateAt(step: number): Engine {
   return replay;
 }
 
+const dataEnv = { world, main: () => main, snaps: () => snaps, stateAt, post: (m: DataRes, t: Transferable[] = []) => post(m, t) };
+
 self.onmessage = (ev: MessageEvent<ToWorker>) => {
   const m = ev.data;
-  if (m.type === 'run') run(m.seed);
+  if (isDataReq(m)) handleData(m, dataEnv);
+  else if (m.type === 'run') run(m.seed);
   else if (m.type === 'state') {
     const e = stateAt(m.step);
     const S = e.st.S.slice();

@@ -9,6 +9,7 @@ type Msg<T extends FromWorker['type']> = Extract<FromWorker, { type: T }>;
 export type StateMsg = Msg<'state'>;
 export type HistoryMsg = Msg<'history'>;
 export type SimEvent = Msg<'events'>['events'][number];
+export type TableMsg = Msg<'table'>;
 
 export class SimClient {
   private w: Worker = new SimWorker();
@@ -59,6 +60,8 @@ export class SimClient {
   chronicle(from: number, to: number, opts: { body?: number; query?: string; limit?: number; minWeight?: number } = {}) { return this.ask<Msg<'chronicle'>>({ type: 'chronicle', from, to, ...opts }); }
   inventions() { return this.ask<Msg<'inventions'>>({ type: 'inventions' }); }
   state(step: number) { return this.ask<StateMsg>({ type: 'state', step }); }
+  /** every living settlement's full row at a step */
+  table(step: number) { return this.ask<Msg<'table'>>({ type: 'table', step }); }
   history(body: number) { return this.ask<HistoryMsg>({ type: 'history', body }); }
   events(fromYear: number, toYear: number, body?: number, limit?: number) {
     return this.ask<Msg<'events'>>({ type: 'events', fromYear, toYear, body, limit }).then((m) => m.events);
