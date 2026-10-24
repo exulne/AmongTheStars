@@ -113,11 +113,12 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
       for (let b = 0; b < world.bodies.length; b++) if (S[b * NF + F.stage] !== STAGE.NONE && !seen.has(b)) { fail(`body ${b} has stage but is not in settled`); break; }
     }
     for (let i = 0; i < st.g.length; i++) if (!Number.isFinite(st.g[i])) fail(`g[${i}] = ${st.g[i]} at ${y}`);
-    const row = e.series.subarray((st.step - 1) * NGM, st.step * NGM);
+    const row = e.series.subarray(st.step * NGM, (st.step + 1) * NGM);
     for (let k = 0; k < NGM; k++) if (!Number.isFinite(row[k])) fail(`series col ${k} = ${row[k]} at ${y}`);
     if (row[GM.settlements] !== living) fail(`series settlements ${row[GM.settlements]} vs ${living} living at ${y}`);
     if (row[GM.surveyed] !== survey) fail(`series surveyed ${row[GM.surveyed]} vs ${survey} at ${y}`);
     if (row[GM.pop] < 0 || row[GM.offEarth] > row[GM.pop] * (1 + 1e-9) || row[GM.interstellarPop] > row[GM.offEarth] * (1 + 1e-9)) fail(`population nesting broken at ${y}`);
+    if (row[GM.era] !== e.globals().eraIndex) fail(`series era ${row[GM.era]} vs state era ${e.globals().eraIndex} at step ${st.step}`);
     if (!Number.isInteger(row[GM.era]) || row[GM.era] < 0 || row[GM.era] >= ERAS.length) fail(`bad era ${row[GM.era]} at ${y}`);
     // ships
     for (const s of e.shipList()) {
@@ -151,8 +152,8 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
     const want = pending.get(to)!;
     const diff = sameState(r.snapshot(), want);
     if (diff) fail(`replay ${from}->${to} diverged: ${diff}`);
-    const i = eq(r.series.subarray(from * NGM, to * NGM), e.series.subarray(from * NGM, to * NGM));
-    if (i !== -1) fail(`replay ${from}->${to} series differs at row ${from + Math.floor(i / NGM)} col ${i % NGM}`);
+    const i = eq(r.series.subarray((from + 1) * NGM, (to + 1) * NGM), e.series.subarray((from + 1) * NGM, (to + 1) * NGM));
+    if (i !== -1) fail(`replay ${from}->${to} series differs at row ${from + 1 + Math.floor(i / NGM)} col ${i % NGM}`);
   }
   // same seed twice
   if (det) {

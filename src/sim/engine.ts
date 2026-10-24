@@ -121,6 +121,7 @@ export class Engine {
     }
     this.st = this.initialState(rng);
     this.recomputeFx();
+    this.record(0);
   }
 
 
@@ -142,7 +143,7 @@ export class Engine {
     const e = W.earth * NF;
     S[e + F.capital] = 9.2e9 * 60000; S[e + F.stability] = 0.62; S[e + F.medianAge] = 34;
     S[e + F.gini] = 0.62; S[e + F.water] = 1e12; S[e + F.metals] = 1e10; S[e + F.volatiles] = 1e10; S[e + F.rare] = 1e7;
-    S[e + F.he3] = 0;
+    S[e + F.he3] = 0; S[e + F.gdp] = 1.6e14; S[e + F.energy] = 2.3e13; S[e + F.capacity] = 1.15e10; S[e + F.food] = 1;
     // the premise: first crew on Mars, an Artemis-era base on the Moon
     const moon = W.bodies.find((b) => b.name === 'Moon')!.id;
     this.found(st, W.mars, STAGE.OUTPOST, 12, W.earth, 0);
@@ -212,8 +213,7 @@ export class Engine {
     // current era (bible §0.2: modifiers touch off-diagonals only, each capped),
     // so a bad decade makes War likelier to start but never makes it last forever.
     const era = g[G.era];
-    const shortage = st.step > 0 ? g[G.prevShortage] / 100 : 0;
-    const stab = st.step > 0 ? g[G.prevStability] : 0.6;
+    const shortage = g[G.prevShortage] / 100, stab = g[G.prevStability];
     const mod = [1, 1, stab > 0.65 ? 2 : 1, 1,
       (1 + 4 * shortage) * (1 + 0.2 * Math.min(g[G.rivals], 10)) * fx.war,  // war (bible §5.3)
       1,
@@ -383,10 +383,10 @@ export class Engine {
     this.politics(dt, year, E.war);
     this.globalEvents(dt, year);
 
-    this.record(st.step, year);
+    // series row k always describes the state at years[k], the same state a snapshot at step k holds
     st.step++;
     g[G.year] = this.years[st.step];
-    if (this.done) this.record(st.step, g[G.year]);
+    this.record(st.step);
   }
 
   private lagToCapital(b: number): number {
@@ -744,7 +744,7 @@ export class Engine {
     }
   }
 
-  private record(step: number, year: number): void {
+  private record(step: number): void {
     const st = this.st, S = st.S, g = st.g, row = this.series.subarray(step * NGM, step * NGM + NGM);
     row.fill(0);
     const earth = this.world.earth;
@@ -794,7 +794,6 @@ export class Engine {
         this.histLen++;
       }
     }
-    void year;
   }
 
   // ---- snapshots

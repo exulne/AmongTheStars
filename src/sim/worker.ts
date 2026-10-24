@@ -43,8 +43,8 @@ function run(seed: number): void {
       main.step();
       if (main.st.step % SNAP_EVERY === 0) snaps.push(main.snapshot());
     }
-    // rows are complete up to the current step only once the run is done
-    const complete = main.done ? main.st.step + 1 : main.st.step;
+    // row k is written when the engine reaches step k, so rows 0..step are complete
+    const complete = main.st.step + 1;
     const series = main.series.slice(sent * NGM, complete * NGM);
     post({ type: 'progress', seed, step: complete - 1, years: main.years, series, done: main.done, ms: performance.now() - t0 }, [series.buffer]);
     sent = complete;
