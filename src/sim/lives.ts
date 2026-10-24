@@ -6,7 +6,7 @@ import { EV, EVENT_NAMES, STAGE_NAMES, TECHS } from './catalog.ts';
 import { Demography, idStr, periodMid, type Id, type Stay } from './demography.ts';
 import { Engine } from './engine.ts';
 import { FLOW, SHIP_BODY, isShipBody, periodOf, periodStart, type Flow } from './ledger.ts';
-import { F, NF } from './metrics.ts';
+import { F, GM, NF, NGM } from './metrics.ts';
 import { hash01 } from './rng.ts';
 
 const GIVEN_F = ['Amara', 'Mei', 'Priya', 'Sofia', 'Fatima', 'Yuki', 'Elena', 'Zara', 'Nia', 'Lin', 'Hana', 'Ana', 'Lea', 'Aisha', 'Ingrid', 'Mariam', 'Chiara', 'Ife', 'Noor', 'Valentina', 'Saoirse', 'Thandiwe', 'Keiko', 'Rosa'];
@@ -17,9 +17,21 @@ const NUCLEUS = ['a', 'e', 'i', 'o', 'u', 'ae', 'ia', 'ou', 'y', 'ei', 'aa', 'uu
 const CODA = ['', '', 'n', 'r', 's', 'th', 'l', 'k', 'sh', 'm', 'x', 'nd'];
 const SHIP_A = ['Long', 'Quiet', 'Far', 'Second', 'Patient', 'Bright', 'Last', 'Iron', 'Slow', 'Open', 'Silent', 'Red', 'Morning', 'Deep', 'Faithful', 'Hungry', 'Unbroken', 'Distant', 'Gentle', 'Old'];
 const SHIP_B = ['Patience', 'Promise', 'Harvest', 'Covenant', 'Lantern', 'Tide', 'Ark', 'Seed', 'Shore', 'Wager', 'Hymn', 'Errand', 'Horizon', 'Return', 'Mercy', 'Venture', 'Compass', 'Vigil', 'Ember', 'Fathom'];
+const JOBS_ALWAYS = ['teacher', 'medic', 'cook', 'artist', 'administrator', 'trader', 'engineer', 'carer'];
+const JOBS_BY_TECH: [string, string[]][] = [
+  ['kilopower', ['reactor operator']], ['robotics', ['robot wrangler']], ['fusion', ['fusion engineer', 'ice hauler', 'orbital welder']],
+  ['agi', ['AI auditor', 'machine ethicist']], ['orbitalHabitats', ['habitat architect', 'spin-gravity engineer']],
+  ['genMed', ['gene counsellor']], ['bioAdapt', ['body sculptor']], ['terraform', ['terraformer', 'ecologist']],
+  ['dyson1', ['swarm tender', 'mirror pilot']], ['laserComms', ['light-lag diplomat']], ['nanofab', ['matter designer']],
+  ['genShip', ['ark pilot']], ['mindUpload', ['mind-host', 'upload archivist']], ['lifeExt', ['third-career counsellor']],
+  ['psychohistory', ['forecaster']], ['matrioshka', ['dream architect']],
+];
+// by era index (Expansion, Consolidation, Golden Age, Stagnation, War, Pandemic, Collapse, Renaissance)
+const JOBS_BY_ERA: Record<number, string[]> = {
+  0: ['surveyor', 'outfitter'], 2: ['philosopher', 'composer'], 3: ['clerk'], 4: ['soldier', 'drone pilot', 'medic'],
+  5: ['quarantine warden', 'epidemiologist'], 6: ['scavenger', 'salvager'], 7: ['historian', 'teacher'],
+};
 const JOBS_EARLY = ['hydroponics technician', 'life-support engineer', 'regolith miner', 'teacher', 'medic', 'fabricator', 'pilot', 'geologist', 'robot wrangler', 'reactor operator', 'trader', 'administrator', 'cook', 'artist'];
-const JOBS_MID = ['fusion engineer', 'habitat architect', 'ice hauler', 'orbital welder', 'gene counsellor', 'AI auditor', 'teacher', 'surgeon', 'terraformer', "ship's officer", 'archivist', 'magistrate', 'composer', 'xenogeologist'];
-const JOBS_LATE = ['swarm tender', 'mind-host', 'ark pilot', 'stellar engineer', 'lineage keeper', 'translator between colonies', 'dream architect', 'teacher', 'diplomat', 'ringwright', 'historian of Earth', 'farmer of light', 'chronicler'];
 const MOODS_GOOD = ['content', 'hopeful', 'proud', 'curious', 'in love'];
 const MOODS_BAD = ['restless', 'homesick', 'tired', 'grieving', 'angry'];
 
@@ -30,7 +42,7 @@ const MORTAL: Record<number, string> = {
   [EV['Solar storm']]: 'a solar storm',
 };
 
-export interface PersonBrief { id: string; name: string; sex: 'f' | 'm'; born: number; age: number; place: string; job: string; alive: boolean }
+export interface PersonBrief { id: string; name: string; sex: 'f' | 'm'; born: number; age: number; place: string; job: string; alive: boolean; body?: string }
 
 export interface Biography extends PersonBrief {
   bornAt: number; bornAtName: string;
@@ -196,13 +208,45 @@ export class Lives {
 
   name(id: Id): string { return `${this.givenName(id, this.sexOf(id))} ${this.surname(id)}`; }
 
+  private techBy(tech: string, year: number): boolean {
+    const i = TECHS.findIndex((t) => t.id === tech);
+    return i >= 0 && this.e.st.techDone[i] >= 0 && this.e.st.techDone[i] <= year;
+  }
+  private eraAt(year: number): number {
+    const ys = this.e.years;
+    let lo = 0, hi = ys.length - 1;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (ys[m] <= year) lo = m; else hi = m - 1; }
+    return this.e.series[lo * NGM + GM.era];
+  }
+  /** Working lives stretch with medicine: retirement comes at ~80% of what people expect to live. */
+  private expectedLife(year: number): number {
+    return this.techBy('mindUpload', year) ? 320 : this.techBy('lifeExt', year) ? 220 : this.techBy('genMed', year) ? 105 : 85;
+  }
+
+  /** Jobs exist when the technology and the times call for them. */
   private job(id: Id, age: number, year: number): string {
     if (age < 6) return 'child';
     if (age < 20) return 'student';
-    const tier = year < 250 ? JOBS_EARLY : year < 1200 ? JOBS_MID : JOBS_LATE;
-    const career = Math.floor((age - 20) / 15);
-    if (age > 85 && hash01(id.b, id.q, id.i, 41) < 0.7) return 'retired';
-    return tier[Math.floor(hash01(id.b, id.q, id.i, 42, career) * tier.length)];
+    const life = this.expectedLife(year);
+    if (age > life * 0.8 && hash01(id.b, id.q, id.i, 41) < 0.75) return 'retired';
+    const pool = [...JOBS_ALWAYS];
+    for (const [tech, jobs] of JOBS_BY_TECH) if (this.techBy(tech, year)) pool.push(...jobs);
+    if (!this.techBy('fusion', year)) pool.push(...JOBS_EARLY);
+    const era = this.eraAt(year);
+    const eraJobs = JOBS_BY_ERA[era] ?? [];
+    // a career changes every couple of decades, longer when lives are long
+    const career = Math.floor((age - 20) / Math.max(15, life / 6));
+    const h = hash01(id.b, id.q, id.i, 42, career);
+    if (eraJobs.length && hash01(id.b, id.q, id.i, 43, Math.floor(year / 10)) < 0.18) return eraJobs[Math.floor(h * eraJobs.length)];
+    return pool[Math.floor(h * pool.length)];
+  }
+
+  /** baseline, adapted (engineered for their world) or uploaded */
+  private bodyKind(id: Id, age: number, year: number): string {
+    const born = year - age;
+    if (this.techBy('mindUpload', year) && age > 60 && hash01(id.b, id.q, id.i, 71) < Math.min(0.6, (year - this.e.st.techDone[TECHS.findIndex((t) => t.id === 'mindUpload')]) / 800)) return 'uploaded';
+    if (this.techBy('bioAdapt', born) && !isShipBody(id.b) && this.e.world.bodies[id.b] && Math.abs(1 - this.e.world.bodies[id.b].g) > 0.3) return 'adapted to this world';
+    return 'baseline human';
   }
 
   brief(id: Id, year: number): PersonBrief {
@@ -214,7 +258,7 @@ export class Lives {
     const stay = this.stayAt(life, year);
     return {
       id: idStr(id), name: this.name(id), sex: this.sexOf(id) === 0 ? 'f' : 'm', born, age,
-      place: this.bodyName(stay?.body ?? id.b), job: this.job(id, age, year), alive: year >= born && year < deathYear,
+      place: this.bodyName(stay?.body ?? id.b), job: this.job(id, age, year), alive: year >= born && year < deathYear, body: this.bodyKind(id, age, year),
     };
   }
 

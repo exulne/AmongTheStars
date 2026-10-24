@@ -7,6 +7,7 @@ import { Engine, type SimState } from './engine.ts';
 import { HIST_FIELDS, NGM } from './metrics.ts';
 import { Chronicle, type Entry } from './chronicle.ts';
 import { Lives, type Biography, type PersonBrief } from './lives.ts';
+import { SocietyModel, type Society } from './society.ts';
 import { buildWorld } from './world.ts';
 
 const SNAP_EVERY = 20;
@@ -22,7 +23,8 @@ export type ToWorker =
   | { type: 'person'; id: number; person: string; year: number }
   | { type: 'residentAt'; id: number; body: number; year: number; k: number }
   | { type: 'chronicle'; id: number; from: number; to: number; body?: number; query?: string; limit?: number; minWeight?: number }
-  | { type: 'inventions'; id: number };
+  | { type: 'inventions'; id: number }
+  | { type: 'society'; id: number; body: number; step: number };
 
 export type FromWorker =
   | { type: 'progress'; seed: number; step: number; years: number[]; series: Float64Array; done: boolean; ms: number }
@@ -33,7 +35,8 @@ export type FromWorker =
   | { type: 'person'; id: number; pending?: boolean; bio: Biography | null }
   | { type: 'residentAt'; id: number; pending?: boolean; person: string | null }
   | { type: 'chronicle'; id: number; pending?: boolean; entries: Entry[] }
-  | { type: 'inventions'; id: number; pending?: boolean; list: { tech: number; year: number; entry: Entry | null }[] };
+  | { type: 'inventions'; id: number; pending?: boolean; list: { tech: number; year: number; entry: Entry | null }[] }
+  | { type: 'society'; id: number; pending?: boolean; society: Society | null };
 
 const world = buildWorld();
 let main: Engine | null = null;
@@ -42,12 +45,14 @@ let snaps: SimState[] = [];
 let runToken = 0;
 let lives: Lives | null = null;
 let chron: Chronicle | null = null;
+let society: SocietyModel | null = null;
 /** People need the whole ledger (and every event) of the run, so they wait for it to finish. */
 function people(): Lives | null {
   if (!main || !main.done) return null;
   if (!lives) {
     lives = new Lives(main);
     const c = (chron = new Chronicle(main, lives));
+    society = new SocietyModel(main, (b, n) => c.faithName(b, n), (b, n) => lives!.coinedWord(b, n));
     lives.deeds = (pid, stays) => c.deedsOf(pid, stays).map((en) => ({ year: en.year, text: en.segs.map((s) => (typeof s === 'string' ? s : s.t)).join('') }));
   }
   return lives;
@@ -58,7 +63,7 @@ const post = (m: FromWorker, transfer: Transferable[] = []) => (self as unknown 
 function run(seed: number): void {
   const token = ++runToken;
   main = new Engine(world, seed);
-  lives = null; chron = null;
+  lives = null; chron = null; society = null;
   replay = new Engine(world, seed);
   replay.logEvents = false;
   snaps = [main.snapshot()];
@@ -125,6 +130,13 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
   } else if (m.type === 'chronicle') {
     const ok = people() && chron;
     post({ type: 'chronicle', id: m.id, pending: !ok, entries: ok ? chron!.list(m.from, m.to, { body: m.body, query: m.query, limit: m.limit, minWeight: m.minWeight }) : [] });
+  } else if (m.type === 'society') {
+    const ok = people() && society;
+    if (!ok) post({ type: 'society', id: m.id, pending: true, society: null });
+    else {
+      const e = stateAt(m.step);
+      post({ type: 'society', id: m.id, society: society!.at(m.body, e.years[e.st.step], e.st.S, e.st.techDone, e.st.g[1]) });
+    }
   } else if (m.type === 'inventions') {
     const ok = people() && chron;
     post({ type: 'inventions', id: m.id, pending: !ok, list: ok ? chron!.inventions() : [] });

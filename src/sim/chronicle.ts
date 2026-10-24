@@ -6,6 +6,8 @@
 // biographies mention what they did.
 
 import { ERAS, EV, TECHS } from './catalog.ts';
+import { GC, NGC } from './engine.ts';
+import { EFFECTS, FIELDS, effectText, inventionName } from './invent.ts';
 import { periodMid, type Id } from './demography.ts';
 import type { Engine, SimEvent } from './engine.ts';
 import { FLOW, isShipBody, periodOf } from './ledger.ts';
@@ -19,11 +21,12 @@ const MAJOR = new Set([
   EV.Technology, EV['Colony founded'], EV['Ship launched'], EV['Ship arrived'], EV['Ship lost'], EV.Independence, EV.War,
   EV['New faith'], EV.Speciation, EV['Megastructure complete'], EV['Era change'], EV['First contact'], EV['Dark forest strike'],
   EV['Gamma-ray burst'], EV.Supernova, EV.Plague, EV['Asteroid strike'], EV.Collapse, EV['Mutiny in transit'], EV['AI schism'], EV['Kessler cascade'],
+  EV.Invention, EV['No-go theorem'],
 ]);
 const WEIGHT: Partial<Record<number, number>> = {
   [EV['First contact']]: 10, [EV['Dark forest strike']]: 10, [EV['Gamma-ray burst']]: 8, [EV.Supernova]: 8, [EV.Technology]: 7,
   [EV.Speciation]: 6, [EV.Independence]: 6, [EV.War]: 5, [EV['Colony founded']]: 5, [EV['Megastructure complete']]: 5,
-  [EV['Ship launched']]: 3, [EV['Ship arrived']]: 4, [EV['Ship lost']]: 4, [EV['New faith']]: 3, [EV['Era change']]: 2, [EV.Plague]: 2,
+  [EV['No-go theorem']]: 6, [EV.Invention]: 2, [EV['Ship launched']]: 3, [EV['Ship arrived']]: 4, [EV['Ship lost']]: 4, [EV['New faith']]: 3, [EV['Era change']]: 2, [EV.Plague]: 2,
 };
 const FAITH_FORM = ['the {X} Way', 'the Church of {X}', 'the {X} Covenant', 'the Fellowship of {X}', 'the {X} Reckoning', 'the Quiet of {X}', 'the {X} Return'];
 
@@ -32,10 +35,13 @@ export class Chronicle {
   private L: Lives;
   private cache = new Map<number, Entry | null>();
   private major: number[] = [];
+  private genEvent = new Map<number, number>(); // generated invention → its event index
+  private genNames = new Map<number, string>();
 
   constructor(e: Engine, lives: Lives) {
     this.e = e; this.L = lives;
     e.events.forEach((ev, i) => {
+      if (ev.type === EV.Invention) this.genEvent.set(ev.a, i);
       if (!MAJOR.has(ev.type)) return;
       if (ev.type === EV.Plague && ev.a < 0.08) return;
       this.major.push(i);
@@ -60,6 +66,21 @@ export class Chronicle {
     return FAITH_FORM[Math.floor(hash01(b, n, 17) * FAITH_FORM.length)].replace('{X}', root);
   }
 
+  /** Name of a technology: spine techs by catalog, generated ones after their inventor and place. */
+  techName(t: number): string {
+    if (t < TECHS.length) return TECHS[t].name;
+    const k = t - TECHS.length;
+    const got = this.genNames.get(k);
+    if (got) return got;
+    const i = this.genEvent.get(k);
+    const ev = i !== undefined ? this.e.events[i] : null;
+    const g = this.e.st.gen, o = k * NGC;
+    const inv = ev ? this.pick(ev.body, ev.year, i! * 7 + 5, 24, 85) : null;
+    const name = inventionName(k * 31 + this.e.seed, FIELDS[g[o + GC.field]], FIELDS[g[o + GC.other]], inv ? this.L.surname(inv) : this.L.coinedWord(Math.max(0, ev?.body ?? 0), k), ev ? this.name(ev.body) : 'Earth');
+    this.genNames.set(k, name);
+    return name;
+  }
+
   entry(i: number): Entry | null {
     if (this.cache.has(i)) return this.cache.get(i)!;
     const ev = this.e.events[i];
@@ -82,6 +103,19 @@ export class Chronicle {
           const dispute = hash01(i, 3) < 0.33;
           segs.push(' The same year, working independently on ', at(ev.b), ', ', who(twin), dispute ? ' gets there too, and the argument over who was first outlives them both.' : ' arrives at the same result.');
         }
+        break;
+      }
+      case EV.Invention: {
+        const k = ev.a, g = this.e.st.gen, o = k * NGC;
+        const inv = this.pick(ev.body, y, i * 7 + 5, 24, 85);
+        const big = ev.b > 3.2;
+        segs.push(big ? 'A breakthrough: ' : '', who(inv), ' of ', at(ev.body), ` builds the ${this.techName(TECHS.length + k)}, crossing ${this.techName(g[o + GC.a])} with ${this.techName(g[o + GC.b])}: ${effectText(EFFECTS[g[o + GC.key]], g[o + GC.size])}.`);
+        const en = { year: y, type: ev.type, segs, people, places, weight: big ? 4 : 2 };
+        return en;
+      }
+      case EV['No-go theorem']: {
+        const prover = this.pick(ev.body, y, i, 25, 90);
+        segs.push(who(prover), ' of ', at(ev.body), ` proves that ${TECHS[ev.a].name.toLowerCase()} is impossible in this universe. Generations of effort end in a theorem.`);
         break;
       }
       case EV['Colony founded']: {

@@ -365,6 +365,7 @@ function select(p: Pickable | null): void {
 inspector.api = {
   chronicle: (f, t, o) => sim.chronicle(f, t, o),
   inventions: () => sim.inventions(),
+  society: (b, y) => sim.society(b, sim.stepAt(y)),
   residents: (b, y, o, n) => sim.residents(b, y, o, n),
   person: (id, y) => sim.person(id, y),
   residentAt: (b, y, k) => sim.residentAt(b, y, k),
