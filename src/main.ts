@@ -932,10 +932,11 @@ sim.onProgress = () => {
 
 // ------------------------------------------------------------------ URL: #future3-y1360-b123-lplanet
 
-let pendingYear: number | null = null, hashTimer = 0;
+let pendingYear: number | null = null, hashTimer = 0, leaving = false;
 const REF_CODE: Record<string, string> = { body: 'b', system: 's', galaxy: 'g', humanspace: 'h', city: 'c' };
 function writeHash(): void {
   clearTimeout(hashTimer);
+  if (leaving) return;
   hashTimer = window.setTimeout(() => {
     const sel = ctx.selected;
     const parts = [`future${sim.seed}`, `y${Math.round(ctx.year)}`];
@@ -1192,7 +1193,8 @@ function shipLight(): void {
 // ------------------------------------------------------------------ go
 
 // the app only ever replaces the hash, so a change here is someone pasting or editing a link: go there
-window.addEventListener('hashchange', () => location.reload());
+// (and stop writing our own hash first, or the reload would land back where we were)
+window.addEventListener('hashchange', () => { leaving = true; clearTimeout(hashTimer); setTimeout(() => location.reload(), 0); });
 const fromHash = readHash();
 if (fromHash.seed) seedInput.value = String(fromHash.seed);
 startRun(fromHash.seed || 1);
