@@ -437,17 +437,17 @@ export class Engine {
     }
     const rel = Math.min(0.9, fx.reliability);
     if (stg <= STAGE.COLONY && r() < dt * 0.012 * (1 - rel)) {
-      const k = 0.05 + r() * 0.3; S[o + F.pop] = pop * (1 - k); S[o + F.stability] -= 0.08; this.log(EV['Habitat breach'], b, k);
+      const k = 0.05 + r() * 0.3; S[o + F.pop] *= 1 - k; S[o + F.stability] -= 0.08; this.log(EV['Habitat breach'], b, k);
     }
     if (this.bSys[b] === 0 && this.bFlux[b] > 0.2 && stg <= STAGE.TOWN && r() < dt * 0.01) {
-      const k = 0.01 + r() * 0.05; S[o + F.pop] = pop * (1 - k); this.log(EV['Solar storm'], b, k);
+      const k = 0.01 + r() * 0.05; S[o + F.pop] *= 1 - k; this.log(EV['Solar storm'], b, k);
     }
     if (r() < dt * 0.00015) {
-      const k = 0.1 + r() * 0.6; S[o + F.pop] = pop * (1 - k); S[o + F.capital] *= 1 - k; this.log(EV['Asteroid strike'], b, k);
-      if (k > 0.65 && stg <= STAGE.COLONY) { S[o + F.stage] = STAGE.DEAD; S[o + F.pop] = 0; this.st.g[G.dead]++; }
+      const k = 0.1 + r() * 0.6; S[o + F.pop] *= 1 - k; S[o + F.capital] *= 1 - k; this.log(EV['Asteroid strike'], b, k);
+      if (k > 0.65 && stg <= STAGE.COLONY) { S[o + F.stage] = STAGE.DEAD; S[o + F.pop] = 0; this.st.g[G.dead]++; return; }
     }
     if (pop > 1e5 && r() < dt * 0.0015 * ERA_FX[this.st.g[G.era]].death) {
-      const k = 0.02 + r() * 0.15; S[o + F.pop] = pop * (1 - k); this.log(EV.Plague, b, k);
+      const k = 0.02 + r() * 0.15; S[o + F.pop] *= 1 - k; this.log(EV.Plague, b, k);
     }
     if (short > 0.3 && r() < dt * 0.1) { S[o + F.pop] *= 1 - short * 0.1; this.log(EV.Famine, b, short); }
     if (S[o + F.stability] < 0.3 && r() < dt * 0.05) { S[o + F.capital] *= 0.9; S[o + F.stability] += 0.1; this.log(EV.Revolt, b); }
