@@ -224,16 +224,25 @@ export class Demography {
     const flows = (this.index(this.outIdx, this.L.outBy, b, (f) => f.p).get(p) ?? []).map((id) => this.L.flows[id]);
     if (!flows.length) return;
     const pool = t.active.filter((x) => x.alive > 0);
-    const age = (x: Pool) => periodMid(p) - periodMid(x.q);
+    const mid = periodMid(p);
+    // ages are fixed within the period: classify once, not once per flow (Earth has hundreds of flows a period)
+    const isAdult = pool.map((x) => { const a = mid - periodMid(x.q); return a >= AGE_ADULT[0] && a <= AGE_ADULT[1]; });
     const remain = pool.map((x) => x.alive);
+    // one plain pass per flow over the nonzero weights (sparse), then a sparse draw
+    const idx: number[] = [], wv: number[] = [];
     for (const f of flows) {
-      const adult = pool.map((x, i) => (age(x) >= AGE_ADULT[0] && age(x) <= AGE_ADULT[1] ? remain[i] : 0));
-      const useAdults = adult.reduce((a, c) => a + c, 0) >= f.n;
-      const w = useAdults ? adult : remain.slice();
-      const c = draw(f.n, w, useAdults ? adult : remain, 8, hash01(this.seed, f.id, 41));
-      c.forEach((cnt, i) => {
+      let adults = 0;
+      for (let i = 0; i < pool.length; i++) if (isAdult[i]) adults += remain[i];
+      const useAdults = adults >= f.n;
+      idx.length = 0; wv.length = 0;
+      for (let i = 0; i < pool.length; i++) {
+        const v = useAdults && !isAdult[i] ? 0 : remain[i];
+        if (v > 0) { idx.push(i); wv.push(v); }
+      }
+      const c = draw(f.n, wv, wv, 8, hash01(this.seed, f.id, 41));
+      c.forEach((cnt, j) => {
         if (cnt <= 0) return;
-        const x = pool[i];
+        const i = idx[j], x = pool[i];
         remain[i] -= cnt;
         const ranges = x.out.get(p) ?? [];
         ranges.push({ flow: f.id, start: remain[i], count: cnt });
