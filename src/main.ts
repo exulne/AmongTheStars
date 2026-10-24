@@ -8,12 +8,14 @@ import './style.css';
 import { STAGE_NAMES } from './sim/catalog.ts';
 import { SimClient, type HistoryMsg, type SimEvent, type StateMsg } from './sim/client.ts';
 import { GM, HIST_FIELDS, NGM, SETTLEMENT_LABELS } from './sim/metrics.ts';
-import { buildWorld } from './sim/world.ts';
+import { GALAXIES, buildWorld } from './sim/world.ts';
 import { ChartStrip, globalSeries, type Series } from './ui/charts.ts';
+import { fmtNum } from './ui/format.ts';
 import { Inspector } from './ui/inspector.ts';
+import { Search, type Hit } from './ui/search.ts';
 import { Timeline } from './ui/timeline.ts';
 import { STAGE_CSS } from './view/textures.ts';
-import { GalaxyView, LocalView, LEVELS, PlanetView, SystemView, UniverseView, makeSky, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
+import { GalaxyView, LocalView, LEVELS, PlanetView, SystemView, UniverseView, alive, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
 
 // ------------------------------------------------------------------ DOM
 
@@ -29,6 +31,7 @@ app.innerHTML = `
       <nav class="crumbs" aria-label="Zoom level"></nav>
     </div>
     <div class="run">
+      <div class="search-slot"></div>
       <label for="seed">Future #</label><input id="seed" inputmode="numeric" value="1" size="6">
       <button id="reroll" class="link" type="button">Another future</button>
       <span class="status num" aria-live="polite"></span>
@@ -431,7 +434,91 @@ window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
   if (e.code === 'Space') { e.preventDefault(); timeline.toggle(); }
   if (e.key === 'Escape') select(null);
+  if (e.key === '/') { e.preventDefault(); search.focus(); }
 });
+
+// ------------------------------------------------------------------ search
+
+const sysLower = world.systems.map((s) => s.name.toLowerCase());
+const bodyLower = world.bodies.map((b) => b.name.toLowerCase());
+
+function matchScore(name: string, q: string): number {
+  if (name === q) return 4;
+  if (name.startsWith(q)) return 3;
+  const i = name.indexOf(q);
+  return i < 0 ? 0 : name[i - 1] === ' ' || name[i - 1] === '-' ? 2 : 1;
+}
+
+function bodySub(id: number): string {
+  const b = world.bodies[id], st = stageOf(ctx.snap, id);
+  const place = `${b.kind} in ${world.systems[b.system].name}`;
+  return alive(st) ? `${place} · ${STAGE_NAMES[st]} · ${fmtNum(popOf(ctx.snap, id))}` : st >= 0 ? `${place} · ${STAGE_NAMES[st].toLowerCase()}` : place;
+}
+
+function findBodies(q: string, limit: number): Hit[] {
+  return scoreBodies(q).slice(0, limit).map((x) => x.h);
+}
+
+function scoreBodies(q: string): { h: Hit; s: number }[] {
+  const out: { h: Hit; s: number }[] = [];
+  bodyLower.forEach((n, id) => {
+    const m = matchScore(n, q);
+    if (!m) return;
+    const st = stageOf(ctx.snap, id);
+    out.push({ h: { kind: 'body', id, name: world.bodies[id].name, sub: '' }, s: m * 10 + (alive(st) ? 8 + Math.log10(1 + popOf(ctx.snap, id)) : st >= 0 ? 2 : 0) });
+  });
+  return out.sort((a, b) => b.s - a.s).slice(0, 12).map((x) => ({ h: { ...x.h, sub: bodySub(x.h.id) }, s: x.s }));
+}
+
+function find(raw: string): Hit[] {
+  const q = raw.toLowerCase().replace(/\s+/g, ' ');
+  const res = q.match(/^(?:resident|person|citizen)?\s*#\s*([\d,_ ]+?)\s*(?:(?:of|on|in|at|from)\s+(.*))?$/) ?? q.match(/^(?:resident|person|citizen)\s+#?\s*([\d,_]+)\s*(?:(?:of|on|in|at|from)\s+(.*))?$/);
+  if (res) {
+    const n = Math.max(1, Number(res[1].replace(/[^0-9]/g, '')) || 1);
+    const where = res[2]?.trim();
+    const bodies = where ? findBodies(where, 6) : ctx.selected?.kind === 'body' ? [{ kind: 'body' as const, id: ctx.selected.id, name: '', sub: '' }] : [];
+    return bodies.filter((b) => alive(stageOf(ctx.snap, b.id))).map((b) => ({
+      kind: 'resident', id: b.id, n, name: `Resident #${n.toLocaleString('en-US')} of ${world.bodies[b.id].name}`,
+      sub: `${fmtNum(popOf(ctx.snap, b.id))} people live there in ${Math.round(2040 + ctx.year)}`,
+    }));
+  }
+  if (q.length < 2 && !/\d/.test(q)) return [];
+  const hits: { h: Hit; s: number }[] = [];
+  GALAXIES.forEach((g, i) => {
+    const m = matchScore(g.name.toLowerCase(), q);
+    if (m) hits.push({ h: { kind: 'galaxy', id: i, name: g.name, sub: g.name === 'Milky Way' ? 'our galaxy' : `galaxy · ${fmtNum(g.dist)} ly` }, s: m * 10 + 6 });
+  });
+  sysLower.forEach((n, id) => {
+    const m = matchScore(n, q);
+    if (!m) return;
+    const s = world.systems[id], sum = systemSummary(world, ctx.snap, id);
+    hits.push({
+      h: { kind: 'system', id, name: s.name, sub: `${s.spec} star · ${s.dist < 0.01 ? 'home' : `${fmtNum(s.dist)} ly`}${sum.n ? ` · ${sum.n} settlement${sum.n > 1 ? 's' : ''}, ${fmtNum(sum.pop)}` : ''}` },
+      s: m * 10 + (sum.n ? 7 + Math.log10(1 + sum.pop) * 0.5 : 0) + (s.real ? 3 : 0),
+    });
+  });
+  // a system ranks just above its own worlds
+  for (const h of hits) h.s += 1;
+  return hits.concat(scoreBodies(q)).sort((a, b) => b.s - a.s).slice(0, 9).map((x) => x.h);
+}
+
+const search = new Search(find);
+app.querySelector('.search-slot')!.replaceWith(search.el);
+search.onPick = (h) => {
+  pull = null;
+  if (h.kind === 'galaxy') {
+    const name = GALAXIES[h.id].name;
+    select({ kind: 'galaxy', id: h.id, name, pos: new THREE.Vector3() });
+    setLevel(name === 'Milky Way' ? 'galaxy' : 'universe');
+  } else if (h.kind === 'system') {
+    select(asPick({ kind: 'system', id: h.id }));
+    if (level !== 'system' || ctx.system !== h.id) setLevel('system', { kind: 'system', id: h.id }, () => { ctx.system = h.id; });
+  } else {
+    if (h.kind === 'resident') inspector.showResident(h.id, h.n!);
+    select(asPick({ kind: 'body', id: h.id }));
+    if (level !== 'planet' || ctx.body !== h.id) setLevel('planet', { kind: 'body', id: h.id }, () => { ctx.body = h.id; ctx.system = world.bodies[h.id].system; });
+  }
+};
 
 // ------------------------------------------------------------------ go
 

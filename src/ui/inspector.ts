@@ -31,6 +31,7 @@ export class Inspector {
   onSelect: (p: Pickable) => void = () => {};
   onDive: (p: Pickable) => void = () => {};
   private last: InspectorCtx | null = null;
+  private revealPerson = false;
 
   constructor() {
     this.el = document.createElement('aside');
@@ -60,6 +61,14 @@ export class Inspector {
     });
   }
 
+  /** Open resident #n (1-based) of a settlement on the next render. */
+  showResident(body: number, n: number): void {
+    this.peopleBody = body;
+    this.peoplePage = Math.floor((n - 1) / 12);
+    this.openPerson = n - 1;
+    this.revealPerson = true;
+  }
+
   render(c: InspectorCtx): void {
     this.last = c;
     const s = c.selected;
@@ -72,6 +81,8 @@ export class Inspector {
     const scroll = this.el.scrollTop;
     this.body.innerHTML = html;
     this.el.scrollTop = scroll;
+    const open = this.revealPerson && c.snap ? this.body.querySelector<HTMLElement>('.person.open') : null;
+    if (open) { this.revealPerson = false; open.scrollIntoView({ block: 'center' }); }
   }
 
   private kv(rows: [string, string][]): string {
@@ -188,6 +199,7 @@ export class Inspector {
     const S = c.snap!.S;
     const ctx = { founded: S[body * NF + F.founded], gravity: c.world.bodies[body].g, divergence: S[body * NF + F.divergence], culture: S[body * NF + F.culture], medianAge: S[body * NF + F.medianAge] || 30 };
     const per = 12;
+    if (this.revealPerson && this.openPerson >= count) { this.openPerson = count - 1; this.peoplePage = Math.floor(this.openPerson / per); }
     const pages = Math.ceil(count / per);
     const page = Math.min(this.peoplePage, pages - 1);
     const items: string[] = [];
