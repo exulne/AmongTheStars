@@ -262,27 +262,29 @@ export const TECHS: Tech[] = [
 
 export const ERAS = ['Expansion', 'Consolidation', 'Golden Age', 'Stagnation', 'War', 'Pandemic', 'Collapse', 'Renaissance'] as const;
 
-// rows: from, cols: to. Per decade.
+// rows: from, cols: to. Per decade. The bible's §5.2 matrix with its secession
+// crisis folded into Consolidation and its AI transition into Golden Age;
+// Renaissance is ours (the way out of a long dark age).
 export const ERA_MATRIX: number[][] = [
-  /* Expansion     */[0.62, 0.14, 0.08, 0.06, 0.06, 0.03, 0.005, 0.005],
-  /* Consolidation */[0.18, 0.5, 0.12, 0.12, 0.05, 0.02, 0.005, 0.005],
-  /* Golden Age    */[0.15, 0.12, 0.6, 0.07, 0.03, 0.02, 0.005, 0.005],
-  /* Stagnation    */[0.08, 0.14, 0.03, 0.55, 0.1, 0.04, 0.05, 0.01],
-  /* War           */[0.05, 0.2, 0.01, 0.15, 0.45, 0.04, 0.09, 0.01],
-  /* Pandemic      */[0.05, 0.25, 0.01, 0.2, 0.05, 0.4, 0.04, 0.0],
-  /* Collapse      */[0.01, 0.05, 0.0, 0.2, 0.08, 0.03, 0.48, 0.15],
+  /* Expansion     */[0.55, 0.24, 0.09, 0.04, 0.05, 0.02, 0.01, 0.0],
+  /* Consolidation */[0.2, 0.5, 0.13, 0.1, 0.04, 0.02, 0.01, 0.0],
+  /* Golden Age    */[0.2, 0.17, 0.47, 0.1, 0.03, 0.02, 0.01, 0.0],
+  /* Stagnation    */[0.08, 0.23, 0.04, 0.5, 0.08, 0.03, 0.04, 0.0],
+  /* War           */[0.05, 0.32, 0.02, 0.15, 0.35, 0.04, 0.07, 0.0],
+  /* Pandemic      */[0.03, 0.33, 0.01, 0.25, 0.06, 0.25, 0.07, 0.0],
+  /* Collapse      */[0.01, 0.05, 0.0, 0.12, 0.05, 0.01, 0.7, 0.06],
   /* Renaissance   */[0.3, 0.15, 0.2, 0.05, 0.03, 0.02, 0.0, 0.25],
 ];
 
-// growth, research, launch, stability drift/yr, death, war-prob multiplier
+// growth, research, launch, stability drift/yr, death, war-prob multiplier (bible §5.1)
 export const ERA_FX: { growth: number; research: number; launch: number; stab: number; death: number; war: number }[] = [
-  { growth: 1.15, research: 1.1, launch: 1.6, stab: 0.002, death: 1, war: 1 },
-  { growth: 1.0, research: 1.05, launch: 0.9, stab: 0.006, death: 1, war: 0.6 },
-  { growth: 1.1, research: 1.6, launch: 1.2, stab: 0.008, death: 0.9, war: 0.3 },
-  { growth: 0.85, research: 0.6, launch: 0.5, stab: -0.003, death: 1.05, war: 1.2 },
-  { growth: 0.7, research: 0.8, launch: 0.6, stab: -0.012, death: 1.5, war: 6 },
-  { growth: 0.6, research: 0.7, launch: 0.3, stab: -0.008, death: 2.5, war: 0.8 },
-  { growth: 0.4, research: 0.2, launch: 0.1, stab: -0.02, death: 2, war: 2 },
+  { growth: 1.05, research: 1.1, launch: 1.5, stab: 0.002, death: 1, war: 1 },
+  { growth: 1.0, research: 1.0, launch: 0.9, stab: 0.006, death: 1, war: 0.6 },
+  { growth: 0.95, research: 1.3, launch: 1.3, stab: 0.008, death: 0.95, war: 0.3 },
+  { growth: 0.9, research: 0.7, launch: 0.5, stab: -0.003, death: 1.05, war: 1.2 },
+  { growth: 0.9, research: 0.6, launch: 0.6, stab: -0.012, death: 1.1, war: 6 },
+  { growth: 0.95, research: 0.7, launch: 0.4, stab: -0.008, death: 1.3, war: 0.8 },
+  { growth: 0.8, research: 0.1, launch: 0.05, stab: -0.02, death: 1.5, war: 2 },
   { growth: 1.05, research: 1.8, launch: 1.0, stab: 0.01, death: 0.95, war: 0.5 },
 ];
 
