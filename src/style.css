@@ -211,7 +211,8 @@ input.tl-big:focus { outline: none; border-bottom-color: var(--accent); }
 .insp-grab { display: none; }
 @media (max-width: 40rem) {
   body { font-size: 15px; }
-  .top { flex-direction: column; gap: 0.35rem; align-items: stretch; }
+  /* the header covers a quarter of a phone: give its links a dark ground so bright scenes (cells, planets) can't swallow them */
+  .top { flex-direction: column; gap: 0.35rem; align-items: stretch; padding-bottom: 0.9rem; background: linear-gradient(to bottom, rgba(2, 2, 4, 0.88) 75%, rgba(2, 2, 4, 0)); }
   .intro { max-width: none; }
   .intro p { display: none; }
   .intro h1 { font-size: 1.35rem; }
