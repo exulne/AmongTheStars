@@ -36,7 +36,8 @@ const STYLE: Record<BodyKind, number> = {
   rocky: 0, superearth: 0, moon: 0, asteroid: 0, dwarf: 4, desert: 1, ocean: 2, lava: 3, ice: 4, gas: 5, icegiant: 6, habitat: 0,
 };
 
-export function planetMaterial(kind: BodyKind, color: number, seed: number): THREE.ShaderMaterial {
+/** `haze` (0..1) smooths the surface under a thick atmosphere, as on Titan or Venus. */
+export function planetMaterial(kind: BodyKind, color: number, seed: number, haze = 0): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       uColor: { value: new THREE.Color(color) },
@@ -47,6 +48,7 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number): THR
       uGreen: { value: 0 },       // 0..1 terraforming
       uTime: { value: 0 },
       uDetail: { value: 1 },
+      uHaze: { value: haze },
     },
     vertexShader: /* glsl */ `
       varying vec3 vPos; varying vec3 vNormal; varying vec3 vView;
@@ -61,7 +63,7 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number): THR
         #include <logdepthbuf_vertex>
       }`,
     fragmentShader: /* glsl */ `
-      uniform vec3 uColor, uSun; uniform float uStyle, uSeed, uLights, uGreen, uTime, uDetail;
+      uniform vec3 uColor, uSun; uniform float uStyle, uSeed, uLights, uGreen, uTime, uDetail, uHaze;
       varying vec3 vPos; varying vec3 vNormal; varying vec3 vView;
       #include <logdepthbuf_pars_fragment>
       ${NOISE}
@@ -77,27 +79,27 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number): THR
         if (uStyle < 0.5) {            // rocky: craters and maria
           float m = smoothstep(-0.1, 0.25, n);
           col = mix(base * 0.55, base * 1.15, m);
-          col *= 0.85 + 0.3 * snoise(q * 9.0);
+          col *= 0.93 + 0.14 * snoise(q * 9.0);
         } else if (uStyle < 1.5) {     // desert (Mars-like)
           float m = smoothstep(-0.2, 0.35, n);
           col = mix(base * 0.6, base * 1.2, m);
-          col = mix(col, vec3(0.95), smoothstep(0.82, 0.9, abs(lat)) );
+          col = mix(col, vec3(0.82), smoothstep(0.82, 0.9, abs(lat)) );
         } else if (uStyle < 2.5) {     // ocean world / Earth
           float land = smoothstep(0.02, 0.08, n);
           vec3 sea = mix(vec3(0.02,0.08,0.22), base * 0.8, 0.4);
           vec3 ground = mix(vec3(0.16,0.32,0.12), vec3(0.55,0.45,0.3), smoothstep(0.1, 0.45, n));
           col = mix(sea, ground, land);
           spec = (1.0 - land) * 0.6;
-          col = mix(col, vec3(0.95), smoothstep(0.75, 0.85, abs(lat) + n * 0.1));
+          col = mix(col, vec3(0.85), smoothstep(0.75, 0.85, abs(lat) + n * 0.1));
           float cl = smoothstep(0.1, 0.5, fbm(q * 1.6 + vec3(uTime * 0.01, 0.0, 0.0)));
-          col = mix(col, vec3(1.0), cl * 0.65);
+          col = mix(col, vec3(0.9), cl * 0.6);
         } else if (uStyle < 3.5) {     // lava
           float c = abs(snoise(q * 3.0));
           col = mix(base * 0.25, vec3(0.08,0.05,0.04), smoothstep(0.0, 0.2, c));
           col += vec3(1.0,0.35,0.08) * smoothstep(0.12, 0.0, c) * 1.6;
         } else if (uStyle < 4.5) {     // ice
           float m = smoothstep(-0.3, 0.4, n);
-          col = mix(base * 0.75, vec3(0.97,0.98,1.0), m);
+          col = mix(base * 0.75, vec3(0.86,0.88,0.9), m);
           col *= 0.9 + 0.1 * abs(snoise(q * 14.0));
           spec = 0.3;
         } else {                       // gas / ice giants: bands
@@ -107,23 +109,26 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number): THR
           float storm = 1.0 - smoothstep(0.06, 0.1, length(vec2(atan(p.z, p.x) * 0.25 - 0.4, (lat + 0.3) * 0.7)));
           col = mix(col, base * vec3(1.15, 0.7, 0.55), storm * (uStyle < 5.5 ? 0.8 : 0.4));
         }
+        // thick haze hides the terrain, leaving soft banding
+        col = mix(col, base * (0.82 + 0.12 * n + 0.06 * sin(lat * 6.0)), uHaze * 0.85);
         // terraforming greens the land
         col = mix(col, vec3(0.18,0.38,0.2) * (0.8 + 0.4 * n), uGreen * smoothstep(-0.1, 0.2, n) * (uStyle < 4.5 && uStyle != 3.0 ? 1.0 : 0.0));
 
         vec3 N = normalize(vNormal);
         float d = dot(N, uSun);
         float day = smoothstep(-0.08, 0.25, d);
-        vec3 lit = col * (0.03 + 1.05 * max(d, 0.0));
+        vec3 lit = col * (0.03 + 0.92 * max(d, 0.0));
         vec3 H = normalize(uSun + vView);
         lit += vec3(1.0, 0.95, 0.85) * pow(max(dot(N, H), 0.0), 40.0) * spec * day;
-        // city lights on the night side
+        // city lights only past the terminator
+        float night = smoothstep(0.02, -0.14, d);
         float cityMask = smoothstep(0.55, 0.9, snoise(q * 6.0) * 0.5 + 0.5 + snoise(q * 24.0) * 0.25);
         float city = cityMask * step(1.0 - uLights, fract(sin(dot(floor(p * 60.0), vec3(12.9898,78.233,37.719))) * 43758.5453));
-        lit += vec3(1.0, 0.72, 0.38) * city * (1.0 - day) * 1.6 * smoothstep(0.0, 0.05, uLights);
-        // atmosphere rim
-        float rim = pow(1.0 - max(dot(N, vView), 0.0), 3.0);
+        lit += vec3(1.0, 0.72, 0.38) * city * night * 1.15 * smoothstep(0.0, 0.05, uLights);
+        // a soft limb glow on the day side, not a stroke
+        float rim = pow(1.0 - max(dot(N, vView), 0.0), 4.0);
         vec3 atm = (uStyle == 2.0 || uGreen > 0.2) ? vec3(0.35,0.6,1.0) : (uStyle == 1.0 ? vec3(0.9,0.55,0.4) : base);
-        lit += atm * rim * (0.15 + 0.85 * day) * (uStyle == 0.0 ? 0.25 : 0.7);
+        lit += atm * rim * day * (uStyle == 0.0 && uHaze == 0.0 ? 0.1 : 0.35);
         gl_FragColor = vec4(lit, 1.0);
       }`,
   });
@@ -145,9 +150,11 @@ export function atmosphereMaterial(color: number): THREE.ShaderMaterial {
       #include <logdepthbuf_pars_fragment>
       void main(){
         #include <logdepthbuf_fragment>
-        float rim = pow(1.0 - abs(dot(vN, vV)), 2.5);
-        float day = smoothstep(-0.3, 0.4, dot(vN, uSun));
-        gl_FragColor = vec4(uColor * rim * (0.2 + day), rim);
+        // back faces: brightest just outside the limb, fading to nothing at the shell's edge
+        float a = abs(dot(vN, vV));
+        float glow = smoothstep(0.0, 0.32, a) * (1.0 - smoothstep(0.32, 0.6, a) * 0.6);
+        float day = smoothstep(-0.3, 0.5, dot(vN, uSun));
+        gl_FragColor = vec4(uColor * glow * glow * (0.08 + 0.55 * day), 1.0);
       }`,
     side: THREE.BackSide, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
   });

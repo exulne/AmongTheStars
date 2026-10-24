@@ -85,6 +85,8 @@ export class Inspector {
       if (!t || !this.last) return;
       const act = t.dataset.act!, id = Number(t.dataset.id);
       if (act === 'close') this.onClose();
+      if (act === 'techs') { this.allTechs = !this.allTechs; this.render(this.last); }
+      if (act === 'system') this.onSelect({ kind: 'system', id, name: this.last.world.systems[id].name, pos: null! });
       if (act === 'body') this.onSelect({ kind: 'body', id, name: this.last.world.bodies[id].name, pos: null! });
       if (act === 'dive-body') this.onDive({ kind: 'body', id, name: this.last.world.bodies[id].name, pos: null! });
       if (act === 'dive-system') this.onDive({ kind: 'system', id, name: this.last.world.systems[id].name, pos: null! });
@@ -115,6 +117,12 @@ export class Inspector {
 
   toTop(): void { this.el.scrollTop = 0; }
 
+  private allTechs = false;
+  private techMark = -1;
+  private revealTech = false;
+  /** Show the full technology list with one entry marked. */
+  showTech(i: number): void { this.allTechs = true; this.techMark = i; this.revealTech = true; }
+
   render(c: InspectorCtx): void {
     this.last = c;
     const s = c.selected;
@@ -129,6 +137,8 @@ export class Inspector {
     const scroll = this.el.scrollTop;
     this.body.innerHTML = html;
     this.el.scrollTop = scroll;
+    const mark = this.revealTech ? this.body.querySelector<HTMLElement>('.techs .mark') : null;
+    if (mark) { this.revealTech = false; mark.scrollIntoView({ block: 'center' }); }
     const open = this.revealPerson && c.snap ? this.body.querySelector<HTMLElement>('.person.open') : null;
     if (open) { this.revealPerson = false; open.scrollIntoView({ block: 'center' }); }
   }
@@ -161,11 +171,43 @@ export class Inspector {
       <p class="lede">${esc(c.snap?.globals.era ?? '')} era. ${fmtNum(g('pop'))} people in ${fmtNum(g('settlements'))} settlements across ${fmtNum(g('systems'))} star system${g('systems') === 1 ? '' : 's'}.</p>
       ${this.kv(['pop', 'offEarth', 'interstellarPop', 'energy', 'kardashev', 'gdp', 'knowledge', 'research', 'stability', 'factions', 'wars', 'shipsInTransit', 'reach', 'shortage'].map(row))}
       ${c.forecast ? `<h3>Psychohistory forecast</h3>${c.forecast}` : ''}
+      <h3>Largest places</h3>${this.largest(c)}
       <h3>Technology <span class="muted num">${done.length} / ${TECHS.length}</span></h3>
-      <ul class="techs">${done.slice(0, 8).map((x) => `<li><span class="num">${fmtYear(x.y)}</span> ${esc(x.t.name)}</li>`).join('')}</ul>
-      ${next.length ? `<p class="muted">Researching: ${next.map((t) => esc(t.name)).join(', ')}</p>` : ''}
+      ${this.techList(c, done, next)}
       <h3>Recent events</h3>
       ${this.eventsList(c)}`;
+  }
+
+  /** Biggest settlements and star systems right now, clickable. */
+  private largest(c: InspectorCtx): string {
+    const S = c.snap?.S;
+    if (!S) return '';
+    const bodies: [number, number][] = [], systems = new Map<number, number>();
+    for (const b of c.snap!.settled) {
+      if (!alive(S[b * NF + F.stage])) continue;
+      const p = S[b * NF + F.pop];
+      bodies.push([b, p]);
+      const sy = c.world.bodies[b].system;
+      systems.set(sy, (systems.get(sy) ?? 0) + p);
+    }
+    const top = bodies.sort((a, b) => b[1] - a[1]).slice(0, 6);
+    const topS = [...systems].sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const li = (act: string, id: number, name: string, sub: string, p: number) => `<li><button class="link" data-act="${act}" data-id="${id}" type="button">${esc(name)}</button> <span class="muted">${esc(sub)}</span><span class="num">${fmtNum(p)}</span></li>`;
+    return `<ol class="largest">${top.map(([b, p]) => li('body', b, c.world.bodies[b].name, STAGE_NAMES[S[b * NF + F.stage]], p)).join('')}</ol>
+      <ol class="largest">${topS.map(([sy, p]) => li('system', sy, c.world.systems[sy].name, 'system', p)).join('')}</ol>`;
+  }
+
+  private techList(c: InspectorCtx, done: { t: (typeof TECHS)[number]; y: number }[], next: (typeof TECHS)[number][]): string {
+    if (!c.snap) return '';
+    if (!this.allTechs) {
+      return `<ul class="techs">${done.slice(0, 8).map((x) => `<li><span class="num">${fmtYear(x.y)}</span> ${esc(x.t.name)}</li>`).join('')}</ul>
+        ${next.length ? `<p class="muted">Researching: ${next.map((t) => esc(t.name)).join(', ')}</p>` : ''}
+        <p><button class="link" data-act="techs" type="button">All ${TECHS.length} technologies</button></p>`;
+    }
+    // every tech: invented ones in order, then those still to come
+    const rows = TECHS.map((t, i) => ({ t, i, y: c.snap!.techDone[i] })).sort((a, b) => (a.y < 0 ? 1e9 : a.y) - (b.y < 0 ? 1e9 : b.y) || a.t.cost - b.t.cost);
+    return `<ul class="techs all">${rows.map((r) => `<li class="${r.y < 0 ? 'future' : ''}${r.i === this.techMark ? ' mark' : ''}"><span class="num">${r.y >= 0 ? fmtYear(r.y) : next.includes(r.t) ? 'now' : '—'}</span> ${esc(r.t.name)}<span class="blurb">${esc(r.t.blurb)}</span></li>`).join('')}</ul>
+      <p><button class="link" data-act="techs" type="button">Fewer</button></p>`;
   }
 
   private galaxy(c: InspectorCtx, s: Pickable): string {
@@ -244,7 +286,7 @@ export class Inspector {
     const split = city === undefined ? { count: Math.floor(pop), offset: 0 } : citySplit(pop, cityCount(st, pop), city);
     const cityPop = split.count, offset = split.offset;
     return `${header}${fly}
-      ${this.kv([['Population', fmtNum(pop)], ['Allegiance', esc(faction)], ['Faith', `#${v('culture')}`]])}
+      ${this.kv([...(city === undefined ? [] : [['People in this settlement', fmtNum(cityPop)] as [string, string]]), [city === undefined ? 'Population' : 'Whole world', fmtNum(pop)], ['Allegiance', esc(faction)], ['Faith', `#${v('culture')}`]])}
       ${this.historyChart(c)}
       <h3>Residents</h3>${this.people(c, id, cityPop, offset)}
       <h3>All metrics</h3>${this.kv(metrics)}

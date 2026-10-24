@@ -1,6 +1,6 @@
 // Find anything by name: a star system, a world, a galaxy, or "resident #N of <settlement>".
 
-export interface Hit { kind: 'galaxy' | 'system' | 'body' | 'resident'; id: number; name: string; sub: string; n?: number }
+export interface Hit { kind: 'galaxy' | 'system' | 'body' | 'resident' | 'tech' | 'note'; id: number; name: string; sub: string; n?: number }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
@@ -45,7 +45,13 @@ export class Search {
     });
   }
 
-  focus(): void { this.input.focus(); this.input.select(); }
+  /** Focus; with `seed`, start a fresh query with that character. */
+  focus(seed?: string): void {
+    this.input.focus();
+    if (seed === undefined) { this.input.select(); return; }
+    this.input.value = seed;
+    this.update();
+  }
 
   private update(): void {
     const q = this.input.value.trim();

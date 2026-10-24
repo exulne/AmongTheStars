@@ -2,7 +2,7 @@
 // so the first centuries get room. Era band and simulated frontier underneath.
 
 import { ERAS } from '../sim/catalog.ts';
-import { ERA_COLORS, HORIZON, posToYear, yearToPos } from './charts.ts';
+import { ERA_COLORS, HORIZON, eraRuns, posToYear, yearToPos } from './charts.ts';
 import { fmtYear } from './format.ts';
 
 export class Timeline {
@@ -41,10 +41,16 @@ export class Timeline {
     this.playBtn = this.el.querySelector('.tl-play')!;
     this.progressEl = this.el.querySelector('.tl-progress')!;
     // typed years: 3400 means AD 3400; anything under 2040 is years after landing
+    // calendar years only: 1999 is before the landing, not "year 1999 after it"
     const commit = () => {
-      const n = Number(this.yearEl.value.replace(/[^0-9.]/g, ''));
-      if (this.yearEl.value.trim() && isFinite(n)) this.set(n >= 2040 ? n - 2040 : n, true);
-      else this.yearEl.value = fmtYear(this.year);
+      const raw = this.yearEl.value.trim().replace(/[,\s]/g, '');
+      if (!/^\d+(\.\d+)?$/.test(raw)) { this.yearEl.value = fmtYear(this.year); if (raw) this.flash('Type a year, like 3400'); return; }
+      const cal = Math.round(Number(raw));
+      if (cal < 2040) this.flash('The story starts with the landing in 2040');
+      else if (cal > 2040 + HORIZON) this.flash(`The simulation ends in ${2040 + HORIZON}`);
+      else if (cal - 2040 > this.frontier) this.flash(`Simulated so far: up to ${fmtYear(this.frontier)}`);
+      this.set(Math.max(0, cal - 2040), true);
+      this.yearEl.value = fmtYear(this.year);
     };
     this.yearEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { commit(); this.yearEl.blur(); }
@@ -102,9 +108,18 @@ export class Timeline {
     if (emit) this.onChange(year);
   }
 
+  private flashUntil = 0;
+  /** A short note in place of the era line. */
+  flash(msg: string): void {
+    this.subEl.textContent = msg;
+    this.flashUntil = performance.now() + 2600;
+    setTimeout(() => this.renderSub(), 2700);
+  }
+
   private eraName = '';
   setEra(name: string): void { this.eraName = name; this.renderSub(); }
   private renderSub(): void {
+    if (performance.now() < this.flashUntil) return;
     this.subEl.textContent = `year ${Math.round(this.year).toLocaleString('en-US')} after Mars${this.eraName ? ` · ${this.eraName}` : ''}`;
   }
 
@@ -127,11 +142,10 @@ export class Timeline {
     g.clearRect(0, 0, W, H);
     const e = this.eras;
     if (e) {
-      for (let i = 0; i < e.n - 1; i++) {
-        const x0 = yearToPos(e.years[i]) * W, x1 = yearToPos(e.years[i + 1]) * W;
-        g.fillStyle = ERA_COLORS[e.era(i)];
-        g.globalAlpha = 0.75;
-        g.fillRect(x0, 0, Math.max(0.6, x1 - x0), H);
+      g.globalAlpha = 0.75;
+      for (const r of eraRuns(e.years, e.n, e.era, W)) {
+        g.fillStyle = ERA_COLORS[r.e];
+        g.fillRect(r.x0, 0, Math.max(0.6, r.x1 - r.x0), H);
       }
       g.globalAlpha = 1;
     }

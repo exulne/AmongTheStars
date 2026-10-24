@@ -77,7 +77,8 @@ export class Ticker {
 
   /** call every so often: surfaces queued lines and lets stale ones leave */
   prune(now = performance.now(), gap = 1200): void {
-    this.pending = this.pending.filter((x) => now - x.at < 2500);
+    // keep a short queue, dropping the least important first
+    if (this.pending.length > 12) this.pending = this.pending.sort((a, b) => b.rank - a.rank || b.year - a.year).slice(0, 12);
     if (this.pending.length && now - this.lastShown > gap) {
       let best = 0;
       this.pending.forEach((x, i) => { if (x.rank > this.pending[best].rank || (x.rank === this.pending[best].rank && x.year > this.pending[best].year)) best = i; });

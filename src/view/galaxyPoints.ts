@@ -54,13 +54,16 @@ export function makeGalaxy(p: GalaxyParams): THREE.Group {
       const arm = r.int(0, p.arms - 1);
       const base = Math.log(rr / (R * 0.1)) * k * 0.5 + (arm / p.arms) * Math.PI * 2;
       const spread = 0.18 + 0.3 * (rr / R);
-      const th = base + r.gauss() * spread * (r.next() < 0.3 ? 2.5 : 1);
+      // most stars hug the arm; a few stray into the gaps
+      const gz = r.gauss(), stray = r.next() < 0.1;
+      const th = base + gz * spread * (stray ? 1.9 : 0.75);
       x = Math.cos(th) * rr; y = Math.sin(th) * rr;
       z = r.gauss() * R * p.thickness * (1 - 0.5 * rr / R);
       const inner = rr < R * 0.25;
       c.copy(inner ? CORE[r.int(0, 2)] : ARM[r.int(0, 3)]).multiplyScalar(0.35 + r.next() * 0.75);
       size[i] = (0.6 + Math.pow(r.next(), 3) * 3) * p.sizeScale;
-      if (r.next() < 0.005 && !inner) { c.copy(HII).multiplyScalar(0.8); size[i] *= 2.4; }
+      // star-forming knots sit on the arm's spine and tint rather than dot it
+      if (!inner && !stray && Math.abs(gz) < 0.35 && r.next() < 0.012) { c.lerp(HII, 0.55).multiplyScalar(0.8); size[i] *= 1.6; }
     } else {
       // halo
       const rr = R * Math.pow(r.next(), 0.5) * 1.2;

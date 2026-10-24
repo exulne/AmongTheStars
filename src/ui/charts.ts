@@ -11,7 +11,35 @@ export const posToYear = (p: number) => HORIZON * Math.pow(Math.min(1, Math.max(
 export const yearToPos = (y: number) => Math.pow(Math.min(1, Math.max(0, y / HORIZON)), 1 / WARP);
 
 // muted and earthy, so eras never read as settlement stages
-export const ERA_COLORS = ['#7a9a4a', '#66708f', '#c9a24a', '#4a4844', '#8c2a2a', '#7b5ea7', '#2e2427', '#3f8fa0'];
+export const ERA_COLORS = ['#7d9460', '#6b7088', '#bfa060', '#4d4b48', '#8a3a3a', '#76648f', '#332a2c', '#4f8a96'];
+
+/**
+ * Era spans in pixels, smoothed: each `minPx` bucket takes the era that held
+ * longest inside it, so the band shows lasting regimes rather than flicker.
+ */
+export function eraRuns(years: number[], n: number, era: (i: number) => number, W: number, minPx = 8): { e: number; x0: number; x1: number }[] {
+  const nb = Math.max(1, Math.ceil(W / minPx));
+  const acc = new Float64Array(nb * 8);
+  for (let i = 0; i < n - 1; i++) {
+    const x0 = yearToPos(years[i]) * W, x1 = yearToPos(years[i + 1]) * W, e = era(i);
+    for (let b = Math.floor(x0 / minPx); b <= Math.min(nb - 1, Math.floor(x1 / minPx)); b++) {
+      const w = Math.min(x1, (b + 1) * minPx) - Math.max(x0, b * minPx);
+      if (w > 0) acc[b * 8 + e] += w;
+    }
+  }
+  const out: { e: number; x0: number; x1: number }[] = [];
+  for (let b = 0; b < nb; b++) {
+    let best = -1, bw = 0;
+    for (let e = 0; e < 8; e++) if (acc[b * 8 + e] > bw) { bw = acc[b * 8 + e]; best = e; }
+    if (best < 0) continue;
+    const last = out[out.length - 1];
+    if (last && last.e === best && last.x1 >= b * minPx - 0.01) last.x1 = Math.min(W, (b + 1) * minPx);
+    else out.push({ e: best, x0: b * minPx, x1: Math.min(W, (b + 1) * minPx) });
+  }
+  // the last bucket only covers what has been simulated
+  if (out.length && n > 1) out[out.length - 1].x1 = Math.min(out[out.length - 1].x1, yearToPos(years[n - 1]) * W);
+  return out;
+}
 
 export interface Series { years: number[]; values: (i: number) => number; n: number; def: MetricDef }
 
@@ -132,9 +160,9 @@ export class ChartStrip {
     for (const y of [10, 50, 100, 250, 500, 1000, 2500, 5000]) { const x = Math.round(X(y)) + 0.5; g.beginPath(); g.moveTo(x, top); g.lineTo(x, bottom); g.stroke(); }
 
     if (isEra) {
-      for (let i = 0; i < s.n - 1; i++) {
-        g.fillStyle = ERA_COLORS[s.values(i)];
-        g.fillRect(X(s.years[i]), top + 6, Math.max(1, X(s.years[i + 1]) - X(s.years[i])), bottom - top - 12);
+      for (const r of eraRuns(s.years, s.n, s.values, W)) {
+        g.fillStyle = ERA_COLORS[r.e];
+        g.fillRect(r.x0, top + 6, Math.max(1, r.x1 - r.x0), bottom - top - 12);
       }
     } else {
       const grad = g.createLinearGradient(0, top, 0, bottom);
