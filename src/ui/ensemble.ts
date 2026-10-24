@@ -12,6 +12,7 @@ export class Ensemble {
   private w: Worker | null = null;
   private token = 0;
   private runs: Float64Array[] = [];
+  private runSeeds: number[] = [];
   private cache = new Map<string, { n: number; lo: Float64Array; hi: Float64Array; mid: Float64Array }>();
   onUpdate: () => void = () => {};
   get count(): number { return this.runs.length; }
@@ -26,6 +27,7 @@ export class Ensemble {
     this.w.onmessage = (ev: MessageEvent<FromEnsemble>) => {
       if (ev.data.token !== this.token) return;
       this.runs.push(ev.data.series);
+      this.runSeeds.push(ev.data.seed);
       this.cache.clear();
       this.onUpdate();
     };
@@ -35,9 +37,13 @@ export class Ensemble {
   stop(): void {
     this.token++;
     this.runs = [];
+    this.runSeeds = [];
     this.cache.clear();
     this.w?.postMessage({ type: 'run', seeds: [], token: this.token });
   }
+
+  /** The finished sibling futures, each with its seed (for the multiverse view). */
+  futures(): { seed: number; series: Float64Array }[] { return this.runs.map((series, k) => ({ seed: this.runSeeds[k], series })); }
 
   /** 10th, 50th and 90th percentile of a global metric at every step, across the other futures (needs at least 5). */
   band(key: string, nSteps: number): { lo: Float64Array; mid: Float64Array; hi: Float64Array } | null {

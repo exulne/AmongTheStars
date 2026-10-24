@@ -1,4 +1,8 @@
-import { Ensemble } from './ui/ensemble.ts';
+import { ENSEMBLE_SIZE, Ensemble } from './ui/ensemble.ts';
+import { MICRO_KIND, Micro, isMicro } from './view/micro.ts';
+import { MultiverseView } from './view/multiverse.ts';
+import { foamSeed } from './explain/multiverse.ts';
+import type { Biography } from './sim/lives.ts';
 import { clearSocietyLooks, setSocietyLook } from './view/societyLook.ts';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -184,7 +188,12 @@ const dataPanel = installDataDesk({
   pickYear: (y) => timeline.set(y, true),
 });
 
+// below the street: one person's body, cells, molecules, atoms; above the Local Group: every future
+const micro = new Micro((id, y) => sim.person(id, y));
+const multiverse = new MultiverseView();
 const views: Record<Level, View> = {
+  multiverse,
+  ...micro.views,
   universe: new UniverseView(world),
   galaxy: new GalaxyView(world),
   local: new LocalView(world),
@@ -217,7 +226,11 @@ function enterLevel(next: Level): void {
   if (ctx.snap) refreshLook(ctx.snap.step);
   // on a phone the street needs the screen: keep the sheet folded until someone is tapped
   if (level === 'street' && matchMedia('(max-width: 40rem)').matches) inspector.el.classList.remove('open');
+  // things inside a body mean nothing once we've left it; above the Local Group, this future is the subject
+  if (!isMicro(level) && ctx.selected?.kind === 'thing' && MICRO_KIND.test(ctx.selected.ex ?? '')) select(level === 'multiverse' ? { kind: 'thing', ex: 'futu', id: sim.seed, name: '', pos: new THREE.Vector3() } : null);
+  if (isMicro(level) || level === 'multiverse') refreshPanels();
 }
+micro.onChange = () => { if (!isMicro(level)) return; views[level].sync(ctx); renderCrumbs(); refreshPanels(); };
 
 // ------------------------------------------------------------------ legend and colour modes
 
@@ -250,6 +263,7 @@ function legendHtml(mode: ColorMode): string {
 }
 
 function renderLegend(): void {
+  legendEl.hidden = isMicro(level) || level === 'multiverse';
   const modal = level === 'local' || level === 'galaxy';
   legendModes.hidden = !modal;
   const html = legendHtml(modal ? ctx.colorBy : 'stage');
@@ -318,6 +332,11 @@ function crossfade(deeper: boolean): void {
 
 /** What the current level is "about", so the next level up can start the camera there. */
 function levelRef(l: Level): Ref {
+  if (l === 'multiverse') return { kind: 'thing', ex: 'futu', id: sim.seed };
+  if (l === 'person') return { kind: 'person', id: street.focus };
+  if (l === 'cell') return { kind: 'thing', ex: 'mpart', id: micro.part };
+  if (l === 'molecule') return { kind: 'thing', ex: 'morg', id: micro.orgl };
+  if (l === 'atom') return { kind: 'thing', ex: 'matm', id: micro.atom };
   if (l === 'street') return { kind: 'city', id: ctx.city };
   return l === 'planet' ? { kind: 'body', id: ctx.body } : l === 'system' ? { kind: 'system', id: ctx.system } : l === 'local' ? { kind: 'humanspace', id: 0 } : { kind: 'galaxy', id: 0, name: 'Milky Way' };
 }
@@ -363,6 +382,7 @@ function setLevel(next: Level, focus: Ref | null = null, prep?: () => void, anim
 
 function renderCrumbs(): void {
   const names: Record<Level, string> = {
+    multiverse: 'Futures', person: micro.crumb('person', ctx), cell: micro.crumb('cell', ctx), molecule: micro.crumb('molecule', ctx), atom: micro.crumb('atom', ctx),
     universe: 'Local Group', galaxy: 'Milky Way', local: 'Nearby stars',
     system: world.systems[ctx.system].name, planet: naming.place(world, ctx.body),
     street: ctx.city === 0 ? 'Capital' : `Settlement ${ctx.city}`,
@@ -415,7 +435,42 @@ crumbsEl.addEventListener('click', (e) => {
   if (l) { pull = null; setLevel(l); }
 });
 
+/** Switch the simulation to another future and go into its Local Group. */
+function enterFuture(seed: number, focus: Ref | null): void {
+  pull = null;
+  if (seed !== sim.seed) { seedInput.value = String(seed); startRun(seed); }
+  select(null);
+  setLevel('universe', focus);
+}
+
+/** Go inside someone: their body, then cells, molecules and atoms. */
+function enterPerson(pid: string, focus: Ref | null, bio?: Biography | null): void {
+  micro.setPerson(pid, bio);
+  inspector.openPerson(pid);
+  inspector.el.classList.add('open');
+  setLevel('person', focus, () => {
+    // opened from a biography elsewhere: the levels above become where they live
+    if (level !== 'street' && bio?.where && world.bodies[bio.where.body]) { ctx.body = bio.where.body; ctx.system = world.bodies[ctx.body].system; ctx.city = 0; }
+  });
+}
+
+/** The selection a micro level opens with: the cell, the molecule, the atom as a whole. */
+const MICRO_SELECT: Partial<Record<Level, string>> = { cell: 'mcell', molecule: 'mmol', atom: 'matom' };
+
 function dive(p: Ref): void {
+  if (p.kind === 'thing' && (p.ex === 'futu' || p.ex === 'futx')) { enterFuture(p.ex === 'futu' ? p.id : foamSeed(p.id), p); return; }
+  if (p.kind === 'person' && level === 'street') { const id = street.personId(p.id); if (id) { street.focus = p.id; enterPerson(id, p); } return; }
+  if (p.kind === 'thing' && level === 'atom' && p.ex === 'mnuc' && !busy) { const v = micro.views.atom.nucleusView(); fly(v.pos, v.target, 1.4, easeInOut); return; }
+  if (p.kind === 'thing' && isMicro(level)) {
+    const e = micro.enterRef(level, p, ctx);
+    if (e) setLevel(e.next, p, () => {
+      e.prep();
+      inspector.openPerson(null);
+      const ex = MICRO_SELECT[e.next];
+      if (ex) select({ kind: 'thing', ex, id: 0, name: '', pos: new THREE.Vector3() });
+    });
+    return;
+  }
   // whatever we go into becomes the selection, so a stale one (from the URL, say) can't linger
   if (p.kind === 'city' && level === 'planet') {
     const b = world.bodies[ctx.body].name;
@@ -483,6 +538,9 @@ grab.setAttribute('aria-label', 'Show or hide details');
 grab.addEventListener('click', () => inspector.el.classList.toggle('open'));
 inspector.el.prepend(grab);
 inspector.onDive = (p) => { select(p); dive(p); };
+inspector.onLookCloser = (pid, bio) => enterPerson(pid, null, bio);
+inspector.onEnter = () => { if (ctx.selected) dive(ctx.selected); };
+inspector.onBio = () => { if (micro.pid) { inspector.openPerson(micro.pid); inspector.el.classList.add('open'); } };
 
 // Wheel out past the outer limit goes up a level. Wheel in over a thing pulls
 // it to the centre of the view, and once close enough enters it.
@@ -502,11 +560,11 @@ canvas.addEventListener('wheel', (e) => {
   const keep = pull && locateRef(v, pull) ? pull : null;
   const sel = ctx.selected && locateRef(v, ctx.selected) ? ctx.selected : null;
   const p: Ref | null = (gesture && keep) || pickAt(e.clientX, e.clientY) || keep || sel;
-  if (!p || level === 'street' || (level === 'planet' && p.kind !== 'city')) return;
+  if (!p || (level === 'street' && p.kind !== 'person') || (level === 'planet' && p.kind !== 'city')) return;
   pull = p;
   const at = locateRef(v, p);
-  const dd = v.diveDist(ctx, p);
-  if (at && dd > 0 && camera.position.distanceTo(at) < Math.max(dd, v.limits[0] * 1.4)) { pull = null; select(asPick(p)); dive(p); }
+  const dd = level === 'street' ? 1.1 : v.diveDist(ctx, p);
+  if (at && dd > 0 && camera.position.distanceTo(at) < Math.max(dd, v.limits[0] * 1.4)) { pull = null; if (p.kind !== 'person') select(asPick(p)); dive(p); }
 }, { passive: true });
 canvas.addEventListener('pointerdown', () => { pull = null; });
 
@@ -582,7 +640,7 @@ canvas.addEventListener('click', (e) => {
   if (Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5) return;
   const p = pickAny(e.clientX, e.clientY);
   if (p?.kind === 'person') openResident(p.id);
-  else if (p) select(p);
+  else if (p) { if (isMicro(level) && inspector.personId) inspector.openPerson(null); select(p); }
   else if (level === 'street') street.follow = -1;
 });
 
@@ -598,8 +656,8 @@ function openResident(k: number): void {
 canvas.addEventListener('dblclick', (e) => {
   if (busy) return;
   const p = pickAny(e.clientX, e.clientY);
-  if (p?.kind === 'person') openResident(p.id);
-  else if (p) { select(p); dive(p); }
+  if (p?.kind === 'person') { openResident(p.id); dive(p); }
+  else if (p) { if (isMicro(level) && inspector.personId) inspector.openPerson(null); select(p); dive(p); }
 });
 
 // ------------------------------------------------------------------ labels
@@ -828,7 +886,12 @@ charts.setFan((key) => (fcOn && fc ? fanFor(fc, key) : null));
 // other futures behind every chart, played in the background once this one is done
 const ensemble = new Ensemble();
 let ensembleFor = -1;
-ensemble.onUpdate = () => charts.draw();
+ensemble.onUpdate = () => {
+  charts.draw();
+  for (const f of ensemble.futures()) multiverse.add(f.seed, sim.years, f.series, f.series.length, true);
+  multiverse.progress = { done: ensemble.count, of: ENSEMBLE_SIZE };
+  if (level === 'multiverse') multiverse.sync(ctx);
+};
 charts.setBand((k, n) => ensemble.band(k, n), (k, i, v) => ensemble.rank(k, i, v));
 
 function refreshPanels(): void {
@@ -901,7 +964,9 @@ sim.onProgress = () => {
   statusEl.textContent = sim.done ? `simulated in ${(sim.ms / 1000).toFixed(1)}s` : `simulating… year ${Math.round(sim.years[sim.frontier]).toLocaleString('en-US')}`;
   charts.draw();
   if (!ctx.snap) requestState(ctx.year);
-  if (sim.done) { refreshForecast(); inspector.annals(); if (ensembleFor !== sim.seed) { ensembleFor = sim.seed; ensemble.start(sim.seed); } }
+  if (sim.done) { refreshForecast(); inspector.annals(); if (ensembleFor !== sim.seed) { ensembleFor = sim.seed; ensemble.start(sim.seed); multiverse.progress = { done: 0, of: ENSEMBLE_SIZE }; } }
+  // this future in the multiverse, as far as it has been played
+  if (sim.done || sim.frontier % 25 === 0) { multiverse.add(sim.seed, sim.years, sim.series, sim.frontier + 1, sim.done); if (level === 'multiverse') multiverse.sync(ctx); }
   // a reseed drops the place history; ask again as the new run fills in
   if (!history && (sim.done || sim.frontier % 40 === 0)) fetchHistory();
   // a year from the URL waits until the run has reached it
@@ -918,17 +983,20 @@ function writeHash(): void {
     const sel = ctx.selected;
     const parts = [`future${sim.seed}`, `y${Math.round(ctx.year)}`];
     if (sel) parts.push(sel.kind === 'city' ? `c${ctx.body}.${sel.id}` : sel.kind === 'thing' ? `x${sel.ex}.${sel.id}` : `${REF_CODE[sel.kind]}${sel.id}`);
+    if (isMicro(level) && micro.pid) parts.push(`p${micro.pid.replace(/-/g, '~')}`, micro.hash());
     parts.push(`l${level}`, STAMP_CODE);
     // replaceState so scrubbing doesn't flood the back button
     try { window.history.replaceState(null, '', `#${parts.join('-')}`); } catch { /* sandboxed frames may refuse */ }
   }, 400);
 }
 
-function readHash(): { seed: number; year: number | null; sel: Pickable | null; level: Level | null } {
+function readHash(): { seed: number; year: number | null; sel: Pickable | null; level: Level | null; pid: string | null } {
   const h = location.hash.slice(1);
   const seed = Number(h.match(/future(\d+)/)?.[1]) || 0;
   const y = h.match(/(?:^|-)y(\d+)/);
-  const lv = h.match(/(?:^|-)l(universe|galaxy|local|system|planet|street)/)?.[1] as Level | undefined;
+  const lv = h.match(/(?:^|-)l(multiverse|universe|galaxy|local|system|planet|street|person|cell|molecule|atom)(?=-|$)/)?.[1] as Level | undefined;
+  const pid = h.match(/(?:^|-)p([0-9.~]+)(?=-|$)/)?.[1]?.replace(/~/g, '-') ?? null;
+  micro.readHash(h);
   const r = h.match(/(?:^|-)([bsghc])(\d+)(?:\.(\d+))?(?=-|$)/);
   let sel: Pickable | null = null;
   if (r) {
@@ -942,7 +1010,7 @@ function readHash(): { seed: number; year: number | null; sel: Pickable | null; 
   const x = h.match(/(?:^|-)x([a-z0-9]+)\.(\d+)(?=-|$)/);
   // kinds inside a system or around a world register when that view is built, so accept any well-formed one
   if (x) sel = { kind: "thing", id: Number(x[2]), ex: x[1], name: "", pos: new THREE.Vector3() };
-  return { seed, year: y ? Math.min(10000, Number(y[1])) : null, sel, level: lv ?? null };
+  return { seed, year: y ? Math.min(10000, Number(y[1])) : null, sel, level: lv && (!isMicro(lv) || pid) ? lv : null, pid };
 }
 
 function startRun(seed: number): void {
@@ -954,6 +1022,7 @@ function startRun(seed: number): void {
   ticker.clear(); tickFrom = 0;
   eraBanner.reset(); calendar.reset(); naming.load(sim); timeline.setAges([]);
   ensemble.stop(); ensembleFor = -1;
+  multiverse.current = seed; multiverse.progress = { done: 0, of: 0 };
   sim.run(seed);
   timeline.set(0);
   ctx.year = 0;
@@ -1098,7 +1167,9 @@ let chronoTrip: { from: number; to: number; t: number; dur: number; done: (y: nu
 function placeLine(): string {
   const yr = Math.round(2040 + ctx.year), era = ctx.snap?.globals.era ?? '';
   const sel = ctx.selected;
-  const where = level === 'street' ? `in ${world.bodies[ctx.body].name} settlement ${ctx.city}`
+  const where = isMicro(level) ? `inside ${micro.bio?.name ?? 'someone'}, at the scale of ${level === 'person' ? 'their body' : level === 'cell' ? 'a cell' : level === 'molecule' ? 'a molecule' : 'an atom'}`
+    : level === 'multiverse' ? 'outside every future, among the others'
+    : level === 'street' ? `in ${world.bodies[ctx.body].name} settlement ${ctx.city}`
     : level === 'planet' ? `over ${world.bodies[ctx.body].name}`
     : sel?.kind === 'body' ? `near ${world.bodies[sel.id].name}`
     : level === 'system' ? `in the ${world.systems[ctx.system].name} system`
@@ -1169,6 +1240,7 @@ function shipLight(): void {
 
 const fromHash = readHash();
 if (fromHash.seed) seedInput.value = String(fromHash.seed);
+if (fromHash.pid) { micro.setPerson(fromHash.pid); micro.readHash(location.hash.slice(1)); }
 startRun(fromHash.seed || 1);
 if (fromHash.sel) {
   const b = fromHash.sel.kind === 'body' ? fromHash.sel.id : fromHash.sel.kind === 'city' ? ctx.body : -1;
@@ -1219,4 +1291,4 @@ function loop(now: number): void {
 }
 requestAnimationFrame(loop);
 
-if (import.meta.env.DEV) Object.assign(window, { __app: { ctx, views, setLevel, dive, select, timeline, camera, controls, get level() { return level; } } });
+if (import.meta.env.DEV) Object.assign(window, { __app: { ctx, views, setLevel, dive, select, timeline, camera, controls, micro, multiverse, enterPerson, street, inspector, sim, get level() { return level; } } });

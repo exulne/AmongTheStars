@@ -59,6 +59,12 @@ export class Inspector {
 
   onSelect: (p: Pickable) => void = () => {};
   onDive: (p: Pickable) => void = () => {};
+  /** "Look closer" on a biography: into their body, cells, molecules and atoms */
+  onLookCloser: (pid: string, bio: Biography | null) => void = () => {};
+  /** a card's "Look inside" / "Enter this future" */
+  onEnter: () => void = () => {};
+  /** a card's "Their life": back to the person whose body is shown */
+  onBio: () => void = () => {};
   onClose: () => void = () => {};
   private last: InspectorCtx | null = null;
   private revealPerson = false;
@@ -163,6 +169,9 @@ export class Inspector {
       if (act === 'page') { this.peoplePage = Math.max(0, this.peoplePage + id); this.render(this.last); }
       if (act === 'open-person') this.openPerson(t.dataset.pid!);
       if (act === 'close-person') this.openPerson(null);
+      if (act === 'look-closer') this.onLookCloser(t.dataset.pid!, this.lastBio?.id === t.dataset.pid ? this.lastBio : null);
+      if (act === 'enter') this.onEnter();
+      if (act === 'bio') this.onBio();
       if (act === 'close-chronicle') { this.chronicleOpen = false; this.render(this.last); }
       if (act === 'polity') { this.polityOpen = id; this.personId = null; this.toTop(); this.render(this.last); }
       if (act === 'close-polity') { this.polityOpen = null; this.render(this.last); }

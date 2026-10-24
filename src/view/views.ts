@@ -29,8 +29,9 @@ import { explainBelt, type BeltInfo, explainElevators, explainOrbits, explainRin
 import { explainLocalRings } from '../explain/local.ts';
 import { explainWorks } from '../explain/orbitals.ts';
 
-export type Level = 'universe' | 'galaxy' | 'local' | 'system' | 'planet' | 'street';
-export const LEVELS: Level[] = ['universe', 'galaxy', 'local', 'system', 'planet', 'street'];
+// 'multiverse' sits above the Local Group (src/view/multiverse.ts); person, cell, molecule and atom below the street (src/view/micro.ts)
+export type Level = 'multiverse' | 'universe' | 'galaxy' | 'local' | 'system' | 'planet' | 'street' | 'person' | 'cell' | 'molecule' | 'atom';
+export const LEVELS: Level[] = ['multiverse', 'universe', 'galaxy', 'local', 'system', 'planet', 'street', 'person', 'cell', 'molecule', 'atom'];
 
 export interface Ctx {
   world: World;
