@@ -59,6 +59,8 @@ export interface Biography extends PersonBrief {
   height: number; personality: [number, number, number, number, number]; generationsHere: number;
   descendants: { total: number; alive: number; places: { body: number; name: string; n: number }[]; generations: number };
   faith?: string | null;  // raised in, from the birthplace's faith shares at birth
+  /** every place they ever were, in order: the pathway of a life, birth to death */
+  path: { body: number | null; name: string; from: number; to: number | null }[];
 }
 
 export class Lives {
@@ -293,6 +295,36 @@ export class Lives {
     return { total: c.total, asOf, offset, people: out, pyramid: this.D.pyramid(body, p) };
   }
 
+  /** The n-th person (1-based) ever born on `body` — with `kind`, the n-th of that
+   *  kind at `year`. `total` is everyone born there; `scanned` how many candidates
+   *  were tried before the kind filter found them or gave up. */
+  bornAt(body: number, n: number, kind: string, year: number): { person: Id | null; total: number; scanned: number } {
+    const t = this.D.ensure(body, this.D.lastPeriod);
+    const pools = t.pools.filter((x) => x.native).sort((a, b) => a.q - b.q);
+    const total = pools.reduce((a, x) => a + x.n, 0);
+    if (n < 1 || n > total) return { person: null, total, scanned: 0 };
+    if (kind === 'any') {
+      let left = n;
+      for (const x of pools) {
+        if (left <= x.n) return { person: { b: body, q: x.q, i: left - 1 }, total, scanned: n };
+        left -= x.n;
+      }
+      return { person: null, total, scanned: total };
+    }
+    const want = kind === 'adapted' ? 'adapted to this world' : kind === 'uploaded' ? 'uploaded' : 'baseline human';
+    const BUDGET = 40000;
+    let seen = 0, scanned = 0;
+    for (const x of pools) {
+      for (let i = 0; i < x.n && scanned < BUDGET; i++) {
+        scanned++;
+        const id = { b: body, q: x.q, i };
+        if (this.bodyKind(id, Math.max(0, year - this.D.birthYear(id)), year) === want && ++seen === n) return { person: id, total, scanned };
+      }
+      if (scanned >= BUDGET) break;
+    }
+    return { person: null, total, scanned };
+  }
+
   residentAt(body: number, year: number, k: number): string | null {
     const p = Math.max(0, Math.min(this.D.lastPeriod, periodOf(year) - (year >= 5 ? 1 : 0)));
     const c = this.D.census(body, p);
@@ -414,6 +446,16 @@ export class Lives {
       frontier = nextGen;
     }
 
+    // the pathway: every stay in order, with voyages between them
+    const path: Biography['path'] = [];
+    life.forEach((s, k) => {
+      const f = k > 0 ? life[k - 1].flow : undefined;
+      const voyageF = f && !isShipBody(s.body) && (f.kind === FLOW.SHIP || f.kind === FLOW.FTL) ? f : undefined;
+      if (voyageF) path.push({ body: null, name: s.end === 'lost' ? `lost aboard the ${this.shipName(voyageF)}, never reaching ${this.bodyName(voyageF.dst)}` : `aboard the ${this.shipName(voyageF)}, bound for ${this.bodyName(voyageF.dst)}`, from: voyageF.depart, to: voyageF.arrive });
+      if (s.end === 'lost') { if (!voyageF) path.push({ body: null, name: `lost aboard the ${s.flow ? this.shipName(s.flow) : 'ship'} in deep space`, from: s.flow?.depart ?? periodStart(s.from), to: s.diedYear ?? null }); return; }
+      path.push({ body: isShipBody(s.body) ? null : s.body, name: this.bodyName(s.body), from: k === 0 ? born : f ? f.arrive : periodStart(s.from), to: s.end === 'alive' ? null : s.end === 'left' ? s.flow?.depart ?? null : s.diedYear ?? null });
+    });
+
     const bodyG = isShipBody(id.b) ? 0.9 : this.e.world.bodies[id.b].g;
     const S = this.e.st.S;
     const status: Biography['status'] = year < born ? 'unborn' : dead && year >= deathYear ? 'dead'
@@ -432,6 +474,7 @@ export class Lives {
       generationsHere: ancestors.filter((a) => a.who.place === this.bodyName(id.b)).length + 1,
       faith,
       descendants: { total: desc.total, alive: desc.alive, generations: desc.generations, places: [...desc.places.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([b, n]) => ({ body: b, name: this.bodyName(b), n })) },
+      path,
     };
   }
 }

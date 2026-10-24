@@ -11,6 +11,7 @@ import { SocietyModel, type Society } from './society.ts';
 import { buildWorld } from './world.ts';
 import { HG, NWC, OUTCOME, WAR_KIND, WC } from './civ.ts';
 import { SHIP_BODY, periodOf, periodStart } from './ledger.ts';
+import { idStr } from './demography.ts';
 import { handleData, isDataReq, type DataReq, type DataRes } from './dataApi.ts';
 import { NetMind } from '../ml/netMind.ts';
 import { loadWarGens, type WarGens } from '../ml/warGens.ts';
@@ -27,6 +28,7 @@ export type ToWorker =
   | { type: 'residents'; id: number; body: number; year: number; offset: number; count: number }
   | { type: 'person'; id: number; person: string; year: number }
   | { type: 'residentAt'; id: number; body: number; year: number; k: number }
+  | { type: 'findPerson'; id: number; body: number; n: number; kind: string; year: number }
   | { type: 'chronicle'; id: number; from: number; to: number; body?: number; query?: string; limit?: number; minWeight?: number }
   | { type: 'inventions'; id: number }
   | { type: 'society'; id: number; body: number; step: number }
@@ -44,6 +46,7 @@ export type FromWorker =
   | { type: 'residents'; id: number; pending?: boolean; total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] }
   | { type: 'person'; id: number; pending?: boolean; bio: Biography | null }
   | { type: 'residentAt'; id: number; pending?: boolean; person: string | null }
+  | { type: 'findPerson'; id: number; pending?: boolean; person: string | null; brief: PersonBrief | null; total: number; scanned: number }
   | { type: 'chronicle'; id: number; pending?: boolean; entries: Entry[] }
   | { type: 'inventions'; id: number; pending?: boolean; list: { tech: number; year: number; entry: Entry | null }[] }
   | { type: 'society'; id: number; pending?: boolean; society: Society | null }
@@ -199,6 +202,13 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
   } else if (m.type === 'residentAt') {
     const L = people();
     post({ type: 'residentAt', id: m.id, pending: !L, person: L ? L.residentAt(m.body, m.year, m.k) : null });
+  } else if (m.type === 'findPerson') {
+    const L = people();
+    if (!L) post({ type: 'findPerson', id: m.id, pending: true, person: null, brief: null, total: 0, scanned: 0 });
+    else {
+      const r = L.bornAt(m.body, Math.floor(m.n), m.kind, m.year);
+      post({ type: 'findPerson', id: m.id, person: r.person ? idStr(r.person) : null, brief: r.person ? L.brief(r.person, m.year) : null, total: r.total, scanned: r.scanned });
+    }
   } else if (m.type === 'chronicle') {
     const ok = people() && chron;
     post({ type: 'chronicle', id: m.id, pending: !ok, entries: ok ? chron!.list(m.from, m.to, { body: m.body, query: m.query, limit: m.limit, minWeight: m.minWeight }) : [] });

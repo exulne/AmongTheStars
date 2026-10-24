@@ -58,6 +58,8 @@ export class SimClient {
   residents(body: number, year: number, offset: number, count: number) { return this.ask<Msg<'residents'>>({ type: 'residents', body, year, offset, count }); }
   person(person: string, year: number) { return this.ask<Msg<'person'>>({ type: 'person', person, year }); }
   residentAt(body: number, year: number, k: number) { return this.ask<Msg<'residentAt'>>({ type: 'residentAt', body, year, k }); }
+  /** the n-th person ever born on `body`, optionally of a kind (baseline, adapted, uploaded) at `year` */
+  findPerson(body: number, n: number, kind: string, year: number) { return this.ask<Msg<'findPerson'>>({ type: 'findPerson', body, n, kind, year }); }
   chronicle(from: number, to: number, opts: { body?: number; query?: string; limit?: number; minWeight?: number } = {}) { return this.ask<Msg<'chronicle'>>({ type: 'chronicle', from, to, ...opts }); }
   society(body: number, step: number) { return this.ask<Msg<'society'>>({ type: 'society', body, step }); }
   ship(from: number, to: number, depart: number) { return this.ask<Msg<'ship'>>({ type: 'ship', from, to, depart }); }
