@@ -176,7 +176,8 @@ export class Lives {
     const c = this.D.census(body, p);
     const asOf = periodStart(p + 1);
     const out: PersonBrief[] = [];
-    for (let k = offset; k < Math.min(c.total, offset + count); k++) out.push({ ...this.brief(c.at(k), asOf), place: this.bodyName(body) });
+    // membership as of the census; ages and jobs at the year being looked at
+    for (let k = offset; k < Math.min(c.total, offset + count); k++) out.push({ ...this.brief(c.at(k), Math.max(year, asOf)), place: this.bodyName(body) });
     return { total: c.total, asOf, offset, people: out, pyramid: this.D.pyramid(body, p) };
   }
 

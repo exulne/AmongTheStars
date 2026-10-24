@@ -97,7 +97,11 @@ export class Inspector {
       const t = e.target as HTMLInputElement;
       if (t.id === 'person-jump' && this.last && this.api) {
         const n = Math.max(1, parseCount(t.value) || 1);
-        this.api.residentAt(this.peopleBody, this.last.year, n - 1).then((r) => { if (r.person) this.openPerson(r.person); });
+        const raw = t.value.trim();
+        this.api.residentAt(this.peopleBody, this.last.year, n - 1).then((r) => {
+          if (r.person) this.openPerson(r.person);
+          else t.setCustomValidity(r.pending ? 'Still simulating; try again in a moment.' : `There is no resident #${raw} here.`), t.reportValidity();
+        });
       }
     });
   }
