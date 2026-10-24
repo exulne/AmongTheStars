@@ -2,6 +2,9 @@
 // and makes the lights stutter, a War casts the edges red, a Pandemic turns
 // the tones sickly, a Golden Age glows warm. One full-screen pass between
 // bloom and the output, easing from one mood to the next over a second or two.
+// It also owns the exposure of each zoom level: how much light the picture
+// takes in and what is bright enough to bloom, so a galaxy of additive stars
+// and a sunlit planet each keep deep blacks and only their true highlights glow.
 
 import * as THREE from 'three';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
@@ -17,7 +20,24 @@ interface Grade {
   bloom: number;          // added to the bloom strength
 }
 
-const NEUTRAL: Grade = { desat: 0, tint: [1, 1, 1], edge: [0, 0, 0], vignette: 0.08, flicker: 0, bloom: 0 };
+/** Exposure and bloom for one zoom level. Bloom works on linear light before tone mapping. */
+export interface LevelLook { exposure: number; strength: number; radius: number; threshold: number }
+
+// Particles and glows (universe to nearby stars) bloom from a lower threshold so star fields keep
+// their soft glow; lit surfaces (planets, streets) only bloom where something emits light.
+export const LEVEL_LOOKS: Record<string, LevelLook> = {
+  universe: { exposure: 0.9, strength: 0.5, radius: 0.55, threshold: 0.62 },
+  galaxy: { exposure: 0.88, strength: 0.48, radius: 0.5, threshold: 0.66 },
+  local: { exposure: 0.92, strength: 0.5, radius: 0.45, threshold: 0.6 },
+  system: { exposure: 0.92, strength: 0.5, radius: 0.45, threshold: 0.7 },
+  planet: { exposure: 0.95, strength: 0.42, radius: 0.35, threshold: 0.95 },
+  street: { exposure: 1.0, strength: 0.45, radius: 0.4, threshold: 0.9 },
+};
+const DEFAULT_LOOK: LevelLook = { exposure: 0.92, strength: 0.48, radius: 0.45, threshold: 0.7 };
+/** Era bloom offsets are written against this strength; they scale with each level's own. */
+const ERA_BLOOM_REF = 0.7;
+
+const NEUTRAL: Grade = { desat: 0, tint: [1, 1, 1], edge: [0, 0, 0], vignette: 0.12, flicker: 0, bloom: 0 };
 const GRADES: Record<string, Grade> = {
   Expansion: NEUTRAL,
   Consolidation: { ...NEUTRAL, desat: 0.04 },
@@ -35,7 +55,7 @@ const SHADER = {
     uDesat: { value: 0 },
     uTint: { value: new THREE.Vector3(1, 1, 1) },
     uEdge: { value: new THREE.Vector3() },
-    uVignette: { value: 0.08 },
+    uVignette: { value: 0.12 },
     uFlicker: { value: 0 },
     uTime: { value: 0 },
     uAspect: { value: 1 },
@@ -73,11 +93,14 @@ export class EraMood {
   readonly pass = new ShaderPass(SHADER);
   private cur: Grade = structuredClone(NEUTRAL);
   private target: Grade = NEUTRAL;
-  private bloomBase: number;
+  private look: LevelLook = DEFAULT_LOOK;
   era = '';
 
-  constructor(private bloom: UnrealBloomPass) {
-    this.bloomBase = bloom.strength;
+  constructor(private bloom: UnrealBloomPass, private renderer?: THREE.WebGLRenderer) {}
+
+  /** The zoom level in view sets exposure and bloom. Changes at once: the level swap hides it behind a crossfade. */
+  setLevel(level: string): void {
+    this.look = LEVEL_LOOKS[level] ?? DEFAULT_LOOK;
   }
 
   setEra(name: string): void {
@@ -104,6 +127,10 @@ export class EraMood {
     u.uFlicker.value = REDUCED_MOTION ? 0 : a.flicker;
     u.uTime.value = t;
     u.uAspect.value = aspect;
-    this.bloom.strength = Math.max(0, this.bloomBase + a.bloom);
+    const L = this.look;
+    this.bloom.strength = Math.max(0, L.strength * (1 + a.bloom / ERA_BLOOM_REF));
+    this.bloom.radius = L.radius;
+    this.bloom.threshold = L.threshold;
+    if (this.renderer) this.renderer.toneMappingExposure = L.exposure;
   }
 }

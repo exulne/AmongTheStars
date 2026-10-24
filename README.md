@@ -23,7 +23,9 @@ Same **seed**, same future. Change the seed and you get a different future: mayb
 | Thing | What it does |
 |---|---|
 | **Time slider** (bottom) | Years 0 to 10,000 after the first Mars landing. Drag it and the universe changes. |
-| **Zoom levels** | Universe → Milky Way → Local neighbourhood → Star system → Planet → City → Person. Click to go deeper, use the breadcrumb at the top to go back up. |
+| **Zoom levels** | Futures → Local Group → Milky Way → Local neighbourhood → Star system → Planet → City → Person → Cell → Molecule → Atom. Click to go deeper, use the breadcrumb at the top to go back up. |
+| **Futures** (above the Local Group) | Every future played so far as a universe bubble: this one, the 24 sibling futures the background worker plays, and any you visited before. Further right means more energy (the Kardashev rating it reached), higher means more star systems settled, deeper means more wars; size is peak population, colour the outcome (spread across the stars, a few stars, stayed home, rose and fell, died out). The faint foam around them is the futures nobody has played yet. Click one for its card; enter it (double-click, scroll in, or "Enter this future") and the whole simulation switches to it. Scroll out of the Local Group to get here. |
+| **Inside a person** (below the street) | Double-click or scroll into anyone in the street, or press "Look closer" on their biography. Their body is drawn life-size and see-through: skeleton, organs, vessels with blood moving, a heart beating about 70 times a minute. Build and bone density follow the world they live on (low gravity, cold, radiation); bodies adapted to their world carry the real genes for it (SOST for low gravity, Dsup from tardigrades against radiation, EPAS1 for thin air...), the era's medicine adds edits (PCSK9 after genetic medicine), nanomachines ride the blood once molecular nanofabrication reaches their world, and an uploaded person is the substrate their mind runs on. Go into any part for a cell of that tissue (neuron, red cell, osteocyte, hepatocyte, gut bacterium, respirocyte, logic tile...), into any organelle for its molecule (their own DNA letters and edits, a membrane lipid, heme, apatite, ATP, silicon, an NV centre in diamond...), and into any atom for its nucleus of protons and neutrons inside electron clouds sampled from real orbitals. Every piece has a card with real numbers and sizes in metres, tagged R (real), E (estimate) or P (this future's generator). |
 | **Charts** | Lines over time for 39 measures: population, energy, wealth, knowledge, settlements, stability, wars, resources and more. Pick any one from each chart's menu, and click a chart to jump to that year. |
 | **Future #** (top) | Each number is a different roll of the dice, so a different future. "Another future" picks one at random. |
 | **Inspector** (right side) | Click anything and you get every number about it, at the year you're on. |
@@ -110,7 +112,8 @@ npm run sim -- 42     # run future #42 in the terminal and print a summary
 | Folder | What's in it |
 |---|---|
 | `src/sim/` | The simulation: world catalog, rules, background worker, and the people (`ledger.ts`, `demography.ts`, `lives.ts`) |
-| `src/view/` | 3D: galaxies, stars, planets, the five zoom levels |
+| `src/view/` | 3D: galaxies, stars, planets, the zoom levels; `multiverse.ts` above them, `micro*.ts` (body, cell, molecule, atom) below the street |
+| `src/micro/` | What a person is made of: their body read from their world and era (`specimen.ts`), cells and organelles (`cells.ts`), molecules atom by atom (`molecules.ts`), elements and electron orbitals (`elements.ts`) |
 | `src/ui/` | Time slider, charts, inspector, the residents and biography panels |
 | `src/ml/` | The transformer and the forecaster |
 | `ml/` | Scripts that make training data and train the network |
