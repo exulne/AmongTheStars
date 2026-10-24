@@ -444,6 +444,8 @@ function fetchHistory(): void {
 
 function select(p: Pickable | null): void {
   const changed = p?.kind !== ctx.selected?.kind || p?.id !== ctx.selected?.id;
+  // picking something new shows its card, not the polity, chronicle or life that was open over it
+  if (changed && p) { inspector.polityOpen = null; inspector.chronicleOpen = false; if (inspector.personId) inspector.openPerson(null); }
   ctx.selected = p;
   history = null;
   fetchHistory();
