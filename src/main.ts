@@ -234,7 +234,12 @@ function enterLevel(next: Level): void {
   if (!isMicro(level) && ctx.selected?.kind === 'thing' && MICRO_KIND.test(ctx.selected.ex ?? '')) select(level === 'multiverse' ? { kind: 'thing', ex: 'futu', id: sim.seed, name: '', pos: new THREE.Vector3() } : null);
   if (isMicro(level) || level === 'multiverse') refreshPanels();
 }
-micro.onChange = () => { if (!isMicro(level)) return; views[level].sync(ctx); renderCrumbs(); refreshPanels(); };
+// a deep link into a person: the levels above them become where they live, once their life is read
+let placeFromBio = false;
+micro.onChange = () => {
+  const w = micro.bio?.where;
+  if (placeFromBio && w && world.bodies[w.body]) { placeFromBio = false; ctx.body = w.body; ctx.system = world.bodies[w.body].system; ctx.city = 0; writeHash(); }
+  if (!isMicro(level)) return; views[level].sync(ctx); renderCrumbs(); refreshPanels(); };
 
 // ------------------------------------------------------------------ legend and colour modes
 
@@ -1275,6 +1280,8 @@ const fromHash = readHash();
 if (fromHash.seed) seedInput.value = String(fromHash.seed);
 if (fromHash.pid) { micro.setPerson(fromHash.pid); micro.readHash(location.hash.slice(1)); }
 startRun(fromHash.seed || 1);
+// (after startRun, which forgets the people of any previous future)
+if (fromHash.pid && fromHash.level && isMicro(fromHash.level)) { placeFromBio = true; inspector.openPerson(fromHash.pid); inspector.el.classList.add('open'); }
 if (fromHash.sel) {
   const b = fromHash.sel.kind === 'body' ? fromHash.sel.id : fromHash.sel.kind === 'city' ? ctx.body : -1;
   if (b >= 0) { ctx.body = b; ctx.system = world.bodies[b].system; }
