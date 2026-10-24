@@ -9,7 +9,9 @@
     "typecheck": "tsc --noEmit",
     "sim": "node --experimental-strip-types scripts/headless.ts",
     "check": "node scripts/check.ts && node scripts/people-check.ts",
-    "check:people": "node scripts/people-check.ts"
+    "check:people": "node scripts/people-check.ts",
+    "dev:ship": "vite --open /ship.html",
+    "build:ship": "tsc --noEmit && ENTRY=ship vite build"
   },
   "devDependencies": {
     "@types/three": "^0.186.0",
