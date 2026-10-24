@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { STAGE, STAGE_NAMES, TECHS } from '../sim/catalog.ts';
+import { STAGE, STAGE_NAMES, TECHS, isAlive } from '../sim/catalog.ts';
 import type { StateMsg } from '../sim/client.ts';
 import { F, NF } from '../sim/metrics.ts';
 import { Rng, hash01 } from '../sim/rng.ts';
@@ -74,7 +74,7 @@ export function stageOf(snap: StateMsg | null, b: number): number {
 export function popOf(snap: StateMsg | null, b: number): number {
   return snap ? snap.S[b * NF + F.pop] : 0;
 }
-export function alive(stage: number): boolean { return stage >= STAGE.OUTPOST && stage <= STAGE.MEGA; }
+export function alive(stage: number): boolean { return isAlive(stage); }
 
 /** Settlements drawn on a world: one capital plus more as it grows. */
 export function cityCount(stage: number, pop: number): number {
@@ -115,7 +115,7 @@ export function systemSummary(world: World, snap: StateMsg | null, sys: number):
       founded = Math.min(founded, snap!.S[b * NF + F.founded]);
     }
     else if (stage < 0) stage = s === STAGE.SURVEY ? STAGE.SURVEY : s;
-    else if (s === STAGE.SURVEY && stage > STAGE.MEGA) stage = STAGE.SURVEY;
+    else if (s === STAGE.SURVEY && stage >= STAGE.ABANDONED) stage = STAGE.SURVEY;
   }
   return { stage, pop, n, faction, founded };
 }
@@ -720,7 +720,7 @@ export class SystemView implements View {
       if (alive(st)) {
         m.color.set(STAGE_COLORS[st]); m.opacity = 0.55;
         v.marker.scale.setScalar(v.visR * (3 + st * 0.6));
-        if (st === STAGE.MEGA) mega = true;
+        if (st >= STAGE.MEGA && alive(st)) mega = true;
       } else m.opacity = st === STAGE.SURVEY ? 0.15 : 0;
       const mat = v.mesh.material as THREE.ShaderMaterial;
       mat.uniforms.uLights.value = alive(st) ? cityLights(popOf(ctx.snap, v.id)) : 0;
@@ -994,8 +994,8 @@ export class PlanetView implements View {
         this.orbit.add(this.sats.pts);
       }
     }
-    if (this.ringWorld && st !== STAGE.MEGA) { this.group.remove(this.ringWorld); this.ringWorld = null; }
-    if (!this.ringWorld && st === STAGE.MEGA) {
+    if (this.ringWorld && !(st >= STAGE.MEGA && alive(st))) { this.group.remove(this.ringWorld); this.ringWorld = null; }
+    if (!this.ringWorld && st >= STAGE.MEGA && alive(st)) {
       this.ringWorld = new THREE.Mesh(new THREE.TorusGeometry(17, 0.1, 12, 256), new THREE.MeshStandardMaterial({ color: 0xb8ad9e, metalness: 0.5, roughness: 0.5, transparent: true, opacity: 0.4, depthWrite: false }));
       this.ringWorld.rotation.x = Math.PI / 2 + 0.2;
       this.group.add(this.ringWorld);
