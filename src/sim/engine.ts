@@ -28,8 +28,11 @@ const MAX_SHIPS = 4096;
 const G = {
   year: 0, era: 1, eraSince: 2, knowledge: 3, shipsLaunched: 4, shipsLost: 5, dead: 6, wars: 7,
   kesslerUntil: 8, contact: 9, faiths: 10, nShips: 11, launchCap: 12, researchRate: 13, warUntil: 14,
+  // last step's aggregates that feed the era chain; kept here (not read back from
+  // the series) so a restored snapshot replays exactly
+  prevShortage: 15, prevFactions: 16, prevStability: 17,
 } as const;
-const NG = 16;
+const NG = 20;
 
 export interface SimState {
   step: number;
@@ -214,10 +217,9 @@ export class Engine {
     // ---- era Markov chain, reweighted by the state of the world
     const era = g[G.era];
     const row = ERA_MATRIX[era].slice();
-    const prev = this.series.subarray(Math.max(0, st.step - 1) * NGM, Math.max(1, st.step) * NGM);
-    const shortage = st.step > 0 ? prev[GM.shortage] / 100 : 0;
-    const factions = st.step > 0 ? prev[GM.factions] : 1;
-    const stab = st.step > 0 ? prev[GM.stability] : 0.6;
+    const shortage = st.step > 0 ? g[G.prevShortage] / 100 : 0;
+    const factions = st.step > 0 ? g[G.prevFactions] : 1;
+    const stab = st.step > 0 ? g[G.prevStability] : 0.6;
     row[4] *= (1 + 4 * shortage) * Math.sqrt(factions) * fx.war;                 // war
     row[6] *= (1 + 6 * shortage) * (stab < 0.4 ? 3 : 1);                         // collapse
     row[2] *= stab > 0.65 ? 2 : 1;                                               // golden age
@@ -764,6 +766,7 @@ export class Engine {
     row[GM.techs] = st.techDone.reduce((a, d) => a + (d >= 0 ? 1 : 0), 0);
     row[GM.shipsInTransit] = g[G.nShips]; row[GM.shipsLaunched] = g[G.shipsLaunched]; row[GM.shipsLost] = g[G.shipsLost];
     row[GM.dead] = g[G.dead]; row[GM.wars] = g[G.wars]; row[GM.faiths] = g[G.faiths]; row[GM.era] = g[G.era];
+    g[G.prevShortage] = row[GM.shortage]; g[G.prevFactions] = row[GM.factions]; g[G.prevStability] = row[GM.stability];
 
     if (this.logEvents && step % Engine.HIST_EVERY === 0) {
       const w = 2 + HIST_FIELDS.length;
