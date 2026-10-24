@@ -29,7 +29,10 @@ export interface Ctx {
   t: number;        // seconds since start
 }
 
-export interface Pickable { pos: THREE.Vector3; kind: 'galaxy' | 'system' | 'body' | 'city' | 'humanspace'; id: number; name: string }
+export type PickKind = 'galaxy' | 'system' | 'body' | 'city' | 'humanspace';
+export interface Pickable { pos: THREE.Vector3; kind: PickKind; id: number; name: string }
+/** Enough to find a thing again in any view. */
+export interface Ref { kind: PickKind; id: number; name?: string }
 export interface Label { pos: THREE.Vector3; text: string; sub?: string; strong?: boolean }
 
 export interface View {
@@ -41,6 +44,10 @@ export interface View {
   frame(ctx: Ctx, dt: number): void;
   pickables(ctx: Ctx): Pickable[];
   labels(ctx: Ctx): Label[];
+  /** where a thing sits in this view, if it is shown here at all */
+  locate(ctx: Ctx, r: Ref): THREE.Vector3 | null;
+  /** camera distance at which wheeling into `r` enters it; 0 = not enterable */
+  diveDist(ctx: Ctx, r: Ref): number;
 }
 
 // ---------------------------------------------------------------- helpers
@@ -187,6 +194,16 @@ export class UniverseView implements View {
     return this.centres.map((c, i) => ({ pos: c.pos, kind: 'galaxy', id: i, name: c.name }));
   }
 
+  locate(ctx: Ctx, r: Ref): THREE.Vector3 | null {
+    const sys = r.kind === 'system' ? r.id : r.kind === 'body' ? ctx.world.bodies[r.id].system : r.kind === 'city' ? ctx.world.bodies[ctx.body].system : -1;
+    const name = r.kind === 'galaxy' ? r.name ?? this.centres[r.id]?.name : sys >= 0 ? ctx.world.systems[sys].galaxy : 'Milky Way';
+    return this.centres.find((c) => c.name === name)?.pos ?? null;
+  }
+
+  diveDist(_ctx: Ctx, r: Ref): number {
+    return r.kind === 'galaxy' && (r.name ?? this.centres[r.id]?.name) === 'Milky Way' ? 30 : 0;
+  }
+
   labels(): Label[] {
     return this.centres.map((c) => {
       const n = this.colonies.get(c.name) ?? 0;
@@ -269,6 +286,21 @@ export class GalaxyView implements View {
       if (this.far.size[i] > 0) out.push({ pos: new THREE.Vector3(this.far.pos[i * 3], this.far.pos[i * 3 + 1], this.far.pos[i * 3 + 2]), kind: 'system', id, name: ctx.world.systems[id].name });
     });
     return out;
+  }
+
+  locate(ctx: Ctx, r: Ref): THREE.Vector3 | null {
+    if (r.kind === 'humanspace') return this.sol;
+    if (r.kind === 'galaxy') return (r.name ?? GALAXIES[r.id]?.name) === 'Milky Way' ? new THREE.Vector3() : null;
+    const sys = r.kind === 'system' ? r.id : r.kind === 'body' ? ctx.world.bodies[r.id].system : ctx.world.bodies[ctx.body].system;
+    const s = ctx.world.systems[sys];
+    if (s.galaxy !== 'Milky Way') return null;
+    const p = toScene(s.x, s.y, s.z, this.U, GALACTIC_CENTRE[0]);
+    if (s.region !== 'galaxy') p.y = 0;
+    return p;
+  }
+
+  diveDist(ctx: Ctx, r: Ref): number {
+    return r.kind === 'humanspace' ? 30 : r.kind === 'system' && ctx.world.systems[r.id].region === 'galaxy' ? 5 : 0;
   }
 
   labels(): Label[] {
@@ -381,6 +413,15 @@ export class LocalView implements View {
   pickables(ctx: Ctx): Pickable[] {
     return this.ids.map((id, i) => ({ pos: new THREE.Vector3(this.stars.pos[i * 3], this.stars.pos[i * 3 + 1], this.stars.pos[i * 3 + 2]), kind: 'system' as const, id, name: ctx.world.systems[id].name }));
   }
+
+  locate(ctx: Ctx, r: Ref): THREE.Vector3 | null {
+    if (r.kind === 'humanspace' || r.kind === 'galaxy') return new THREE.Vector3();
+    const sys = r.kind === 'system' ? r.id : r.kind === 'body' ? ctx.world.bodies[r.id].system : ctx.world.bodies[ctx.body].system;
+    const s = ctx.world.systems[sys];
+    return s.region === 'local' || s.region === 'sol' ? toScene(s.x, s.y, s.z) : null;
+  }
+
+  diveDist(_ctx: Ctx, r: Ref): number { return r.kind === 'system' ? 5 : 0; }
 
   labels(ctx: Ctx): Label[] {
     const out: Label[] = [];
@@ -549,6 +590,17 @@ export class SystemView implements View {
     return this.vis.map((v) => ({ pos: v.mesh.position.clone(), kind: 'body' as const, id: v.id, name: ctx.world.bodies[v.id].name }));
   }
 
+  locate(ctx: Ctx, r: Ref): THREE.Vector3 | null {
+    if (r.kind === 'system') return r.id === this.builtFor ? new THREE.Vector3() : null;
+    const id = r.kind === 'body' ? r.id : r.kind === 'city' ? ctx.body : -1;
+    return this.vis.find((v) => v.id === id)?.mesh.position ?? null;
+  }
+
+  diveDist(_ctx: Ctx, r: Ref): number {
+    const v = r.kind === 'body' ? this.vis.find((x) => x.id === r.id) : undefined;
+    return v ? Math.max(1.6, v.visR * 7) : 0;
+  }
+
   labels(ctx: Ctx): Label[] {
     return this.vis.filter((v) => v.parent < 0 || alive(stageOf(ctx.snap, v.id)) || v.visR > 0.3).map((v) => {
       const st = stageOf(ctx.snap, v.id);
@@ -672,6 +724,14 @@ export class PlanetView implements View {
     const name = ctx.world.bodies[ctx.body].name;
     return this.cityPos.map((p, i) => ({ pos: p.clone().applyMatrix4(this.pivot.matrixWorld), kind: 'city' as const, id: i, name: i === 0 ? `${name} capital` : `${name} settlement ${i}` }));
   }
+
+  locate(ctx: Ctx, r: Ref): THREE.Vector3 | null {
+    if (r.kind === 'body') return r.id === ctx.body ? new THREE.Vector3() : null;
+    if (r.kind === 'city') return this.cityPos[r.id]?.clone().applyMatrix4(this.pivot.matrixWorld) ?? null;
+    return null;
+  }
+
+  diveDist(): number { return 0; }
 
   labels(ctx: Ctx): Label[] {
     const b = ctx.world.bodies[ctx.body];
