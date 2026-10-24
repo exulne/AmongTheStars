@@ -92,7 +92,7 @@ controls.zoomSpeed = 1.3;
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 1.15, 0.65, 0.12);
+const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.7, 0.5, 0.55);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 

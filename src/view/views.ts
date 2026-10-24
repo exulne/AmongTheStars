@@ -262,7 +262,7 @@ export class GalaxyView implements View {
   private reach = 0;
 
   constructor(world: World) {
-    this.group.add(makeGalaxy({ seed: 2040, count: 180000, radius: 500, arms: 4, pitch: 12, bar: 0.22, thickness: 0.018, sizeScale: 5.2 }));
+    this.group.add(makeGalaxy({ seed: 2040, count: 420000, radius: 500, arms: 4, pitch: 12, bar: 0.22, thickness: 0.018, sizeScale: 2.1, brightness: 1, dust: 0.3 }));
     this.sol = toScene(0, 0, 0, this.U, GALACTIC_CENTRE[0]);
     this.sol.y = 0;
     this.bubble = glowSprite(0x7fe3ff, 6, 0.9, flareTex);
