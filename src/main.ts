@@ -28,7 +28,7 @@ app.innerHTML = `
   <header class="top">
     <div class="intro">
       <h1>2SOON2026</h1>
-      <p>Humanity lands on Mars in 2040. This is one possible next ten thousand years, simulated settlement by settlement. Drag time. Click anything. Double-click, or scroll into it, to go closer.</p>
+      <p>Humanity lands on Mars in 2040. This is one possible next ten thousand years, simulated settlement by settlement. Drag time. Click anything. Double-click, or scroll into it, to go closer. Press ? for keys.</p>
       <nav class="crumbs" aria-label="Zoom level"></nav>
     </div>
     <div class="run">
@@ -592,11 +592,28 @@ app.querySelector('#reroll')!.addEventListener('click', () => {
   seedInput.value = String(s);
   startRun(s);
 });
+const help = document.createElement('div');
+help.className = 'help';
+help.setAttribute('role', 'dialog');
+help.setAttribute('aria-label', 'Keyboard shortcuts');
+help.hidden = true;
+help.innerHTML = `<h2>Keys</h2><dl>${([
+  ['Space', 'play or pause'], ['← →', 'step through time (Shift: ten steps)'], ['/', 'search'], ['Enter', 'go into the selected thing'],
+  ['Backspace', 'up a level'], ['Esc', 'clear the selection'], ['?', 'this list'],
+] as const).map(([k, v]) => `<dt><kbd>${k}</kbd></dt><dd>${v}</dd>`).join('')}</dl><p class="muted">Scroll into anything to enter it; scroll out past the edge to go up. Type a year into the year to jump there.</p><button class="link" type="button">Close</button>`;
+app.append(help);
+help.querySelector('button')!.addEventListener('click', () => { help.hidden = true; });
+
 window.addEventListener('keydown', (e) => {
-  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.code === 'Space') { e.preventDefault(); timeline.toggle(); }
-  if (e.key === 'Escape') select(null);
-  if (e.key === '/') { e.preventDefault(); search.focus(); }
+  else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); timeline.step(e.key === 'ArrowRight' ? 1 : -1, e.shiftKey); }
+  else if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; else select(null); }
+  else if (e.key === '/') { e.preventDefault(); search.focus(); }
+  else if (e.key === '?') help.hidden = !help.hidden;
+  else if (e.key === 'Enter' && ctx.selected && !(e.target instanceof HTMLButtonElement)) dive(ctx.selected);
+  else if (e.key === 'Backspace') { const i = LEVELS.indexOf(level); if (i > 0) setLevel(LEVELS[i - 1]); }
 });
 
 // ------------------------------------------------------------------ search

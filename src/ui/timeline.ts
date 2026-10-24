@@ -9,7 +9,8 @@ export class Timeline {
   el: HTMLElement;
   private input: HTMLInputElement;
   private band: HTMLCanvasElement;
-  private yearEl: HTMLElement;
+  private yearEl: HTMLInputElement;
+  private progressEl: HTMLElement;
   private subEl: HTMLElement;
   private playBtn: HTMLButtonElement;
   year = 0;
@@ -23,18 +24,33 @@ export class Timeline {
     this.el.innerHTML = `
       <div class="tl-row">
         <button class="tl-play" type="button" aria-label="Play">Play</button>
-        <div class="tl-year"><span class="tl-big num">2040</span><span class="tl-sub"></span></div>
+        <div class="tl-year"><input class="tl-big num" id="year-input" inputmode="numeric" value="2040" size="5" aria-label="Go to year" title="Type a year and press Enter"><span class="tl-sub"></span></div>
       </div>
       <div class="tl-track">
         <canvas class="tl-band" aria-hidden="true"></canvas>
+        <i class="tl-progress" aria-hidden="true"></i>
         <input id="timeline-year" type="range" min="0" max="10000" step="1" value="0" aria-label="Year">
         <div class="tl-ticks" aria-hidden="true"></div>
-      </div>`;
+      </div>
+      <div class="tl-eras" aria-label="Era colours">${eraLegend()}</div>`;
     this.input = this.el.querySelector('input')!;
     this.band = this.el.querySelector('canvas')!;
     this.yearEl = this.el.querySelector('.tl-big')!;
     this.subEl = this.el.querySelector('.tl-sub')!;
     this.playBtn = this.el.querySelector('.tl-play')!;
+    this.progressEl = this.el.querySelector('.tl-progress')!;
+    // typed years: 3400 means AD 3400; anything under 2040 is years after landing
+    const commit = () => {
+      const n = Number(this.yearEl.value.replace(/[^0-9.]/g, ''));
+      if (this.yearEl.value.trim() && isFinite(n)) this.set(n >= 2040 ? n - 2040 : n, true);
+      else this.yearEl.value = fmtYear(this.year);
+    };
+    this.yearEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { commit(); this.yearEl.blur(); }
+      if (e.key === 'Escape') { this.yearEl.value = fmtYear(this.year); this.yearEl.blur(); }
+    });
+    this.yearEl.addEventListener('focus', () => this.yearEl.select());
+    this.yearEl.addEventListener('blur', () => { this.yearEl.value = fmtYear(this.year); });
     const ticks = this.el.querySelector('.tl-ticks')!;
     for (const y of [0, 10, 50, 100, 250, 500, 1000, 2500, 5000, 10000]) {
       const t = document.createElement('span');
@@ -48,13 +64,14 @@ export class Timeline {
     });
     this.playBtn.addEventListener('click', () => this.toggle());
     this.input.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-        e.preventDefault();
-        const d = (e.key === 'ArrowRight' ? 1 : -1) * (this.year < 200 ? 1 : this.year < 1000 ? 4 : 10) * (e.shiftKey ? 10 : 1);
-        this.set(this.year + d, true);
-      }
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); this.step(e.key === 'ArrowRight' ? 1 : -1, e.shiftKey); }
     });
     new ResizeObserver(() => this.drawBand()).observe(this.band);
+  }
+
+  /** One sim step (1, 4 or 10 years depending on the epoch), or ten with `big`. */
+  step(dir: number, big = false): void {
+    this.set(this.year + dir * (this.year < 200 ? 1 : this.year < 1000 ? 4 : 10) * (big ? 10 : 1), true);
   }
 
   toggle(): void {
@@ -77,7 +94,7 @@ export class Timeline {
     year = Math.max(0, Math.min(year, this.frontier, HORIZON));
     this.year = year;
     this.input.value = String(Math.round(yearToPos(year) * 10000));
-    this.yearEl.textContent = fmtYear(year);
+    if (document.activeElement !== this.yearEl) this.yearEl.value = fmtYear(year);
     this.renderSub();
     if (emit) this.onChange(year);
   }
@@ -92,6 +109,8 @@ export class Timeline {
   setData(frontier: number, eras: { years: number[]; era: (i: number) => number; n: number }): void {
     this.frontier = frontier;
     this.eras = eras;
+    this.progressEl.style.width = `${yearToPos(frontier) * 100}%`;
+    this.progressEl.hidden = frontier >= HORIZON;
     this.drawBand();
   }
 

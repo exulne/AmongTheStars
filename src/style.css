@@ -118,6 +118,15 @@ button, select, input { font: inherit; color: inherit; }
 .spark svg { width: 100%; height: 3rem; display: block; }
 .spark figcaption { font-size: 0.7rem; }
 
+.help { position: absolute; z-index: 10; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(24rem, calc(100vw - 32px)); padding: 1.2rem 1.4rem;
+  background: rgba(4, 4, 7, 0.95); border-top: 1px solid var(--rule); box-shadow: 0 20px 60px #000; font-size: 0.85rem; box-sizing: border-box; }
+.help[hidden] { display: none; }
+.help h2 { margin: 0 0 0.6rem; font-size: 1.1rem; font-weight: 400; }
+.help dl { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 1rem; margin: 0 0 0.8rem; }
+.help dd { margin: 0; color: var(--quiet); }
+.help kbd { font: 0.75rem var(--mono); border-bottom: 1px solid var(--rule); }
+.help p { font-size: 0.8rem; }
+
 /* bottom: timeline and charts */
 .bottom { position: absolute; left: 0; right: 0; bottom: 0; padding: 0.6rem max(16px, env(safe-area-inset-right, 0px)) max(10px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
   background: linear-gradient(180deg, rgba(2,2,4,0) 0, var(--wash) 1.4rem); display: grid; gap: 0.5rem; }
@@ -127,6 +136,13 @@ button, select, input { font: inherit; color: inherit; }
 .tl-play { background: none; border: 1px solid var(--rule); padding: 0.05rem 0.7rem; cursor: pointer; font-size: 0.8rem; min-width: 4.2rem; }
 .tl-play:hover { border-color: var(--ink); }
 .tl-big { font-size: 1.3rem; letter-spacing: -0.03em; color: var(--accent); }
+input.tl-big { width: 3.4em; background: transparent; border: 0; border-bottom: 1px solid transparent; padding: 0; border-radius: 0; cursor: text; }
+input.tl-big:hover { border-bottom-color: var(--faint); }
+input.tl-big:focus { outline: none; border-bottom-color: var(--accent); }
+.tl-progress { position: absolute; left: 0; top: 0.4rem; height: 1px; background: var(--accent); box-shadow: 0 0 6px var(--accent); opacity: 0.8; transition: width 0.3s linear; }
+.tl-progress[hidden] { display: none; }
+.tl-eras { display: flex; flex-wrap: wrap; gap: 0 0.9rem; font-size: 0.62rem; color: var(--quiet); margin-top: -0.15rem; }
+.tl-eras .era-key { margin: 0; }
 .tl-sub { font-size: 0.8rem; color: var(--quiet); margin-left: 0.6rem; }
 .tl-row { min-width: 0; }
 .tl-year { flex: none; }
