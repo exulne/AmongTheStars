@@ -32,7 +32,7 @@ import { StreetView } from './view/street.ts';
 import { Picker } from './explain/picker.ts';
 import { explainLocate, explainName, explainerFor } from './explain/registry.ts';
 import { resetShips, setShipApi } from './explain/ships.ts';
-import { GalaxyView, LocalView, LEVELS, PlanetView, SystemView, UniverseView, alive, cityCount, cityDir, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
+import { GalaxyView, LocalView, LEVELS, PLANET_SUN, PlanetView, SystemView, UniverseView, alive, cityCount, cityDir, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
 
 // ------------------------------------------------------------------ DOM
 
@@ -1160,7 +1160,7 @@ const lightDir = new THREE.Vector3();
 function shipLight(): void {
   if (level === 'system' || level === 'planet' || level === 'street') {
     lightDir.set(0, 0, 0).sub(camera.position);
-    if (level === 'planet') lightDir.set(400, 80, 120).sub(camera.position);
+    if (level === 'planet') lightDir.copy(PLANET_SUN).sub(camera.position);
     lightDir.applyQuaternion(camera.quaternion.clone().invert());
     voyage.lightFrom(lightDir.set(-lightDir.x, lightDir.y, -lightDir.z));
   } else voyage.lightFrom(lightDir.set(0.4, 0.8, 0.5));
