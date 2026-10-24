@@ -63,6 +63,8 @@ export class SimClient {
   state(step: number) { return this.ask<StateMsg>({ type: 'state', step }); }
   /** every living settlement's full row at a step */
   table(step: number) { return this.ask<Msg<'table'>>({ type: 'table', step }); }
+  /** A settlement query evaluated across the run (count, sum, pop-weighted mean, min or max). */
+  scan(expr: string, agg: 'count' | 'sum' | 'mean' | 'min' | 'max', of: string, stride: number) { return this.ask<Msg<'scan'>>({ type: 'scan', expr, agg, of, stride }); }
   history(body: number) { return this.ask<HistoryMsg>({ type: 'history', body }); }
   events(fromYear: number, toYear: number, body?: number, limit?: number) {
     return this.ask<Msg<'events'>>({ type: 'events', fromYear, toYear, body, limit }).then((m) => m.events);
