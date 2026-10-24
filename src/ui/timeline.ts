@@ -118,9 +118,15 @@ export class Timeline {
 
   private eraName = '';
   setEra(name: string): void { this.eraName = name; this.renderSub(); }
+  /** The local reckoning for a year ("AL 2960 · year 412 of the Kepler Compact"), or "" to count from Mars. */
+  local: (year: number) => string = () => '';
+  refresh(): void { this.renderSub(); }
   private renderSub(): void {
     if (performance.now() < this.flashUntil) return;
-    this.subEl.textContent = `year ${Math.round(this.year).toLocaleString('en-US')} after Mars${this.eraName ? ` · ${this.eraName}` : ''}`;
+    const local = this.local(this.year);
+    const head = local ? `AD · ${local}` : `year ${Math.round(this.year).toLocaleString('en-US')} after Mars`;
+    const text = `${head}${this.eraName ? ` · ${this.eraName}` : ''}`;
+    if (this.subEl.textContent !== text) this.subEl.textContent = text;
   }
 
   private eras: { years: number[]; era: (i: number) => number; n: number } | null = null;
