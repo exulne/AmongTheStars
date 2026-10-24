@@ -9,6 +9,7 @@ import { Chronicle, type Entry } from './chronicle.ts';
 import { Lives, type Biography, type PersonBrief } from './lives.ts';
 import { SocietyModel, type Society } from './society.ts';
 import { buildWorld } from './world.ts';
+import { periodOf } from './ledger.ts';
 import { handleData, isDataReq, type DataReq, type DataRes } from './dataApi.ts';
 
 const SNAP_EVERY = 20;
@@ -55,7 +56,13 @@ function people(): Lives | null {
   if (!lives) {
     lives = new Lives(main);
     const c = (chron = new Chronicle(main, lives));
-    society = new SocietyModel(main, (b, n) => c.faithName(b, n), (b, n) => lives!.coinedWord(b, n));
+    society = new SocietyModel(main, (b, n) => lives!.coinedWord(b, n));
+    society.faithInfo = (f) => ({ name: c.faithName(f), tenets: c.tenetsOf(f) });
+    const civ = main.civ;
+    lives.faithAt = (b, year, u) => {
+      for (const [f, sh] of civ.faithsAt(b, periodOf(year))) { if (u < sh) return c.faithName(f); u -= sh; }
+      return null;
+    };
     lives.deeds = (pid, stays) => c.deedsOf(pid, stays).map((en) => ({ year: en.year, text: en.segs.map((s) => (typeof s === 'string' ? s : s.t)).join('') }));
   }
   return lives;
@@ -141,7 +148,7 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
     if (!ok) post({ type: 'society', id: m.id, pending: true, society: null });
     else {
       const e = stateAt(m.step);
-      post({ type: 'society', id: m.id, society: society!.at(m.body, e.years[e.st.step], e.st.S, e.st.techDone, e.st.g[1]) });
+      post({ type: 'society', id: m.id, society: society!.at(m.body, e.years[e.st.step], e.st.S, e.st.techDone, e.st.g[1], e.st.hx) });
     }
   } else if (m.type === 'inventions') {
     const ok = people() && chron;

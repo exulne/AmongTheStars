@@ -19,6 +19,9 @@ import { STAMP_CODE } from './ui/stamp.ts';
 import { Search, type Hit } from './ui/search.ts';
 import { NOTABLE, Ticker, describe } from './ui/ticker.ts';
 import { Timeline } from './ui/timeline.ts';
+import { LocalCalendar } from './ui/calendar.ts';
+import { EraBanner, eraRun, eraTitle } from './ui/eraBanner.ts';
+import { EraMood } from './view/eraMood.ts';
 import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionCss, stageLegend, type ColorMode } from './view/colorModes.ts';
 import { StreetView } from './view/street.ts';
 import { GalaxyView, LocalView, LEVELS, PlanetView, SystemView, UniverseView, alive, cityCount, cityDir, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
@@ -104,6 +107,9 @@ const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.7, 0.5, 0.55);
 composer.addPass(bloom);
+// the era tints the whole picture: grey and stuttering in a collapse, warm in a golden age
+const eraMood = new EraMood(bloom);
+composer.addPass(eraMood.pass);
 composer.addPass(new OutputPass());
 
 function resize(): void {
@@ -150,6 +156,11 @@ function govern(dt: number): void {
 
 const world = buildWorld();
 const sim = new SimClient();
+const eraBanner = new EraBanner();
+app.append(eraBanner.el);
+const calendar = new LocalCalendar(world, (a, b, c, d) => sim.events(a, b, c, d));
+timeline.local = (y) => calendar.text(y);
+calendar.onChange = () => timeline.refresh();
 const ctx: Ctx = { world, snap: null, year: 0, camera, controls, system: 0, body: world.mars, selected: null, t: 0, tm: 0, colorBy: 'stage', city: 0 };
 let events: SimEvent[] = [];
 let history: HistoryMsg | null = null;
@@ -680,7 +691,7 @@ function requestState(year: number): void {
     lastStep = m.step;
     ctx.snap = m;
     views[level].sync(ctx);
-    timeline.setEra(m.globals.era);
+    showEra(m);
     streetMood();
     renderHere();
     refreshPanels();
@@ -688,6 +699,14 @@ function requestState(year: number): void {
     if (wanted !== ask) requestState(sim.years[wanted]);
     else refreshEvents();
   });
+}
+
+/** The era now: its name (counted, "Third Expansion") on the timeline, its grade on the picture, a banner when it turns. */
+function showEra(m: StateMsg): void {
+  const r = eraRun(sim.years, (i) => sim.series[i * NGM + GM.era], m.step);
+  timeline.setEra(eraTitle(r));
+  eraMood.setEra(m.globals.era);
+  eraBanner.show(r);
 }
 
 let evTimer = 0;
@@ -755,6 +774,8 @@ function refreshPanels(): void {
     forecast: fcOn && fc ? oddsHtml(fc, (k) => row(GM[k])) : undefined,
   });
   charts.setYear(ctx.year);
+  const sel = ctx.selected, place = sel?.kind === 'body' ? sel.id : sel?.kind === 'city' || level === 'planet' || level === 'street' ? ctx.body : -1;
+  calendar.place(ctx.snap, place, ctx.year, sim.years[sim.frontier] ?? 0);
   dataPanel.refresh();
 }
 
@@ -860,6 +881,7 @@ function startRun(seed: number): void {
   inspector.resetPeople();
   ctx.snap = null; lastStep = -1; wanted = -1; inFlight = false; events = []; history = null; fc = null;
   ticker.clear(); tickFrom = 0;
+  eraBanner.reset(); calendar.reset();
   sim.run(seed);
   timeline.set(0);
   ctx.year = 0;
@@ -1028,6 +1050,7 @@ function loop(now: number): void {
   }
   views[level].frame(ctx, dt);
   sky.position.copy(camera.position);
+  eraMood.frame(dt, ctx.t, camera.aspect);
   composer.render();
   if (frame++ % 2 === 0) drawLabels();
   drawRing();

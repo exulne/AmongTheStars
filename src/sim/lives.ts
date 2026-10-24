@@ -40,6 +40,7 @@ const MORTAL: Record<number, string> = {
   [EV.Famine]: 'the famine', [EV.War]: 'the war', [EV['Gamma-ray burst']]: 'the gamma-ray burst', [EV.Supernova]: 'the supernova',
   [EV['Dark forest strike']]: 'the strike from the dark', [EV['Reactor accident']]: 'a reactor accident', [EV.Collapse]: 'the collapse',
   [EV['Solar storm']]: 'a solar storm',
+  [EV['Kinetic strike']]: 'the kinetic strike',
 };
 
 export interface PersonBrief { id: string; name: string; sex: 'f' | 'm'; born: number; age: number; place: string; job: string; alive: boolean; body?: string }
@@ -55,6 +56,7 @@ export interface Biography extends PersonBrief {
   story: { year: number; text: string; link?: { kind: 'body' | 'person'; id: string | number } }[];
   height: number; personality: [number, number, number, number, number]; generationsHere: number;
   descendants: { total: number; alive: number; places: { body: number; name: string; n: number }[]; generations: number };
+  faith?: string | null;  // raised in, from the birthplace's faith shares at birth
 }
 
 export class Lives {
@@ -155,6 +157,8 @@ export class Lives {
   coinedWord(b: number, n: number): string { return this.coined(n, b, 0, 2); }
   /** set by the worker once the Chronicle exists, so biographies can mention what people did */
   deeds: ((pid: string, stays: { body: number; from: number; to: number }[]) => { year: number; text: string }[]) | null = null;
+  /** set by the worker: the faith someone born at b in `year` is raised in (u picks among the shares) */
+  faithAt: ((b: number, year: number, u: number) => string | null) | null = null;
   distanceLy(a: number, b: number): number {
     const s1 = this.e.world.systems[this.e.world.bodies[this.home(a)].system], s2 = this.e.world.systems[this.e.world.bodies[this.home(b)].system];
     return Math.hypot(s1.x - s2.x, s1.y - s2.y, s1.z - s2.z);
@@ -336,6 +340,8 @@ export class Lives {
       const bf = this.boarding(id.b), lf = this.landing(id.b);
       return bf ? `, ${Math.round(born - bf.depart)} years into its voyage from ${this.bodyName(bf.src)}${lf ? ` to ${this.bodyName(lf.dst)}` : ''}` : '';
     })() : '';
+    const faith = this.faithAt?.(this.home(id.b), born, hash01(id.b, id.q, id.i, 71)) ?? null;
+    if (faith) story.push({ year: born + 1, text: `Raised in ${faith}.` });
     story.push({ year: born, text: `Born ${isShipBody(id.b) ? 'aboard' : 'on'} ${this.bodyName(id.b)}${bornAboard}${parents.length ? `, to ${parents.join(' and ')}` : id.q < 0 ? ', on Earth before the Landing' : ''}.`, link: isShipBody(id.b) ? undefined : { kind: 'body', id: id.b } });
     life.forEach((s, k) => {
       if (k > 0 && s.end !== 'lost') {
@@ -409,6 +415,7 @@ export class Lives {
       height: Math.round(172 + (1 - Math.min(bodyG, 1.5)) * 24 * Math.min(1, (born - (isShipBody(id.b) ? born - 100 : S[id.b * NF + F.founded])) / 300) + (hash01(id.b, id.q, id.i, 61) - 0.5) * 22),
       personality: [62, 63, 64, 65, 66].map((k) => Math.round(hash01(id.b, id.q, id.i, k) * 100) / 100) as Biography['personality'],
       generationsHere: ancestors.filter((a) => a.who.place === this.bodyName(id.b)).length + 1,
+      faith,
       descendants: { total: desc.total, alive: desc.alive, generations: desc.generations, places: [...desc.places.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([b, n]) => ({ body: b, name: this.bodyName(b), n })) },
     };
   }
