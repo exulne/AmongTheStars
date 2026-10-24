@@ -34,3 +34,10 @@ export function fmtUnit(x: number, unit: string): string {
 export function fmtYear(y: number): string {
   return String(Math.round(2040 + y));
 }
+
+/** "2.56B", "40M", "12k", "1,234" → a whole number; NaN if it isn't one. */
+export function parseCount(s: string): number {
+  const m = s.trim().toLowerCase().replace(/[,_\s]/g, '').match(/^#?(\d*\.?\d+)([kmbt]?)$/);
+  if (!m) return NaN;
+  return Math.round(Number(m[1]) * ({ '': 1, k: 1e3, m: 1e6, b: 1e9, t: 1e12 } as Record<string, number>)[m[2]]);
+}

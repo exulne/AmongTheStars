@@ -71,6 +71,17 @@ export function popOf(snap: StateMsg | null, b: number): number {
 }
 export function alive(stage: number): boolean { return stage >= STAGE.OUTPOST && stage <= STAGE.MEGA; }
 
+/** Settlements drawn on a world: one capital plus more as it grows. */
+export function cityCount(stage: number, pop: number): number {
+  return alive(stage) ? Math.min(48, Math.ceil(1 + stage * stage * 1.2 + Math.log10(1 + pop))) : 0;
+}
+/** Head-count of city i of n and the index of its first resident in the world's list. Capital holds 30%. */
+export function citySplit(pop: number, n: number, i: number): { count: number; offset: number } {
+  if (n <= 1) return { count: Math.floor(pop), offset: 0 };
+  const cap = Math.floor(pop * 0.3), rest = (pop - cap) / (n - 1);
+  return i === 0 ? { count: cap, offset: 0 } : { count: Math.floor(cap + rest * i) - Math.floor(cap + rest * (i - 1)), offset: Math.floor(cap + rest * (i - 1)) };
+}
+
 export interface SystemSum { stage: number; pop: number; n: number; faction: number; founded: number }
 
 /** Stage is the most developed settlement; faction that of the most populous; founded the earliest. */
@@ -701,7 +712,7 @@ export class PlanetView implements View {
     mat.uniforms.uLights.value = alive(st) ? Math.min(0.95, Math.log10(1 + pop) / 10.5) : 0;
     mat.uniforms.uGreen.value = ctx.snap ? Math.min(1, ctx.snap.S[b * NF + F.terraform] * 2) : 0;
     // cities: one marker per ~stage, positions stable per body
-    const nCities = alive(st) ? Math.min(48, Math.ceil(1 + st * st * 1.2 + Math.log10(1 + pop))) : 0;
+    const nCities = cityCount(st, pop);
     if (this.cities) this.pivot.remove(this.cities.pts);
     this.cities = pointCloud(Math.max(nCities, 1), pointsMaterial({ minPx: 2 }));
     this.cityPos = [];

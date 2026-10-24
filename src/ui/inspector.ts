@@ -5,8 +5,8 @@ import type { HistoryMsg, SimEvent, StateMsg } from '../sim/client.ts';
 import { F, GLOBAL_METRICS, GM, NF, SETTLEMENT_LABELS, type SField } from '../sim/metrics.ts';
 import type { World } from '../sim/world.ts';
 import { STAGE_CSS } from '../view/textures.ts';
-import { alive, systemSummary, type Pickable } from '../view/views.ts';
-import { fmtNum, fmtUnit, fmtYear } from './format.ts';
+import { alive, cityCount, citySplit, systemSummary, type Pickable } from '../view/views.ts';
+import { fmtNum, fmtUnit, fmtYear, parseCount } from './format.ts';
 import { personAt } from './people.ts';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -30,6 +30,7 @@ export class Inspector {
   private openPerson = -1;
   onSelect: (p: Pickable) => void = () => {};
   onDive: (p: Pickable) => void = () => {};
+  onClose: () => void = () => {};
   private last: InspectorCtx | null = null;
   private revealPerson = false;
 
@@ -44,6 +45,7 @@ export class Inspector {
       const t = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
       if (!t || !this.last) return;
       const act = t.dataset.act!, id = Number(t.dataset.id);
+      if (act === 'close') this.onClose();
       if (act === 'body') this.onSelect({ kind: 'body', id, name: this.last.world.bodies[id].name, pos: null! });
       if (act === 'dive-body') this.onDive({ kind: 'body', id, name: this.last.world.bodies[id].name, pos: null! });
       if (act === 'dive-system') this.onDive({ kind: 'system', id, name: this.last.world.systems[id].name, pos: null! });
@@ -53,7 +55,7 @@ export class Inspector {
     this.el.addEventListener('change', (e) => {
       const t = e.target as HTMLInputElement;
       if (t.id === 'person-jump' && this.last) {
-        const n = Math.max(1, Math.floor(Number(t.value.replace(/[^0-9]/g, '')) || 1));
+        const n = Math.max(1, parseCount(t.value) || 1);
         this.peoplePage = Math.floor((n - 1) / 12);
         this.openPerson = n - 1;
         this.render(this.last);
@@ -69,6 +71,8 @@ export class Inspector {
     this.revealPerson = true;
   }
 
+  toTop(): void { this.el.scrollTop = 0; }
+
   render(c: InspectorCtx): void {
     this.last = c;
     const s = c.selected;
@@ -78,6 +82,7 @@ export class Inspector {
     else if (s.kind === 'system') html = this.system(c, s.id);
     else if (s.kind === 'body') html = this.bodyView(c, s.id);
     else if (s.kind === 'city') html = this.bodyView(c, c.body, s.id);
+    if (s) html = `<button class="insp-close" type="button" data-act="close" aria-label="Close and show all of humanity">×</button>${html}`;
     const scroll = this.el.scrollTop;
     this.body.innerHTML = html;
     this.el.scrollTop = scroll;
@@ -142,9 +147,9 @@ export class Inspector {
     return `
       <h2>${esc(sys.name)}</h2>
       <p class="lede">${sys.spec}-type star, ${sys.dist < 0.01 ? 'home' : `${sys.dist.toFixed(1)} light years from the Sun`}. ${sys.real ? 'Real star.' : 'Procedural star.'}</p>
+      <p class="act"><button class="link" data-act="dive-system" data-id="${id}" type="button">Enter system</button></p>
       ${this.kv([['People', fmtNum(sum.pop)], ['Settlements', String(sum.n)], ['Luminosity', `${sys.lum.toPrecision(2)} L☉`], ['Light delay to Earth', sys.dist < 0.01 ? 'minutes' : `${sys.dist.toFixed(1)} yr`]])}
-      <div class="tbl-wrap"><table class="bodies"><tbody>${rows}</tbody></table></div>
-      <p><button class="link" data-act="dive-system" data-id="${id}" type="button">Enter system</button></p>`;
+      <div class="tbl-wrap"><table class="bodies"><tbody>${rows}</tbody></table></div>`;
   }
 
   private bodyView(c: InspectorCtx, id: number, city?: number): string {
@@ -154,6 +159,7 @@ export class Inspector {
     const v = (f: SField) => (S ? S[id * NF + F[f]] : 0);
     const st = S ? v('stage') : -1;
     const pop = v('pop');
+    const fly = `<p class="act"><button class="link" data-act="dive-body" data-id="${id}" type="button">Fly to ${esc(b.name)}</button></p>`;
     const header = `<h2>${esc(city === undefined ? b.name : city === 0 ? `${b.name} capital` : `${b.name} settlement ${city}`)}</h2>
       <p class="lede">${st >= 0 ? `<span class="pill" style="--c:${STAGE_CSS[st]}">${STAGE_NAMES[st]}</span> ` : ''}${b.kind} world in ${esc(sys.name)}${st >= 0 && v('founded') >= 0 && st !== STAGE.SURVEY ? `, settled ${fmtYear(v('founded'))}` : ''}${v('parent') >= 0 && st > STAGE.SURVEY ? ` from ${esc(c.world.bodies[v('parent')]?.name ?? '')}` : ''}.</p>`;
     const phys = this.kv([
@@ -162,7 +168,7 @@ export class Inspector {
     ]);
     const res = `<div class="bars">${RES_NAMES.map((r, k) => `<div class="bar"><span>${r === 'he3' ? 'helium-3' : r}</span><i style="--v:${b.res[k]}"></i></div>`).join('')}</div>`;
     if (!alive(st)) {
-      return `${header}<h3>World</h3>${phys}<h3>Resources</h3>${res}<h3>Events here</h3>${this.eventsList(c, 8)}`;
+      return `${header}${fly}<h3>World</h3>${phys}<h3>Resources</h3>${res}<h3>Events here</h3>${this.eventsList(c, 8)}`;
     }
     const factionId = v('faction');
     const faction = factionId === id ? 'Independent' : `Loyal to ${c.world.bodies[factionId]?.name ?? '?'}`;
@@ -170,18 +176,16 @@ export class Inspector {
       const [label, unit] = SETTLEMENT_LABELS[f]!;
       return [label, fmtUnit(v(f), unit)] as [string, string];
     });
-    const share = city === undefined ? 1 : city === 0 ? 0.3 : 0.7 / Math.max(1, 12);
-    const cityPop = Math.floor(pop * share);
-    const offset = city === undefined || city === 0 ? 0 : Math.floor(pop * 0.3 + (city - 1) * pop * 0.7 / 12);
-    return `${header}
+    const split = city === undefined ? { count: Math.floor(pop), offset: 0 } : citySplit(pop, cityCount(st, pop), city);
+    const cityPop = split.count, offset = split.offset;
+    return `${header}${fly}
       ${this.kv([['Population', fmtNum(pop)], ['Allegiance', esc(faction)], ['Faith', `#${v('culture')}`]])}
       ${this.historyChart(c)}
       <h3>Residents</h3>${this.people(c, id, cityPop, offset)}
       <h3>All metrics</h3>${this.kv(metrics)}
       <h3>World</h3>${phys}
       <h3>Resources</h3>${res}
-      <h3>Events here</h3>${this.eventsList(c, 10)}
-      <p><button class="link" data-act="dive-body" data-id="${id}" type="button">Fly to ${esc(b.name)}</button></p>`;
+      <h3>Events here</h3>${this.eventsList(c, 10)}`;
   }
 
   private historyChart(c: InspectorCtx): string {

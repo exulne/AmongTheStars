@@ -83,6 +83,11 @@ button, select, input { font: inherit; color: inherit; }
 /* inspector */
 .inspector { position: absolute; top: 0; right: 0; bottom: var(--bottom-h, 200px); width: min(22rem, 34vw); overflow-y: auto; background: linear-gradient(90deg, rgba(2,2,4,0) 0, var(--wash) 1.2rem);
   padding: max(18px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 1.5rem 1.6rem; box-sizing: border-box; scrollbar-width: thin; }
+.insp-body { position: relative; }
+.insp-close { position: absolute; top: -0.35rem; right: -0.4rem; width: 2.75rem; height: 2.75rem; background: none; border: 0; padding: 0; font: 1.4rem/1 var(--serif); color: var(--quiet); cursor: pointer; }
+.insp-close:hover { color: var(--ink); }
+.inspector .act { margin: 0 0 0.8rem; font-size: 0.85rem; }
+.inspector h2 { padding-right: 2.2rem; }
 .inspector h2 { font-size: 1.3rem; font-weight: 400; letter-spacing: -0.02em; line-height: 1.25; margin: 0 0 0.3rem; text-wrap: balance; }
 .inspector h3 { font-size: 0.85rem; font-weight: 400; margin: 1.3rem 0 0.4rem; color: var(--quiet); border-top: 1px solid var(--faint); padding-top: 0.7rem; }
 .inspector .lede { font-size: 0.85rem; margin: 0 0 0.8rem; }

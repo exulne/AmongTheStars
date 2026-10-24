@@ -10,7 +10,7 @@ import { SimClient, type HistoryMsg, type SimEvent, type StateMsg } from './sim/
 import { F, GM, HIST_FIELDS, NF, NGM, SETTLEMENT_LABELS } from './sim/metrics.ts';
 import { GALAXIES, buildWorld } from './sim/world.ts';
 import { ChartStrip, globalSeries, type Series } from './ui/charts.ts';
-import { fmtNum } from './ui/format.ts';
+import { fmtNum, parseCount } from './ui/format.ts';
 import { Inspector } from './ui/inspector.ts';
 import { Search, type Hit } from './ui/search.ts';
 import { NOTABLE, Ticker, describe } from './ui/ticker.ts';
@@ -295,16 +295,20 @@ function dive(p: Ref): void {
 }
 
 function select(p: Pickable | null): void {
+  const changed = p?.kind !== ctx.selected?.kind || p?.id !== ctx.selected?.id;
   ctx.selected = p;
   history = null;
   if (p?.kind === 'body' || p?.kind === 'city') {
-    const id = p.kind === 'body' ? p.id : ctx.body;
-    sim.history(id).then((h) => { history = h; refreshPanels(); });
+    const id = p.kind === 'body' ? p.id : ctx.body, g = runGen;
+    sim.history(id).then((h) => { if (g !== runGen || ctx.selected !== p) return; history = h; charts.draw(); refreshPanels(); });
   }
+  charts.refreshOptions();
   refreshEvents();
   refreshPanels();
+  if (changed) inspector.toTop();
 }
 inspector.onSelect = (p) => select(p);
+inspector.onClose = () => select(null);
 inspector.onDive = (p) => { select(p); dive(p); };
 
 // Wheel out past the outer limit goes up a level. Wheel in over a thing pulls
@@ -415,7 +419,8 @@ function drawRing(): void {
 
 // ------------------------------------------------------------------ sim wiring
 
-let inFlight = false, wanted = -1, lastStep = -1;
+// runGen tags every request so replies from a previous future are dropped
+let inFlight = false, wanted = -1, lastStep = -1, runGen = 0;
 function requestState(year: number): void {
   if (!sim.years.length) return;
   const step = sim.stepAt(year);
@@ -423,8 +428,9 @@ function requestState(year: number): void {
   wanted = step;
   if (inFlight) return;
   inFlight = true;
-  const ask = wanted;
+  const ask = wanted, g = runGen;
   sim.state(ask).then((m: StateMsg) => {
+    if (g !== runGen) return;
     inFlight = false;
     lastStep = m.step;
     ctx.snap = m;
@@ -442,8 +448,8 @@ function refreshEvents(): void {
   clearTimeout(evTimer);
   evTimer = window.setTimeout(() => {
     const p = ctx.selected;
-    const body = p?.kind === 'body' ? p.id : p?.kind === 'city' ? ctx.body : undefined;
-    sim.events(body === undefined ? ctx.year - 300 : 0, ctx.year, body, 40).then((e) => { events = e; refreshPanels(); });
+    const body = p?.kind === 'body' ? p.id : p?.kind === 'city' ? ctx.body : undefined, g = runGen;
+    sim.events(body === undefined ? ctx.year - 300 : 0, ctx.year, body, 40).then((e) => { if (g !== runGen) return; events = e; refreshPanels(); });
   }, 120);
 }
 
@@ -475,10 +481,11 @@ function pollTicker(y: number): void {
   const now = performance.now();
   if (tickBusy || now - tickAsk < 350) return;
   tickAsk = now; tickBusy = true;
-  const from = tickFrom;
+  const from = tickFrom, g = runGen;
   tickFrom = y;
   sim.events(from, y, undefined, 60).then((evs) => {
     tickBusy = false;
+    if (!timeline.playing || g !== runGen) return;
     ticker.push(evs.filter((e) => NOTABLE.has(e.type)).reverse().map((e) => describe(world, e)));
   });
 }
@@ -491,9 +498,12 @@ ticker.onPick = (it) => {
   if (level !== 'system' || ctx.system !== sys) setLevel('system', { kind: 'system', id: sys }, () => { ctx.system = sys; });
 };
 
+let panelsAt = 0;
 timeline.onChange = (y) => {
   ctx.year = y;
   pollTicker(y);
+  const now = performance.now();
+  if (!timeline.playing || now - panelsAt > 120) { panelsAt = now; refreshPanels(); }
   requestState(y);
   charts.setYear(y);
 };
@@ -503,11 +513,12 @@ sim.onProgress = () => {
   timeline.setData(sim.done ? 10000 : sim.years[sim.frontier], { years: sim.years, n: sim.frontier + 1, era: (i) => sim.series[i * NGM + era] });
   statusEl.textContent = sim.done ? `simulated in ${(sim.ms / 1000).toFixed(1)}s` : `simulating… year ${Math.round(sim.years[sim.frontier]).toLocaleString('en-US')}`;
   charts.draw();
-  if (!ctx.snap) requestState(0);
+  if (!ctx.snap) requestState(ctx.year);
 };
 
 function startRun(seed: number): void {
-  ctx.snap = null; lastStep = -1; events = []; history = null;
+  runGen++;
+  ctx.snap = null; lastStep = -1; wanted = -1; inFlight = false; events = []; history = null;
   ticker.clear(); tickFrom = 0;
   sim.run(seed);
   timeline.set(0);
@@ -562,9 +573,9 @@ function scoreBodies(q: string): { h: Hit; s: number }[] {
 
 function find(raw: string): Hit[] {
   const q = raw.toLowerCase().replace(/\s+/g, ' ');
-  const res = q.match(/^(?:resident|person|citizen)?\s*#\s*([\d,_ ]+?)\s*(?:(?:of|on|in|at|from)\s+(.*))?$/) ?? q.match(/^(?:resident|person|citizen)\s+#?\s*([\d,_]+)\s*(?:(?:of|on|in|at|from)\s+(.*))?$/);
+  const res = q.match(/^(?:resident|person|citizen)?\s*#\s*([\d.,_]+\s*[kmbt]?)\s*(?:(?:of|on|in|at|from)\s+(.*))?$/) ?? q.match(/^(?:resident|person|citizen)\s+#?\s*([\d.,_]+\s*[kmbt]?)\s*(?:(?:of|on|in|at|from)\s+(.*))?$/);
   if (res) {
-    const n = Math.max(1, Number(res[1].replace(/[^0-9]/g, '')) || 1);
+    const n = Math.max(1, parseCount(res[1]) || 1);
     const where = res[2]?.trim();
     const bodies = where ? findBodies(where, 6) : ctx.selected?.kind === 'body' ? [{ kind: 'body' as const, id: ctx.selected.id, name: '', sub: '' }] : [];
     return bodies.filter((b) => alive(stageOf(ctx.snap, b.id))).map((b) => ({
