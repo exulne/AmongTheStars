@@ -26,7 +26,8 @@ function groundOf(kind: string, open: boolean): { ground: number; dome: boolean;
   return { ground: open ? 0x16241b : g[kind] ?? 0x1b1b1e, dome: !open && kind !== 'ocean', water: kind === 'ocean' };
 }
 
-const MAX_AGENTS = 1600, BATCH = 400;
+// phones get fewer residents: smaller screens, smaller GPUs
+const MAX_AGENTS = matchMedia('(max-width: 40rem)').matches ? 700 : 1600, BATCH = 400;
 /** Seconds of real time per day in the street. */
 export const DAY_SECONDS = 60;
 

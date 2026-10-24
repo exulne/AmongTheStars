@@ -83,6 +83,12 @@ export function cityCount(stage: number, pop: number): number {
 }
 
 /** Night-side light coverage: dark below ~10k people, full at tens of billions. */
+/** Unit direction of settlement i on body b's surface (the same everywhere it is drawn). */
+export function cityDir(b: number, i: number): THREE.Vector3 {
+  const u = hash01(b, i, 1) * 2 - 1, th = hash01(b, i, 2) * Math.PI * 2, s = Math.sqrt(1 - u * u);
+  return new THREE.Vector3(s * Math.cos(th), u * 0.85, s * Math.sin(th)).normalize();
+}
+
 export function cityLights(pop: number): number {
   return Math.min(0.95, Math.max(0, (Math.log10(1 + pop) - 4) / 6.5));
 }
@@ -184,6 +190,7 @@ class Trails {
 const SHIP_C = new THREE.Color(0.55, 0.9, 1), FTL_C = new THREE.Color(0.8, 0.6, 1);
 const HAB_MAT = new THREE.MeshStandardMaterial({ color: 0x8a919b, metalness: 0.6, roughness: 0.55 });
 const ELEVATOR = TECHS.findIndex((t) => t.id === 'spaceElevator');
+const TETHER = 17; // counterweight radius; short enough to stay clear of the side panel
 const tv1 = new THREE.Vector3(), tv2 = new THREE.Vector3(), tv3 = new THREE.Vector3();
 const WHITE = new THREE.Color(1, 1, 1);
 const tmpC2 = new THREE.Color();
@@ -900,8 +907,7 @@ export class PlanetView implements View {
       this.cities = pointCloud(Math.max(nCities, 1), pointsMaterial({ minPx: 2 }));
       this.cityPos = [];
       for (let i = 0; i < nCities; i++) {
-        const u = hash01(b, i, 1) * 2 - 1, th = hash01(b, i, 2) * Math.PI * 2, s = Math.sqrt(1 - u * u);
-        const p = new THREE.Vector3(s * Math.cos(th), u * 0.85, s * Math.sin(th)).normalize().multiplyScalar(10.05);
+        const p = cityDir(b, i).multiplyScalar(10.05);
         this.cityPos.push(p);
         this.cities.pos.set([p.x, p.y, p.z], i * 3);
         tmpC.set(STAGE_COLORS[Math.max(1, st)]);
@@ -1005,10 +1011,11 @@ export class PlanetView implements View {
         const th = hash01(b, k, 9) * Math.PI * 2 + k * 2.1;
         const dir = new THREE.Vector3(Math.cos(th), 0, Math.sin(th));
         const g = new THREE.Group();
-        const tether = new THREE.BufferGeometry().setFromPoints([dir.clone().multiplyScalar(10), dir.clone().multiplyScalar(27)]);
-        g.add(new THREE.Line(tether, new THREE.LineBasicMaterial({ color: 0x9fdcff, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false })));
-        const cw = glowSprite(0xbfe9ff, 0.9, 0.9);
-        cw.position.copy(dir).multiplyScalar(27);
+        const tether = new THREE.BufferGeometry().setFromPoints([dir.clone().multiplyScalar(10), dir.clone().multiplyScalar(TETHER)]);
+        tether.setAttribute('color', new THREE.Float32BufferAttribute([0.62, 0.86, 1, 0.12, 0.17, 0.2], 3));
+        g.add(new THREE.Line(tether, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false })));
+        const cw = glowSprite(0xbfe9ff, 0.6, 0.7);
+        cw.position.copy(dir).multiplyScalar(TETHER);
         const climber = glowSprite(0xffffff, 0.5, 1);
         climber.userData.dir = dir;
         g.add(cw, climber);
@@ -1027,7 +1034,7 @@ export class PlanetView implements View {
     for (const g of this.elevators) {
       const c = g.userData.climber as THREE.Sprite;
       const u = (ctx.t * 0.05 + g.id * 0.37) % 1;
-      c.position.copy(c.userData.dir as THREE.Vector3).multiplyScalar(10.2 + 16.6 * (0.5 - 0.5 * Math.cos(u * Math.PI * 2)));
+      c.position.copy(c.userData.dir as THREE.Vector3).multiplyScalar(10.2 + (TETHER - 10.4) * (0.5 - 0.5 * Math.cos(u * Math.PI * 2)));
     }
     if (this.cities) (this.cities.pts.material as THREE.ShaderMaterial).uniforms.uOpacity.value = 0.7 + 0.3 * Math.sin(ctx.t * 1.5);
   }
