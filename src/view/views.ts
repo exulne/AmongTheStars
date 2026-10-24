@@ -13,6 +13,7 @@ import { fmtNum } from '../ui/format.ts';
 import { ageColor, factionColor, heatColor, type ColorMode } from './colorModes.ts';
 import { makeGalaxy } from './galaxyPoints.ts';
 import { atmosphereMaterial, planetMaterial } from './planetShader.ts';
+import { applyPlanetLook } from './timeLook.ts';
 import { STAGE_COLORS, flareTex, galaxySpriteTex, glowTex, pointsMaterial, specColor } from './textures.ts';
 
 export type Level = 'universe' | 'galaxy' | 'local' | 'system' | 'planet';
@@ -713,9 +714,7 @@ export class SystemView implements View {
         v.marker.scale.setScalar(v.visR * (3 + st * 0.6));
         if (st === STAGE.MEGA) mega = true;
       } else m.opacity = st === STAGE.SURVEY ? 0.15 : 0;
-      const mat = v.mesh.material as THREE.ShaderMaterial;
-      mat.uniforms.uLights.value = alive(st) ? cityLights(popOf(ctx.snap, v.id)) : 0;
-      mat.uniforms.uGreen.value = ctx.snap ? Math.min(1, ctx.snap.S[v.id * NF + F.terraform] * 2) : 0;
+      applyPlanetLook(v.mesh, ctx.snap, v.id, ctx.year, alive(st) ? cityLights(popOf(ctx.snap, v.id)) : 0);
     }
     // Dyson swarm: shimmer of collectors around a star with a megastructure
     if (mega && !this.swarm) {
@@ -857,8 +856,10 @@ export class PlanetView implements View {
     this.planet = new THREE.Mesh(new THREE.SphereGeometry(R, 128, 96), mat);
     if (b.kind === 'asteroid') this.planet.scale.set(1, 0.72, 0.86);
     this.pivot.add(this.planet);
-    if (b.kind !== 'asteroid' && b.kind !== 'moon' && b.kind !== 'rocky' && b.kind !== 'dwarf') {
-      this.planet.add(new THREE.Mesh(new THREE.SphereGeometry(R * 1.05, 96, 64), atmosphereMaterial(b.kind === 'ocean' ? 0x5aa0ff : b.color)));
+    if (b.kind !== 'asteroid' && b.kind !== 'dwarf') {
+      // airless worlds get a black (invisible) shell that turns blue if they are ever terraformed
+      const airless = b.kind === 'moon' || b.kind === 'rocky';
+      this.planet.add(new THREE.Mesh(new THREE.SphereGeometry(R * 1.05, 96, 64), atmosphereMaterial(airless ? 0x000000 : b.kind === 'ocean' ? 0x5aa0ff : b.color)));
     }
     if (b.kind === 'gas' && (b.name === 'Saturn' || hash01(b.id, 5) < 0.4)) {
       const ring = new THREE.Mesh(new THREE.RingGeometry(R * 1.35, R * 2.3, 160), new THREE.MeshBasicMaterial({ color: 0xd8c39a, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }));
@@ -886,9 +887,7 @@ export class PlanetView implements View {
     this.build(ctx);
     const b = ctx.body;
     const st = stageOf(ctx.snap, b), pop = popOf(ctx.snap, b);
-    const mat = this.planet.material as THREE.ShaderMaterial;
-    mat.uniforms.uLights.value = alive(st) ? cityLights(pop) : 0;
-    mat.uniforms.uGreen.value = ctx.snap ? Math.min(1, ctx.snap.S[b * NF + F.terraform] * 2) : 0;
+    applyPlanetLook(this.planet, ctx.snap, b, ctx.year, alive(st) ? cityLights(pop) : 0);
     // cities: one marker per ~stage, positions stable per body
     const nCities = cityCount(st, pop);
     if (this.cityKey !== `${b}:${nCities}:${st}`) {
