@@ -13,6 +13,8 @@ function stamp() {
   const dirty = git('git status --porcelain --untracked-files=no -- src') !== '';
   const RULES = ['catalog', 'engine', 'world', 'rng', 'metrics', 'demography', 'ledger', 'invent', 'ages', 'civ', 'polity', 'diffusion'].map((f) => `src/sim/${f}.ts`);
   const h = createHash('sha256');
+  // the war minds decide wars, so they are rules too
+  RULES.push('src/sim/warMind.ts', 'src/ml/netMind.ts', 'src/ml/warNet.ts', 'src/ml/warWeights.ts');
   for (const f of RULES) { try { h.update(readFileSync(f)); } catch { h.update(f); } }
   let trainedAt = '';
   try { trainedAt = /"trainedAt":"([^"]+)"/.exec(readFileSync('src/ml/weights.ts', 'utf8'))?.[1] ?? ''; } catch { /* no weights */ }

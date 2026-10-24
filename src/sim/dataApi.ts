@@ -45,6 +45,8 @@ export interface DataEnv {
   post: (m: DataRes, transfer?: Transferable[]) => void;
   /** faith f's name (row f of the faith table), once the people of the run exist (else null) */
   faithName?: (f: number) => string | null;
+  /** give a replaying engine the same war minds as the main run */
+  minds?: (e: Engine) => void;
 }
 
 const DATA_TYPES = new Set(['table', 'scan', 'runinfo', 'groups', 'faiths', 'place']);
@@ -84,6 +86,7 @@ function pump(env: DataEnv): void {
     scanner = new Engine(env.world, main.seed);
     scanner.ledger = null;
     scanner.logEvents = false;
+    env.minds?.(scanner);
   }
   const e = scanner;
   e.restore(snaps[0]);

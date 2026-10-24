@@ -65,6 +65,8 @@ export class SimClient {
   inventions() { return this.ask<Msg<'inventions'>>({ type: 'inventions' }); }
   /** ages, faiths, polities and wars of this future, with their names */
   annals() { return this.ask<Msg<'annals'>>({ type: 'annals' }); }
+  /** how this future fights at a year: the generation of war minds, and wars in the last `span` years against the span before */
+  wayOfWar(year: number, span = 500) { return this.ask<Msg<'wayOfWar'>>({ type: 'wayOfWar', year, span }); }
   state(step: number) { return this.ask<StateMsg>({ type: 'state', step }); }
   /** every living settlement's full row at a step */
   table(step: number) { return this.ask<Msg<'table'>>({ type: 'table', step }); }

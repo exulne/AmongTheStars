@@ -4,6 +4,8 @@
 
 import { Engine } from './engine.ts';
 import { buildWorld } from './world.ts';
+import { NetMind } from '../ml/netMind.ts';
+import { loadWarGens, type WarGens } from '../ml/warGens.ts';
 
 export type ToEnsemble = { type: 'run'; seeds: number[]; token: number };
 export type FromEnsemble = { type: 'future'; token: number; seed: number; series: Float64Array };
@@ -11,8 +13,13 @@ export type FromEnsemble = { type: 'future'; token: number; seed: number; series
 const world = buildWorld();
 let token = 0;
 
-self.onmessage = (ev: MessageEvent<ToEnsemble>) => {
-  const m = ev.data;
+// the same trained war minds as the main run, so siblings are comparable
+let gens: WarGens | null = null;
+const ready = loadWarGens().catch(() => null).then((g) => { gens = g; });
+
+self.onmessage = (ev: MessageEvent<ToEnsemble>) => { void ready.then(() => play(ev.data)); };
+
+function play(m: ToEnsemble): void {
   token = m.token;
   const queue = [...m.seeds];
   const next = () => {
@@ -21,6 +28,7 @@ self.onmessage = (ev: MessageEvent<ToEnsemble>) => {
     const e = new Engine(world, seed);
     e.ledger = null;
     e.logEvents = false;
+    if (gens) { const mind = new NetMind(e, gens.nets, () => 0, seed); mind.byYear = gens.genAt; e.civ.pol.mind = mind; }
     const go = () => {
       if (m.token !== token) return;
       const until = performance.now() + 40;
@@ -33,4 +41,4 @@ self.onmessage = (ev: MessageEvent<ToEnsemble>) => {
     go();
   };
   next();
-};
+}

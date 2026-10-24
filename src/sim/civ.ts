@@ -27,6 +27,7 @@ export const H = {
   mMil: 18,       // multiplies its military spending (regime)
   adapt: 19,      // share of its people engineered for their world
   upl: 20,        // share of its minds running on machines
+  posture: 21,    // on a faction's capital: extra military spending its war mind chose (0 = none; multiplier is 1 + this)
 } as const;
 export const NH = 40;
 
@@ -63,6 +64,7 @@ export const WC = {
   a: 0, b: 1, sys: 2, start: 3, end: 4, cause: 5, kind: 6, outcome: 7, winner: 8, front: 9, target: 10,
   sev: 11, killed: 12, energy: 13, from: 14, speed: 15, mass: 16, fA: 17, fB: 18, indep: 19,
   pA: 20, pB: 21, // polity rows of the two sides when it began
+  rounds: 22,     // extra rounds fought after the first resolution came due (war minds only)
 } as const;
 export const NWC = 24;
 export const MAX_WAR = 4096;

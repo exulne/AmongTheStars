@@ -563,6 +563,13 @@ export class Engine {
       // saving 22% of output, capital wearing out at 5%/yr: K/Y ≈ s/(δ + g) ≈ 3, Earth's ≈ 3.45 in 2040
       S[o + F.capital] = Math.max(0, S[o + F.capital] + (0.22 * gdp - 0.05 * S[o + F.capital]) * dt);
       S[o + F.military] = gdp * (0.015 + (g[G.era] === 4 ? 0.08 : 0) + (S[o + F.faction] !== b || isEarth ? 0 : 0.03)) * this.civ.mul(b, H.mMil);
+      // a war mind's posture: spending above (or below) the usual share comes out of (or back into) capital
+      const post = this.civ.mul(S[o + F.faction], H.posture);
+      if (post !== 0) {
+        const base = S[o + F.military];
+        S[o + F.military] = base * (1 + post);
+        S[o + F.capital] = Math.max(0, S[o + F.capital] - post * base * dt);
+      }
       S[o + F.robots] = S[o + F.capital] / 2e6 * (fx.productivity > 1.4 ? 3 : 1);
 
       // research
