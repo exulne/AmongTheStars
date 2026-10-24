@@ -225,7 +225,7 @@ Notes:
 | Median vertebrate MVP | 4,169 | [R] Traill et al. 2007 |
 | Self-sufficient industrial base (no frozen embryos, no AGI) | 1e5–1e6 | [E] (Musk ≈1e6; Metzger 2013 bootstrapping with robots ≈ hundreds of tonnes seed) |
 
-**Genetic rule** [R formula / D params]: effective population `N_e ≈ 0.4 × N`. Inbreeding increases by `ΔF = 1/(2 N_e)` per generation (25 yr). Health and fertility penalty `= 1 − 0.5 × F` on fertility, plus `+F × 0.02` added to annual mortality. Gene banks (frozen embryos/gametes, tech M22) set the effective `N_e = max(N_e, bank_size × 0.5)`.
+**Genetic rule** [R formula / D params]: effective population `N_e ≈ 0.4 × N`. Inbreeding increases by `ΔF = 1/(2 N_e)` per generation (25 yr). Health and fertility penalty `= 1 − 0.5 × F` on fertility, plus `+F × 0.02` added to annual mortality. Gene banks (frozen embryos/gametes, tech N29) set the effective `N_e = max(N_e, bank_size × 0.5)`.
 
 ### 1.9 Per-person consumables (no recycling) [R NASA BVAD / E]
 
@@ -1651,6 +1651,31 @@ interface EventRecord { year: number; eventId: string; scope: string; targetId: 
 **RNG:** use one seeded PRNG stream per scope instance (e.g. `hash(seed, settlementId)`), so that adding a settlement does not reshuffle the others' histories. This lets users compare runs with "same seed, one parameter changed".
 
 **Performance budget:** ≈ 1e3–1e5 settlements × 10,000 yr. Use annual ticks to ≈ 2300. After that, tick every 5–10 yr for S7/S8 and ships in transit, and annually for S2–S5. Event rolls use `p_dt = 1 − (1 − p)^dt`.
+
+## Appendix B2. Initial world state at t0 (2040)
+
+| Settlement | State | Pop | Polity | SSI | Energy (W) | Habitat (m³) | Stocks (yrs of LS reserve) | Notes |
+|---|---|---|---|---|---|---|---|---|
+| Earth | S7 | 9.2e9 | 6 blocs (US+allies 15%, China 17%, India 18%, EU 6%, Russia+CSTO 3%, Rest 41% of pop) | 1.0 | 2.1e13 | – | – | regimes at t0: US-bloc CON, China CON, India EXP, EU STAG, Russia STAG, Rest CON |
+| LEO stations (2–4 commercial/national) | S3 | 30 | US-bloc / China | 0.05 | 5e5 | 3,000 | 0.5 | |
+| Moon south pole base(s) | S3 | 12 (two bases: Artemis ≈8, ILRS ≈4) | US-bloc / China | 0.10 | 2e5 (fission 40 kWe + PV) | 1,500 | 1.0 | ice ISRU pilot (T05) |
+| Mars landing site (e.g. Arcadia/Utopia ice region) | S3 | 6 (from 2039-11 window; p=0.3 that it is 12) | US-bloc (corporate charter, E56 = true) | 0.02 | 1e5 (PV 60% + Kilopower 40%) | 1,000 (inside landed ships) | 1.5 | 4–8 cargo ships pre-landed (≈ 400–800 t) |
+| Mars (robotic precursor sites) | S2 | 0 | US-bloc, China | – | 2e4 | – | – | China crewed Mars target ≈ 2045–2050 window |
+| Phobos, Ceres, Psyche, NEAs | S1 | 0 | – | – | – | – | – | Psyche orbiter data from 2029 |
+| All other §2.2 bodies | S1 | 0 | – | – | – | – | – | |
+
+Initial techs: T00–T07 for the US-bloc and China. Other blocs have T02, T03, T06, T07 and can acquire the rest at 0.2× cost (§3.1).
+
+## Appendix B3. Worked example: one tick for Mars, year 2045
+
+Inputs: pop 24 (S3), regime of parent (US-bloc) = EXP, SSI 0.08, techs T00–T07 + N08, energy supply 4e5 W, demand 24 × 25 kW = 6e5 W → energy_ok = 0.67. The window is open (2046-05 departure is in 12 months, so cargo is in transit).
+
+1. Events: E05 dust storm roll 0.18 → miss. E03 habitat breach 0.02 → miss. E04 LS failure `0.01 × 1.0` → miss.
+2. Economy: resupply need = 24 × 0.7 t = 16.8 t/yr × 2,000 cr/kg = 3.4e7 cr/yr, paid by the parent (f_parent = surplus 5e10 / required 1e11 = 0.5).
+3. Population: no births (S3). Deaths = 24 × (0.008 + 0.05 × 0.233 Sv × 0.5 unshielded) = 24 × 0.0138 = 0.33 expected → Poisson draw 0.
+4. Research: Mars contributes ≈ 0 KP. The US-bloc pool allocates heavily to N01 (need_score ×5 because resupply cost > 20% of the Mars budget).
+5. Lifecycle: S3 → S4 gate fails (pop < 100, no N01). p_up = 0. Failure: `p_dead = (0.008 × exp(−5/20) + 0.002) × 1/(0.3 + 0.7 × 0.6) × 1.0 = (0.0062 + 0.002) × 1.39 = 0.0114`. Abandon p = 0.02 × f(EXP → no multiplier) = 0.02.
+6. Decisions: build energy (energy_ok < 0.9 for 2 yr → order a 1 MWe fission unit on the next cargo); send 30 more crew next window (U = 0.62 > 0.45).
 
 ## Appendix C. Key judgment calls (and how to dial them)
 
