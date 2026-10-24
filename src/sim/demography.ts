@@ -265,10 +265,13 @@ export class Demography {
     const now = before.reduce((a, x) => a + x.alive, 0) + arrivals.reduce((a, x) => a + x.alive, 0);
     let D = now + births - target;
     if (D < 0) { births -= D; D = 0; }
+    // a settlement that empties in this period: nobody is left to die beyond everyone,
+    // so the excess comes off the births (else newborns outlive an abandoned town)
+    if (D > now) { births -= D - now; D = now; }
     const lon = this.longevity(periodStart(p));
     const pool = [...before, ...arrivals].filter((x) => x.alive > 0);
     const w = pool.map((x) => x.alive * gompertz(periodMid(p) - periodMid(x.q), lon));
-    const dead = split(Math.min(D, pool.reduce((a, x) => a + x.alive, 0)), w, pool.map((x) => x.alive));
+    const dead = split(D, w, pool.map((x) => x.alive));
     pool.forEach((x, i) => { x.alive -= dead[i]; });
     const deadOf = new Map(pool.map((x, i) => [x, dead[i]] as const));
     for (const x of before) {
