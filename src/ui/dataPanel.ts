@@ -138,6 +138,30 @@ export class DataPanel {
   }
 
   footer(html: string): void { this.el.querySelector('.data-foot')!.innerHTML = html; }
+
+  private tbl: TableMsg | null = null;
+  private tblKey = '';
+  private tblBusy = false;
+  /** Every living place at the current year, shared by the tabs: null while it is fetched (the tab refreshes when it lands). */
+  table(): TableMsg | null {
+    const sim = this.host.sim;
+    if (!sim.years.length) return null;
+    const step = sim.stepAt(this.host.year());
+    if (this.tbl && this.tblKey === `${sim.seed}:${step}`) return this.tbl;
+    if (!this.tblBusy) {
+      this.tblBusy = true;
+      const seed = sim.seed;
+      sim.table(step).then((t) => {
+        this.tblBusy = false;
+        if (seed !== this.host.sim.seed) return;
+        this.tbl = t;
+        this.tblKey = `${seed}:${step}`;
+        this.refresh(true);
+      });
+    }
+    // keep showing the last table (if it is this run's) until the new one lands
+    return this.tbl && this.tblKey.startsWith(`${sim.seed}:`) ? this.tbl : null;
+  }
 }
 
 interface Col { key: string; head: string; title: string; text: boolean; value(b: number, r: number): number | string; show(b: number, r: number): string }
@@ -150,12 +174,10 @@ class PlacesTab implements DataTab {
   private host: DataHost;
   private desk: DataPanel;
   private table: TableMsg | null = null;
-  private tableKey = '';
   private cols: Col[];
   private sortKey = 'pop';
   private sortDir = -1;
   private limit = 200;
-  private inflight = false;
   private status: HTMLElement;
   private tbl: HTMLElement;
   private more: HTMLElement;
@@ -213,21 +235,10 @@ class PlacesTab implements DataTab {
 
   refresh(): void {
     if (this.input.value !== this.desk.query) { this.input.value = this.desk.query; this.setQuery(this.desk.query); }
-    const sim = this.host.sim;
-    if (!sim.years.length) return;
-    const step = sim.stepAt(this.host.year());
-    const key = `${sim.seed}:${step}`;
-    if (key === this.tableKey && this.table) { this.render(); return; }
-    if (this.inflight) { this.desk.refresh(); return; }
-    this.inflight = true;
-    const seed = sim.seed;
-    sim.table(step).then((t) => {
-      this.inflight = false;
-      if (seed !== this.host.sim.seed) return;
-      this.table = t;
-      this.tableKey = `${seed}:${t.step}`;
-      this.render();
-    });
+    const t = this.desk.table();
+    if (!t) return;
+    this.table = t;
+    this.render();
   }
 
   private columns(): Col[] {

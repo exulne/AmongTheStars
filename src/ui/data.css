@@ -9,3 +9,10 @@
   box-sizing: border-box; padding: 0.55rem 0.9rem; background: rgba(4, 4, 7, 0.96); border-top: 1px solid #ffc45c; border-bottom: 1px solid var(--faint); font-size: 0.8125rem; }
 .stamp-warn p { margin: 0; }
 .stamp-warn .link { margin-left: 0.5rem; }
+.g-card { border-top: 1px solid var(--rule); padding-top: 0.2rem; }
+.g-card .data-h { border: 0; display: flex; gap: 0.9rem; align-items: baseline; flex-wrap: wrap; }
+.g-members { list-style: none; margin: 0; padding: 0; columns: 3 12rem; font-size: 0.78rem; }
+.g-members li { break-inside: avoid; padding: 0.05rem 0; }
+.g-legend { font-size: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.2rem 0.9rem; }
+.g-key i { display: inline-block; width: 0.6rem; height: 0.6rem; margin-right: 0.3rem; vertical-align: baseline; }
+.data-tools code { font: 0.72rem var(--mono); }
