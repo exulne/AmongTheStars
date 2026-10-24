@@ -248,6 +248,82 @@ const count = (p: any) => p.geometry.attributes.position.count;
   }
 }
 
+// ---- below a person: their body, a cell of every tissue, every organelle's molecule, atoms of each
+{
+  const { Micro } = await import('../src/view/micro.ts');
+  const L = new Lives(e);
+  let pop = -1, home = world.earth;
+  for (const b of settled) { const p = snap.S[b * NF + F.pop]; if (snap.S[b * NF + F.stage] >= 0 && p > pop && b !== world.earth) { pop = p; home = b; } }
+  const brief = L.residents(home, year, 0, 3).people[0];
+  const base = brief ? L.biography(brief.id, year) : null;
+  if (!base) fail('micro: no resident to look inside');
+  else {
+    const micro = new Micro(() => Promise.resolve({ bio: null }));
+    for (const v of Object.values(micro.views)) scene.add(v.group);
+    // the person as simulated, then the same life as an engineered body on a low-gravity world, then uploaded
+    const lowG = world.bodies.findIndex((b) => b.g < 0.3 && b.system === 0);
+    const variants = [base, { ...base, body: 'adapted to this world', where: { body: lowG, name: world.bodies[lowG].name } }, { ...base, body: 'uploaded' }];
+    let cards = 0, mols = 0, atoms = 0;
+    const molSeen = new Set<string>();
+    for (const bio of variants) {
+      micro.setPerson(`${bio.id}`, bio as any); micro.bio = bio as any;
+      const sp = micro.specimen(ctx)!;
+      micro.views.person.sync(ctx); micro.views.person.frame(ctx, 0.016);
+      for (let p = 0; p < sp.parts.length; p++) { const c = checkCard('mpart', p); cards++; if (p === 0 && bio === variants[1]) show(c); }
+      if (sp.form === 'flesh') { checkCard('mflow', 3); if (sp.parts.includes('nano')) checkCard('mnano', 1); }
+      for (let p = 0; p < sp.parts.length; p++) {
+        micro.part = p; micro.orgl = 0; micro.atom = 0;
+        micro.views.cell.sync(ctx); micro.views.cell.frame(ctx, 0.016);
+        const plan = micro.plan(ctx)!;
+        checkCard('mcell', 0); checkCard('mnbr', 0);
+        for (let o = 0; o < plan.organelles.length; o++) {
+          checkCard('morg', o); checkCard('mpts', o); cards += 2;
+          micro.orgl = o; micro.views.molecule.sync(ctx);
+          const mol = micro.molecule(ctx)!;
+          const mk = `${mol.id}:${mol.name}`;
+          if (molSeen.has(mk) && bio !== variants[0]) continue;
+          molSeen.add(mk); mols++;
+          const mc = checkCard('mmol', 0); if (mols <= 2) show(mc);
+          if (!mol.atoms.length) fail(`molecule ${mol.name} has no atoms`);
+          for (const [i, j] of mol.bonds) { const d = Math.hypot(...[0, 1, 2].map((k) => mol.atoms[i].p[k] - mol.atoms[j].p[k])); if (!(d > 0.5 && d < 3.3)) { fail(`molecule ${mol.name}: bond ${d.toFixed(2)} Å between ${mol.atoms[i].role} and ${mol.atoms[j].role}`); break; } }
+          const step = Math.max(1, Math.floor(mol.atoms.length / 25));
+          for (let a = 0; a < mol.atoms.length; a += step) checkCard('matm', a);
+          // one atom of each element in the subject, all the way down
+          const els = new Map<number, number>();
+          mol.atoms.forEach((x, k) => { if (x.mol < 0 && x.Z && !els.has(x.Z)) els.set(x.Z, k); });
+          for (const k of els.values()) {
+            micro.atom = k; micro.views.atom.sync(ctx); micro.views.atom.frame(ctx, 0.016);
+            const ac = checkCard('matom', 0); if (atoms === 0) show(ac);
+            const spec = micro.atomSpec(ctx)!;
+            for (let n = 0; n <= spec.Z + spec.N; n += Math.max(1, Math.floor((spec.Z + spec.N) / 6))) checkCard('mnuc', n);
+            for (let s = 0; s < (micro.views.atom as any).cfg.length; s++) checkCard('morb', s);
+            atoms++;
+          }
+        }
+      }
+    }
+    console.log(`micro: ${variants.length} bodies of ${base.name}, ${cards} part and organelle cards, ${mols} molecules, ${atoms} atoms down to nucleus and subshells`);
+  }
+}
+
+// ---- above the Local Group: futures as universes
+{
+  const { MultiverseView } = await import('../src/view/multiverse.ts');
+  const mv = new MultiverseView();
+  scene.add(mv.group);
+  mv.current = seed;
+  mv.add(seed, e.years, e.series, e.years.length, true);
+  const other = new Engine(world, seed + 1);
+  other.ledger = null; other.logEvents = false;
+  while (!other.done) other.step();
+  mv.add(seed + 1, other.years, other.series, other.years.length, true);
+  mv.sync(ctx);
+  show(checkCard('futu', seed)); checkCard('futu', seed + 1);
+  for (let i = 0; i < 1800; i += 199) checkCard('futx', i);
+  if (mv.pickables().length !== 2) fail('multiverse should show 2 futures');
+  console.log(`multiverse: futures #${seed} and #${seed + 1} explained`);
+}
+
 console.log(`\nkinds explained: ${[...kindsSeen].sort().join(' ')}`);
 console.log(fails ? `${fails} FAILURES` : 'all explain checks pass');
 process.exit(fails ? 1 : 0);
