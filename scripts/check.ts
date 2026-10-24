@@ -78,6 +78,7 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
       const d = st.techDone[i];
       if (prevTech[i] >= 0 && d !== prevTech[i]) fail(`tech ${TECHS[i].id} changed ${prevTech[i]} -> ${d} at ${y}`);
       if (d > y) fail(`tech ${TECHS[i].id} done in future ${d} > ${y}`);
+      if (d >= 0 && YEAR0 + d < TECHS[i].earliest - 0.25 * (TECHS[i].earliest - YEAR0)) fail(`tech ${TECHS[i].id} landed in ${YEAR0 + d}, before its floor`);
       if (d >= 0) for (const r of TECHS[i].req) if (st.techDone[techAt(r)] < 0 || st.techDone[techAt(r)] > d) fail(`tech ${TECHS[i].id} before prerequisite ${r}`);
       prevTech[i] = d;
     }

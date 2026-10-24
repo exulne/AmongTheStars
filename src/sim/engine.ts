@@ -57,17 +57,21 @@ interface Fx {
 }
 const MULT_KEYS = new Set(['extract', 'habitat', 'lifeSupport', 'energy', 'launch', 'research', 'productivity', 'death', 'growth', 'war', 'secession', 'voyage', 'divergence']);
 
+const RESEARCH = 6; // calibrates knowledge output to the tech tree's milestone years
 const MIGRATE = 0.001; // share of a town's people per year who move to younger settlements in the same system
 const REACH_OUTER = 1, REACH_RAD = 2, REACH_DEEP = 4;
 const MINOR = new Set([EV.Famine, EV['Rich deposit found'], EV['Baby boom'], EV.Revolt, EV['Habitat breach'], EV['Probe survey']]);
 const TECH_INDEX = new Map(TECHS.map((t, i) => [t.id, i]));
 const TECH_REQ: number[][] = TECHS.map((t) => t.req.map((r) => TECH_INDEX.get(r)!));
+const TECH_FLOOR = TECHS.map((t) => t.earliest - 0.25 * (t.earliest - 2040));
 
 export class Engine {
   world: World;
   seed: number;
   st: SimState;
   techCostMult: Float64Array;
+  /** per tech: 1 if this universe's physics allows it (rolled once per seed) */
+  feasible: Uint8Array;
   fx!: Fx;
   logEvents = true;
   events: SimEvent[] = [];
@@ -129,6 +133,7 @@ export class Engine {
       const sigma = TECHS[i].era === 4 ? 1.4 : TECHS[i].era === 3 ? 0.5 : 0.35;
       this.techCostMult[i] = Math.exp(sigma * z);
     }
+    this.feasible = Uint8Array.from(TECHS, (t) => (next(rng) < (t.feasible ?? 1) ? 1 : 0));
     this.st = this.initialState(rng);
     this.recomputeFx();
     this.record(0);
@@ -350,7 +355,7 @@ export class Engine {
       S[o + F.robots] = S[o + F.capital] / 2e6 * (fx.productivity > 1.4 ? 3 : 1);
 
       // research
-      const r = Math.pow(pop / 1e9, 0.7) * Math.pow(Math.max(gdp / Math.max(pop, 1), 1) / 17400, 0.6) * 9 * fx.research * E.research + S[o + F.robots] * 1e-9 * fx.research;
+      const r = Math.pow(pop / 1e9, 0.7) * Math.pow(Math.max(gdp / Math.max(pop, 1), 1) / 17400, 0.6) * 9 * RESEARCH * fx.research * E.research + S[o + F.robots] * 1e-9 * fx.research;
       S[o + F.research] = r;
       research += r;
 
@@ -486,25 +491,19 @@ export class Engine {
     const frontier: number[] = [];
     let w = 0;
     for (let i = 0; i < TECHS.length; i++) {
-      if (st.techDone[i] >= 0) continue;
+      // progress < 0 marks a tech proven impossible in this universe
+      if (st.techDone[i] >= 0 || st.techProg[i] < 0) continue;
       if (TECH_REQ[i].every((j) => st.techDone[j] >= 0)) { frontier.push(i); w += 1 / TECHS[i].cost; }
     }
     if (!frontier.length) return;
     let changed = false;
     for (const i of frontier) {
       st.techProg[i] += amount * (1 / TECHS[i].cost) / w;
-      if (st.techProg[i] >= TECHS[i].cost * this.techCostMult[i] && (TECHS[i].era < 4 || this.physicsAllows(i))) {
-        st.techDone[i] = year; changed = true; this.log(EV.Technology, -1, i);
-      }
+      if (st.techProg[i] < TECHS[i].cost * this.techCostMult[i] || year + YEAR0 < TECH_FLOOR[i]) continue;
+      if (!this.feasible[i]) { st.techProg[i] = -1; continue; }
+      st.techDone[i] = year; changed = true; this.log(EV.Technology, -1, i);
     }
     if (changed) this.recomputeFx();
-  }
-
-  /** Era-4 tech is gated by whether this universe's physics permits it at all (fixed per seed). */
-  private physicsAllows(i: number): boolean {
-    const id = TECHS[i].id;
-    const odds = id === 'warp' ? 0.3 : id === 'wormholes' ? 0.35 : 0.9;
-    return this.techCostMult[i] % 0.001 < 0.001 * odds;
   }
 
   private expand(dt: number, year: number, eraLaunch: number): void {
