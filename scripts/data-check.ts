@@ -1,0 +1,61 @@
+// Checks the worker's data desk in Node: tables, query scans by replay (they
+// must agree with the saved snapshots), and the analyst summaries.
+//   node scripts/data-check.ts [seed]
+import { handleData, type DataEnv, type DataReq, type DataRes } from '../src/sim/dataApi.ts';
+import { Engine, type SimState } from '../src/sim/engine.ts';
+import { F, NF } from '../src/sim/metrics.ts';
+import { buildWorld } from '../src/sim/world.ts';
+
+const seed = Number(process.argv[2] ?? 7);
+const world = buildWorld();
+const main = new Engine(world, seed);
+const snaps: SimState[] = [main.snapshot()];
+const t0 = performance.now();
+while (!main.done) { main.step(); if (main.st.step % 20 === 0) snaps.push(main.snapshot()); }
+console.log(`seed ${seed}: ${main.st.step} steps in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+
+const replay = new Engine(world, seed);
+replay.logEvents = false;
+const stateAt = (step: number): Engine => {
+  if (step >= main.st.step) return main;
+  replay.restore(snaps[Math.floor(step / 20)]);
+  while (replay.st.step < step) replay.step();
+  return replay;
+};
+let wait: ((m: DataRes) => void) | null = null;
+const env: DataEnv = { world, main: () => main, snaps: () => snaps, stateAt, post: (m) => wait?.(m) };
+let nextId = 1;
+function ask<T extends DataRes['type']>(req: Omit<Extract<DataReq, { type: T }>, 'id'>): Promise<Extract<DataRes, { type: T }>> {
+  return new Promise((res) => {
+    const id = nextId++;
+    wait = (m) => { if (m.id === id) res(m as Extract<DataRes, { type: T }>); };
+    handleData({ ...req, id } as DataReq, env);
+  });
+}
+
+let bad = 0;
+const ok = (cond: boolean, what: string) => { if (!cond) { bad++; console.log(`FAIL ${what}`); } };
+
+// table: every living place, full rows
+const last = main.st.step;
+const tbl = await ask<'table'>({ type: 'table', step: last });
+ok(tbl.bodies.length > 10 && tbl.rows.length === tbl.bodies.length * NF, 'table shape');
+let popSum = 0;
+for (let i = 0; i < tbl.bodies.length; i++) popSum += tbl.rows[i * NF + F.pop];
+ok(popSum > 1e9, `table population ${popSum.toExponential(2)}`);
+
+// scans: the snapshot fast path and the replay path must agree where they overlap
+const fast = await ask<'scan'>({ type: 'scan', expr: 'stage >= 4', agg: 'count', stride: 20 });
+const slow = await ask<'scan'>({ type: 'scan', expr: 'stage >= 4', agg: 'count', stride: 5 });
+ok(!fast.error && !slow.error && fast.steps.length > 50, `scan shapes ${fast.steps.length} ${slow.steps.length} ${fast.error ?? ''}${slow.error ?? ''}`);
+const at = new Map(Array.from(slow.steps, (s, i) => [s, slow.values[i]]));
+let mismatch = 0;
+fast.steps.forEach((s, i) => { if (at.has(s) && at.get(s) !== fast.values[i]) mismatch++; });
+ok(mismatch === 0, `replay disagrees with snapshots at ${mismatch} steps`);
+const sum = await ask<'scan'>({ type: 'scan', expr: '', agg: 'sum', of: 'pop', stride: 20 });
+ok(Math.abs(sum.values[sum.values.length - 1] - popSum) / popSum < 1e-9, 'sum(pop) at the end matches the table');
+const err = await ask<'scan'>({ type: 'scan', expr: 'pop >', agg: 'count', stride: 20 });
+ok(!!err.error, 'a bad query reports an error');
+
+console.log(bad ? `${bad} data checks failed` : 'data: all checks ok');
+process.exit(bad ? 1 : 0);

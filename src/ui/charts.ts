@@ -3,6 +3,7 @@
 
 import { ERAS } from '../sim/catalog.ts';
 import { GLOBAL_METRICS, GM, type MetricDef } from '../sim/metrics.ts';
+import { globalBinder, tryCompile, type GlobalRow } from '../sim/query.ts';
 import { fmtUnit, fmtYear } from './format.ts';
 
 export const HORIZON = 10000;
@@ -73,6 +74,11 @@ export class ChartStrip {
           if (m.group !== group) { og = document.createElement('optgroup'); og.label = m.group; select.append(og); group = m.group; }
           og!.append(new Option(m.label, m.key));
         }
+        og = document.createElement('optgroup'); og.label = 'Derived'; select.append(og);
+        for (const [k, r] of registry) og.append(new Option(r.def.label, k));
+        for (const x of exprHistory) og.append(new Option(x, `x:${x}`));
+        if (cur.startsWith('x:') && !exprHistory.includes(cur.slice(2))) og.append(new Option(cur.slice(2), cur));
+        og.append(new Option('Expression… (e.g. gdp/pop)', '__expr'));
         const extra = withExtra ? extraOptions() : [];
         if (extra.length) {
           og = document.createElement('optgroup'); og.label = 'Selected place'; select.append(og);
@@ -89,7 +95,10 @@ export class ChartStrip {
       wrap.append(head, canvas);
       this.el.append(wrap);
       const c = { wrap, canvas, select, value, key, fill: () => { fill(); c.key = select.value; } };
-      select.addEventListener('change', () => { c.key = select.value; this.draw(); });
+      select.addEventListener('change', () => {
+        if (select.value === '__expr') { this.askExpr(c); return; }
+        c.key = select.value; this.draw();
+      });
       canvas.addEventListener('pointermove', (e) => {
         const r = canvas.getBoundingClientRect();
         this.hoverPos = (e.clientX - r.left) / r.width;
@@ -107,6 +116,47 @@ export class ChartStrip {
   }
 
   setSource(fn: (key: string) => Series | null): void { this.getSeries = fn; }
+
+  /** Inline editor for a derived series: any expression over the global metrics. */
+  private askExpr(c: (typeof this.charts)[number]): void {
+    const head = c.select.parentElement!;
+    const input = document.createElement('input');
+    input.className = 'chart-expr';
+    input.placeholder = 'gdp / pop';
+    input.spellcheck = false;
+    input.setAttribute('aria-label', 'Expression over global metrics');
+    input.value = c.key.startsWith('x:') ? c.key.slice(2) : '';
+    c.select.hidden = true;
+    head.prepend(input);
+    input.focus();
+    const done = (ok: boolean) => {
+      if (ok) {
+        const r = tryCompile<GlobalRow>(input.value, globalBinder());
+        if (r instanceof Error) { input.setCustomValidity(`${r.message} (at ${r.pos + 1})`); input.reportValidity(); return; }
+        const x = input.value.trim();
+        if (!exprHistory.includes(x)) exprHistory.unshift(x);
+        exprHistory.length = Math.min(exprHistory.length, 8);
+        c.key = `x:${x}`;
+      }
+      input.remove();
+      c.select.hidden = false;
+      c.fill();
+      c.select.value = c.key;
+      this.draw();
+    };
+    input.addEventListener('input', () => input.setCustomValidity(''));
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') done(true); else if (e.key === 'Escape') done(false); e.stopPropagation(); });
+    input.addEventListener('blur', () => { if (input.isConnected) done(!!input.value.trim()); });
+  }
+
+  /** Show a series in the first chart (e.g. a query result). */
+  show(key: string, slot = 0): void {
+    const c = this.charts[Math.min(slot, this.charts.length - 1)];
+    c.key = key;
+    c.fill();
+    c.select.value = key;
+    this.draw();
+  }
   /** Forecast band drawn ahead of the cursor (transformer rollouts). */
   setFan(fn: ChartStrip['getFan']): void { this.getFan = fn; }
 
@@ -237,7 +287,41 @@ export class ChartStrip {
   }
 }
 
+// derived series: expressions typed into a chart, and series other panels register (query scans)
+const exprHistory: string[] = [];
+const registry = new Map<string, Series>();
+export function registerSeries(key: string, s: Series | null): void { if (s) registry.set(key, s); else registry.delete(key); }
+
+const exprCache = new Map<string, { n: number; series: Float64Array; out: Series | null }>();
+function exprSeries(years: number[], series: Float64Array, n: number, src: string): Series | null {
+  const hit = exprCache.get(src);
+  if (hit && hit.n === n && hit.series === series) return hit.out;
+  const out = computeExpr(years, series, n, src);
+  if (exprCache.size > 16) exprCache.clear();
+  exprCache.set(src, { n, series, out });
+  return out;
+}
+function computeExpr(years: number[], series: Float64Array, n: number, src: string): Series | null {
+  const r = tryCompile<GlobalRow>(src, globalBinder());
+  if (r instanceof Error) return null;
+  const vals = new Float64Array(n);
+  const row: GlobalRow = { series, i: 0, year: 0 };
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < n; i++) {
+    row.i = i; row.year = years[i];
+    const v = r.value(row);
+    vals[i] = v;
+    if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  }
+  // positive and spanning three orders of magnitude: read it on a log scale
+  const log = lo > 0 && hi / lo > 1000;
+  return { years, n, def: { key: `x:${src}`, label: src, unit: '', log, group: 'Derived' }, values: (i) => vals[i] };
+}
+
 export function globalSeries(years: number[], series: Float64Array, frontier: number, key: string): Series | null {
+  if (key.startsWith('x:')) return exprSeries(years, series, Math.min(years.length, frontier + 1), key.slice(2));
+  const reg = registry.get(key);
+  if (reg) return reg;
   const col = GM[key];
   if (col === undefined) return null;
   const n = Math.min(years.length, frontier + 1);

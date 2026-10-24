@@ -14,6 +14,8 @@ import { GALAXIES, buildWorld } from './sim/world.ts';
 import { ChartStrip, globalSeries, type Series } from './ui/charts.ts';
 import { fmtNum, fmtYear, parseCount } from './ui/format.ts';
 import { Inspector } from './ui/inspector.ts';
+import { installDataDesk } from './ui/dataDesk.ts';
+import { STAMP_CODE } from './ui/stamp.ts';
 import { Search, type Hit } from './ui/search.ts';
 import { NOTABLE, Ticker, describe } from './ui/ticker.ts';
 import { Timeline } from './ui/timeline.ts';
@@ -44,6 +46,7 @@ app.innerHTML = `
       <label for="seed">Future #</label><input id="seed" inputmode="numeric" value="1" size="6">
       <button id="reroll" class="link" type="button">Another future</button>
       <button id="chronicle" class="link" type="button">Chronicle</button>
+      <button id="data" class="link" type="button" aria-pressed="false">Data</button>
       <a id="starship" class="link" href="ship.html" title="Fly there yourself in the Starship, in this year">Fly the Starship</a>
       <span class="status num" aria-live="polite"></span>
     </div>
@@ -161,6 +164,11 @@ calendar.onChange = () => timeline.refresh();
 const ctx: Ctx = { world, snap: null, year: 0, camera, controls, system: 0, body: world.mars, selected: null, t: 0, tm: 0, colorBy: 'stage', city: 0 };
 let events: SimEvent[] = [];
 let history: HistoryMsg | null = null;
+const dataPanel = installDataDesk({
+  app, scene: canvas, world, sim, ctx, view: () => views[level],
+  selectBody: (b) => select(asPick({ kind: 'body', id: b })),
+  showSeries: (key) => { if (charts.el.hidden) chartsToggle.click(); charts.show(key); },
+});
 
 const views: Record<Level, View> = {
   universe: new UniverseView(),
@@ -768,6 +776,7 @@ function refreshPanels(): void {
   charts.setYear(ctx.year);
   const sel = ctx.selected, place = sel?.kind === 'body' ? sel.id : sel?.kind === 'city' || level === 'planet' || level === 'street' ? ctx.body : -1;
   calendar.place(ctx.snap, place, ctx.year, sim.years[sim.frontier] ?? 0);
+  dataPanel.refresh();
 }
 
 charts.setSource((key): Series | null => {
@@ -843,7 +852,7 @@ function writeHash(): void {
     const sel = ctx.selected;
     const parts = [`future${sim.seed}`, `y${Math.round(ctx.year)}`];
     if (sel) parts.push(sel.kind === 'city' ? `c${ctx.body}.${sel.id}` : `${REF_CODE[sel.kind]}${sel.id}`);
-    parts.push(`l${level}`);
+    parts.push(`l${level}`, STAMP_CODE);
     // replaceState so scrubbing doesn't flood the back button
     try { window.history.replaceState(null, '', `#${parts.join('-')}`); } catch { /* sandboxed frames may refuse */ }
   }, 400);
