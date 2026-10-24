@@ -15,7 +15,7 @@ import { biographyHtml, residentsHtml } from './peoplePanel.ts';
 import { explainHtml, galaxyFactsHtml, starFactsHtml } from '../explain/card.ts';
 import { explain } from '../explain/registry.ts';
 import type { Annals } from '../sim/chronicle.ts';
-import { ageAt, humanityAnnalsHtml, polityCardHtml, polityLink } from './annals.ts';
+import { ageAt, humanityAnnalsHtml, polityAt, polityCardHtml, polityLink } from './annals.ts';
 
 type Residents = { total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] };
 type SocietyView = { polity: { id: number; name: string; regime: string; since: number } | null; government: string; governmentWhy: string; language: string; faith: string | null; art: string; architecture: { name: string; materials: string }; daily: Record<string, string>; mood: string; sentences: string[] };
@@ -375,6 +375,8 @@ export class Inspector {
     }
     const factionId = v('faction');
     const faction = factionId === id ? 'Independent' : `Loyal to ${c.world.bodies[factionId] ? names.place(c.world, factionId) : '?'}`;
+    const A = this.ann, pol = A ? polityAt(A, factionId, c.year) : null;
+    const allegiance = pol && A ? polityLink(A, pol.id, true) + (factionId === id ? ' <span class="muted">(its capital)</span>' : '') : esc(faction);
     const metrics = (Object.keys(SETTLEMENT_LABELS) as SField[]).map((f) => {
       const [label, unit] = SETTLEMENT_LABELS[f]!;
       return [label, fmtUnit(v(f), unit)] as [string, string];
@@ -382,7 +384,7 @@ export class Inspector {
     const split = city === undefined ? { count: Math.floor(pop), offset: 0 } : citySplit(pop, cityCount(st, pop), city);
     const cityPop = split.count, offset = split.offset;
     return `${header}${fly}
-      ${this.kv([...(city === undefined ? [] : [['People in this settlement', fmtNum(cityPop)] as [string, string]]), [city === undefined ? 'Population' : 'Whole world', fmtNum(pop)], ['Allegiance', esc(faction)], ['Faith', esc(names.faith(v('culture')))]])}
+      ${this.kv([...(city === undefined ? [] : [['People in this settlement', fmtNum(cityPop)] as [string, string]]), [city === undefined ? 'Population' : 'Whole world', fmtNum(pop)], ['Allegiance', allegiance], ['Faith', esc(names.faith(v('culture')))]])}
       ${this.historyChart(c)}
       <h3>Society in ${fmtYear(c.year)}</h3>${this.society(c, id)}
       ${this.news(c, id)}

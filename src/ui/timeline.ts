@@ -79,7 +79,7 @@ export class Timeline {
     this.input.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); this.step(e.key === 'ArrowRight' ? 1 : -1, e.shiftKey); }
     });
-    new ResizeObserver(() => this.drawBand()).observe(this.band);
+    new ResizeObserver(() => { this.drawBand(); this.fitAges(); }).observe(this.band);
   }
 
   /** One sim step (1, 4 or 10 years depending on the epoch), or ten with `big`. */
@@ -144,7 +144,13 @@ export class Timeline {
       const x0 = yearToPos(a.from), x1 = yearToPos(Math.min(a.to, HORIZON));
       return `<button type="button" data-age="${i}" style="left:${(x0 * 100).toFixed(2)}%;width:${((x1 - x0) * 100).toFixed(2)}%" title="${a.name.replace(/"/g, '&quot;')}, ${fmtYear(a.from)}–${fmtYear(Math.min(a.to, HORIZON))}">${a.name.replace(/^the /i, '').replace(/[&<>]/g, '')}</button>`;
     }).join('');
+    this.fitAges();
     this.renderSub();
+  }
+  /** Label only the ages wide enough to read; the rest stay as hoverable, clickable spans. */
+  private fitAges(): void {
+    const el = this.el.querySelector<HTMLElement>('.tl-ages')!, W = el.clientWidth;
+    for (const b of el.querySelectorAll<HTMLElement>('button')) b.classList.toggle('mute', (parseFloat(b.style.width) / 100) * W < 70);
   }
   private ageName(y: number): string {
     for (const a of this.ages) if (a.from <= y && y < a.to) return a.name;

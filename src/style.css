@@ -188,6 +188,7 @@ input.tl-big:focus { outline: none; border-bottom-color: var(--accent); }
 .tl-ticks span:last-child { transform: translateX(-100%); }
 .tl-ages { position: relative; height: 0.95rem; margin: 0.1rem 0 0.2rem; }
 .tl-ages:empty { display: none; }
+.tl-ages button.mute { color: transparent; }
 .tl-ages button { position: absolute; top: 0; height: 100%; padding: 0 0.3em; border: 0; border-left: 1px solid var(--faint); background: none; color: var(--quiet); font: italic 0.62rem/0.95rem var(--serif); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .tl-ages button:hover, .tl-ages button:focus-visible { color: var(--ink); }
 .events li.future, .annals li.future { opacity: 0.45; }
@@ -351,6 +352,7 @@ input.tl-big:focus { outline: none; border-bottom-color: var(--accent); }
 
 /* the Starship's computer: docked bottom-left while aboard */
 .ship-console { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(var(--bottom-h, 200px) + 12px); width: min(23rem, 42vw); max-height: 44vh; display: flex; flex-direction: column; gap: 0.4rem; padding: 0.7rem 0.8rem; background: var(--wash); border-top: 1px solid var(--faint); z-index: 5; font-size: 0.8125rem; }
+.ship-console[hidden] { display: none; }
 .ship-console header { display: flex; align-items: baseline; gap: 0.8rem; flex-wrap: wrap; }
 .ship-console header b { font-weight: 400; color: var(--accent); letter-spacing: 0.02em; }
 .ship-console .views { display: flex; gap: 0.6rem; margin-left: auto; }
