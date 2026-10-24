@@ -270,8 +270,8 @@ export class UniverseView implements View {
       if (gal.kind === 'spiral') {
         const R = gal.radius * U * G;
         // seen whole, each galaxy's stars pile up into a few hundred pixels (Andromeda nearly edge-on): keep each one faint
-        const bright = gal.name === 'Andromeda' ? 0.34 : gal.name === 'Milky Way' ? 0.45 : 0.6;
-        obj = makeGalaxy({ seed: gal.name.length * 31, count: gal.name === 'Milky Way' ? 90000 : gal.name === 'Andromeda' ? 120000 : 30000, radius: R, arms: gal.name === 'Triangulum' ? 2 : 4, pitch: gal.name === 'Andromeda' ? 9 : 13, bar: gal.name === 'Milky Way' ? 0.25 : 0.1, thickness: 0.03, sizeScale: R * 0.006, brightness: bright, core: 0.36 });
+        const bright = gal.name === 'Andromeda' ? 0.5 : gal.name === 'Milky Way' ? 0.55 : 0.65;
+        obj = makeGalaxy({ seed: gal.name.length * 31, count: gal.name === 'Milky Way' ? 90000 : gal.name === 'Andromeda' ? 120000 : 30000, radius: R, arms: gal.name === 'Triangulum' ? 2 : 4, pitch: gal.name === 'Andromeda' ? 9 : 13, bar: gal.name === 'Milky Way' ? 0.25 : 0.1, thickness: 0.03, sizeScale: R * 0.006, brightness: bright, core: 0.5 });
         if (gal.name === 'Andromeda') obj.rotation.set(1.35, 0.6, 0.2);
         if (gal.name === 'Triangulum') obj.rotation.set(0.9, -0.4, 0);
       } else {
