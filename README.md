@@ -24,7 +24,8 @@ Same **seed**, same future. Change the seed and you get a different future: mayb
 |---|---|
 | **Time slider** (bottom) | Years 0 to 10,000 after the first Mars landing. Drag it and the universe changes. |
 | **Zoom levels** | Universe → Milky Way → Local neighbourhood → Star system → Planet → City → Person. Click to go deeper, use the breadcrumb at the top to go back up. |
-| **Charts** | Lines over time: population, energy, wealth, knowledge, number of settlements, stability, and more. You can pick which ones to show. |
+| **Charts** | Lines over time for 39 measures: population, energy, wealth, knowledge, settlements, stability, wars, resources and more. Pick any one from each chart's menu, and click a chart to jump to that year. |
+| **Future #** (top) | Each number is a different roll of the dice, so a different future. "Another future" picks one at random. |
 | **Inspector** (right side) | Click anything and you get every number about it, at the year you're on. |
 | **People** | Every settlement has its real head-count, and you can browse individual residents. People are generated on the fly from the seed, so the sim can "contain" billions without storing billions. |
 
@@ -33,6 +34,7 @@ Same **seed**, same future. Change the seed and you get a different future: mayb
 - **`src/sim/`** is the engine. It runs in the background (a Web Worker) so the page stays smooth. It simulates year by year early on, then in bigger jumps later when things change slowly. Every 250 years it saves a full picture of the universe. When you jump to year 4,321 it loads the 4,250 picture and replays the last 71 years, which gives an exact answer quickly.
 - **`src/view/`** draws everything in 3D with three.js: glowing particle galaxies, stars, orbits, planets with city lights.
 - **`src/ui/`** holds the slider, charts, inspector and breadcrumb.
+- **`src/ml/`** holds the neural network (see below).
 - **`research/`** holds the research notes and the "simulation bible": real numbers on planets, technologies, events, and ideas borrowed from sci-fi.
 
 ### The rules, roughly
@@ -45,14 +47,54 @@ Same **seed**, same future. Change the seed and you get a different future: mayb
 - **Politics:** humanity as a whole moves between moods such as expansion, golden age, stagnation, war, pandemic and collapse, and each mood changes the dice. Far-off colonies with long light-delay to Earth tend to declare independence.
 - **Events:** solar storms, habitat breaches, asteroid strikes, breakthroughs, plagues, mutinies, new religions, and humans slowly drifting genetically on low-gravity worlds.
 
+## The AI part: a "psychohistory engine"
+
+In *Foundation*, Hari Seldon predicts the future of a galactic empire with maths. We do a small version of that.
+
+- **What it is.** A small **transformer**, the same kind of neural network behind ChatGPT but tiny (about 150,000 numbers instead of billions). Instead of words, it reads decades. Each "word" is one decade of one future: population, energy, money, wars, tech count, what era it is, and so on.
+- **How it learns.** We run the simulation 400 times with different dice and get 400 different futures. The network reads them and learns to guess "given the last 640 years, what happens in the next 10?". It never sees the dice, only the history.
+- **What it does in the app.** At any year, it reads the history so far and imagines a dozen possible next 400 years. You see that as a fan on the charts, with odds such as "chance of a war in the next century". Then you drag the slider forward and check whether it was right.
+- **Why it's interesting.** It shows how predictable this universe is. Early on the fan is narrow. Around first contact or a collapse it blows wide open.
+- **Built from scratch.** No AI libraries. The network, including the maths that lets it learn (backpropagation), is written by hand in TypeScript (`src/ml/transformer.ts`). It trains on this laptop's CPU in minutes and runs in your browser. No GPUs needed so far.
+
+```bash
+node ml/dataset.ts 400          # simulate 400 futures into ml/data/
+node ml/train.ts                # train, writes src/ml/weights.ts
+node ml/train.ts --gradcheck    # sanity check that the learning maths is right
+```
+
+## How it's being built
+
+Everything lands as small commits on the `sim` branch, each one deployed so progress can be watched live.
+
+**Live build:** https://claude.ai/artifact/TPxsi8YkASWSVSbKe89jG6 (private until shared from the page's Share menu)
+
+Several AI agents work in parallel, each in its own copy of the repo:
+
+| Agent | Job |
+|---|---|
+| **Integrator** | Writes the core, merges everyone's work, deploys. |
+| **World checker** | Runs hundreds of futures and checks that they make sense: no negative people, Mars not empty in 2200, war not every century. Tunes the dials toward the research numbers. |
+| **Feature builder** | Smooth camera flights, search, colouring by faction, event ticker, mobile layout. |
+| **Devil's advocate** | Tries to break it and says what's bad, with three critics: looks (UI), whether things work (functionality), and whether a first-time visitor gets it (UX). |
+| **Researcher** | Wrote `research/simulation-bible.md`: real planet data, a 69-technology tree, war and pandemic odds from history, and ideas from The Expanse, Foundation, Three-Body, Red Mars and more. |
+
 ## Running it
 
 ```bash
 npm install
-npm run dev        # local dev server
-npm run build      # builds one self-contained HTML file into dist/
+npm run dev           # local dev server
+npm run build         # builds one self-contained HTML file into dist/
+npm run sim -- 42     # run future #42 in the terminal and print a summary
 ```
 
-## Status
+## Map of the code
 
-Built in small commits so progress can be followed live. See `git log`.
+| Folder | What's in it |
+|---|---|
+| `src/sim/` | The simulation: world catalog, rules, background worker |
+| `src/view/` | 3D: galaxies, stars, planets, the five zoom levels |
+| `src/ui/` | Time slider, charts, inspector, the people generator |
+| `src/ml/` | The transformer and the forecaster |
+| `ml/` | Scripts that make training data and train the network |
+| `research/` | Notes and the simulation bible |
