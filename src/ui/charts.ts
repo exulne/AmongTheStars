@@ -16,7 +16,7 @@ export interface Series { years: number[]; values: (i: number) => number; n: num
 
 export class ChartStrip {
   el: HTMLElement;
-  private charts: { wrap: HTMLElement; canvas: HTMLCanvasElement; select: HTMLSelectElement; value: HTMLElement; key: string }[] = [];
+  private charts: { wrap: HTMLElement; canvas: HTMLCanvasElement; select: HTMLSelectElement; value: HTMLElement; key: string; fill: () => void }[] = [];
   private getSeries: (key: string) => Series | null = () => null;
   private year = 0;
   private hoverPos: number | null = null;
@@ -58,7 +58,7 @@ export class ChartStrip {
       const canvas = document.createElement('canvas');
       wrap.append(head, canvas);
       this.el.append(wrap);
-      const c = { wrap, canvas, select, value, key };
+      const c = { wrap, canvas, select, value, key, fill: () => { fill(); c.key = select.value; } };
       select.addEventListener('change', () => { c.key = select.value; this.draw(); });
       canvas.addEventListener('pointermove', (e) => {
         const r = canvas.getBoundingClientRect();
@@ -77,6 +77,12 @@ export class ChartStrip {
   }
 
   setSource(fn: (key: string) => Series | null): void { this.getSeries = fn; }
+
+  /** Selection changed: relabel per-place options, and fall back to the default where they no longer apply. */
+  refreshOptions(): void {
+    for (const c of this.charts) c.fill();
+    this.draw();
+  }
   setYear(y: number): void { this.year = y; this.draw(); }
 
   draw(): void {

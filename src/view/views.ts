@@ -10,6 +10,7 @@ import { F, NF } from '../sim/metrics.ts';
 import { Rng, hash01 } from '../sim/rng.ts';
 import { GALACTIC_CENTRE, GALAXIES, galToXYZ, type Body, type World } from '../sim/world.ts';
 import { fmtNum } from '../ui/format.ts';
+import { ageColor, factionColor, heatColor, type ColorMode } from './colorModes.ts';
 import { makeGalaxy } from './galaxyPoints.ts';
 import { atmosphereMaterial, planetMaterial } from './planetShader.ts';
 import { STAGE_COLORS, flareTex, galaxySpriteTex, glowTex, pointsMaterial, specColor } from './textures.ts';
@@ -27,10 +28,17 @@ export interface Ctx {
   body: number;     // focused body
   selected: Pickable | null;
   t: number;        // seconds since start
+  tm: number;       // motion clock: orbits and spin; slows to a stop while hovering a thing so it can be clicked
+  colorBy: ColorMode;
 }
 
-export interface Pickable { pos: THREE.Vector3; kind: 'galaxy' | 'system' | 'body' | 'city' | 'humanspace'; id: number; name: string }
-export interface Label { pos: THREE.Vector3; text: string; sub?: string; strong?: boolean }
+export type PickKind = 'galaxy' | 'system' | 'body' | 'city' | 'humanspace';
+/** `weight` (px) lets important things win near-ties when picking */
+export interface Pickable { pos: THREE.Vector3; kind: PickKind; id: number; name: string; weight?: number }
+/** Enough to find a thing again in any view. */
+export interface Ref { kind: PickKind; id: number; name?: string }
+/** Higher `prio` labels win when two would overlap on screen. */
+export interface Label { pos: THREE.Vector3; text: string; sub?: string; strong?: boolean; ref?: Ref; prio?: number }
 
 export interface View {
   level: Level;
@@ -41,6 +49,12 @@ export interface View {
   frame(ctx: Ctx, dt: number): void;
   pickables(ctx: Ctx): Pickable[];
   labels(ctx: Ctx): Label[];
+  /** where a thing sits in this view, if it is shown here at all */
+  locate(ctx: Ctx, r: Ref): THREE.Vector3 | null;
+  /** camera distance at which wheeling into `r` enters it; 0 = not enterable */
+  diveDist(ctx: Ctx, r: Ref): number;
+  /** world-space radius of the thing, for the selection ring; 0 = a point */
+  size?(ctx: Ctx, r: Ref): number;
 }
 
 // ---------------------------------------------------------------- helpers
@@ -60,16 +74,44 @@ export function popOf(snap: StateMsg | null, b: number): number {
 }
 export function alive(stage: number): boolean { return stage >= STAGE.OUTPOST && stage <= STAGE.MEGA; }
 
-export function systemSummary(world: World, snap: StateMsg | null, sys: number): { stage: number; pop: number; n: number } {
-  let stage = -1, pop = 0, n = 0;
+/** Settlements drawn on a world: one capital plus more as it grows. */
+export function cityCount(stage: number, pop: number): number {
+  return alive(stage) ? Math.min(48, Math.ceil(1 + stage * stage * 1.2 + Math.log10(1 + pop))) : 0;
+}
+/** Head-count of city i of n and the index of its first resident in the world's list. Capital holds 30%. */
+export function citySplit(pop: number, n: number, i: number): { count: number; offset: number } {
+  if (n <= 1) return { count: Math.floor(pop), offset: 0 };
+  const cap = Math.floor(pop * 0.3), rest = (pop - cap) / (n - 1);
+  return i === 0 ? { count: cap, offset: 0 } : { count: Math.floor(cap + rest * i) - Math.floor(cap + rest * (i - 1)), offset: Math.floor(cap + rest * (i - 1)) };
+}
+
+export interface SystemSum { stage: number; pop: number; n: number; faction: number; founded: number }
+
+/** Stage is the most developed settlement; faction that of the most populous; founded the earliest. */
+export function systemSummary(world: World, snap: StateMsg | null, sys: number): SystemSum {
+  let stage = -1, pop = 0, n = 0, faction = -1, founded = Infinity, top = -1;
   for (const b of world.systems[sys].bodies) {
     const s = stageOf(snap, b);
     if (s < 0) continue;
-    if (alive(s)) { n++; pop += popOf(snap, b); stage = Math.max(stage, s); }
+    if (alive(s)) {
+      n++;
+      const p = popOf(snap, b);
+      pop += p; stage = Math.max(stage, s);
+      if (p > top) { top = p; faction = snap!.S[b * NF + F.faction]; }
+      founded = Math.min(founded, snap!.S[b * NF + F.founded]);
+    }
     else if (stage < 0) stage = s === STAGE.SURVEY ? STAGE.SURVEY : s;
     else if (s === STAGE.SURVEY && stage > STAGE.MEGA) stage = STAGE.SURVEY;
   }
-  return { stage, pop, n };
+  return { stage, pop, n, faction, founded };
+}
+
+/** Colour of a living system under the current colour mode. */
+export function modeColor(ctx: Ctx, s: SystemSum, out: THREE.Color): THREE.Color {
+  if (ctx.colorBy === 'faction') return factionColor(s.faction, ctx.world.earth, out);
+  if (ctx.colorBy === 'heat') return heatColor(s.pop, out);
+  if (ctx.colorBy === 'founded') return ageColor(s.founded, ctx.year, out);
+  return out.set(STAGE_COLORS[s.stage]);
 }
 
 function pointCloud(n: number, mat: THREE.ShaderMaterial): { pts: THREE.Points; pos: Float32Array; col: Float32Array; size: Float32Array } {
@@ -187,10 +229,20 @@ export class UniverseView implements View {
     return this.centres.map((c, i) => ({ pos: c.pos, kind: 'galaxy', id: i, name: c.name }));
   }
 
+  locate(ctx: Ctx, r: Ref): THREE.Vector3 | null {
+    const sys = r.kind === 'system' ? r.id : r.kind === 'body' ? ctx.world.bodies[r.id].system : r.kind === 'city' ? ctx.world.bodies[ctx.body].system : -1;
+    const name = r.kind === 'galaxy' ? r.name ?? this.centres[r.id]?.name : sys >= 0 ? ctx.world.systems[sys].galaxy : 'Milky Way';
+    return this.centres.find((c) => c.name === name)?.pos ?? null;
+  }
+
+  diveDist(_ctx: Ctx, r: Ref): number {
+    return r.kind === 'galaxy' && (r.name ?? this.centres[r.id]?.name) === 'Milky Way' ? 30 : 0;
+  }
+
   labels(): Label[] {
     return this.centres.map((c) => {
       const n = this.colonies.get(c.name) ?? 0;
-      return { pos: c.pos, text: c.name, sub: n ? `${fmtNum(n)} settlements` : 'untouched', strong: n > 0 };
+      return { pos: c.pos, text: c.name, sub: n ? `${fmtNum(n)} settlements` : 'untouched', strong: n > 0, ref: { kind: 'galaxy' as const, id: GALAXIES.findIndex((g) => g.name === c.name), name: c.name }, prio: c.name === 'Milky Way' ? 10 : 5 - c.pos.length() / 1000 };
     });
   }
 }
@@ -210,7 +262,7 @@ export class GalaxyView implements View {
   private reach = 0;
 
   constructor(world: World) {
-    this.group.add(makeGalaxy({ seed: 2040, count: 180000, radius: 500, arms: 4, pitch: 12, bar: 0.22, thickness: 0.018, sizeScale: 5.2 }));
+    this.group.add(makeGalaxy({ seed: 2040, count: 420000, radius: 500, arms: 4, pitch: 12, bar: 0.22, thickness: 0.018, sizeScale: 2.1, brightness: 1, dust: 0.3 }));
     this.sol = toScene(0, 0, 0, this.U, GALACTIC_CENTRE[0]);
     this.sol.y = 0;
     this.bubble = glowSprite(0x7fe3ff, 6, 0.9, flareTex);
@@ -251,7 +303,7 @@ export class GalaxyView implements View {
     this.farIds.forEach((id, i) => {
       const sum = systemSummary(ctx.world, snap, id);
       const on = alive(sum.stage);
-      tmpC.set(on ? STAGE_COLORS[sum.stage] : 0x000000);
+      if (on) modeColor(ctx, sum, tmpC); else tmpC.set(0x000000);
       this.far.col.set([tmpC.r, tmpC.g, tmpC.b], i * 3);
       this.far.size[i] = on ? 3 + Math.log10(1 + sum.pop) * 0.5 : 0;
     });
@@ -266,14 +318,29 @@ export class GalaxyView implements View {
   pickables(ctx: Ctx): Pickable[] {
     const out: Pickable[] = [{ pos: this.sol, kind: 'humanspace', id: 0, name: 'Human space' }];
     this.farIds.forEach((id, i) => {
-      if (this.far.size[i] > 0) out.push({ pos: new THREE.Vector3(this.far.pos[i * 3], this.far.pos[i * 3 + 1], this.far.pos[i * 3 + 2]), kind: 'system', id, name: ctx.world.systems[id].name });
+      if (this.far.size[i] > 0) out.push({ pos: new THREE.Vector3(this.far.pos[i * 3], this.far.pos[i * 3 + 1], this.far.pos[i * 3 + 2]), kind: 'system', id, name: ctx.world.systems[id].name, weight: 4 });
     });
     return out;
   }
 
+  locate(ctx: Ctx, r: Ref): THREE.Vector3 | null {
+    if (r.kind === 'humanspace') return this.sol;
+    if (r.kind === 'galaxy') return (r.name ?? GALAXIES[r.id]?.name) === 'Milky Way' ? new THREE.Vector3() : null;
+    const sys = r.kind === 'system' ? r.id : r.kind === 'body' ? ctx.world.bodies[r.id].system : ctx.world.bodies[ctx.body].system;
+    const s = ctx.world.systems[sys];
+    if (s.galaxy !== 'Milky Way') return null;
+    const p = toScene(s.x, s.y, s.z, this.U, GALACTIC_CENTRE[0]);
+    if (s.region !== 'galaxy') p.y = 0;
+    return p;
+  }
+
+  diveDist(ctx: Ctx, r: Ref): number {
+    return r.kind === 'humanspace' ? 30 : r.kind === 'system' && ctx.world.systems[r.id].region === 'galaxy' ? 5 : 0;
+  }
+
   labels(): Label[] {
     return [
-      { pos: this.sol, text: 'Human space', sub: this.reach > 0 ? `${fmtNum(this.reach)} ly across the dark` : 'one star system', strong: true },
+      { pos: this.sol, text: 'Human space', sub: this.reach > 0 ? `${fmtNum(this.reach)} ly across the dark` : 'one star system', strong: true, ref: { kind: 'humanspace', id: 0 }, prio: 10 },
       { pos: new THREE.Vector3(0, 0, 0), text: 'Sagittarius A*', sub: '26,000 ly' },
     ];
   }
@@ -290,7 +357,9 @@ export class LocalView implements View {
   private shipLines: THREE.LineSegments;
   private shipHeads: ReturnType<typeof pointCloud>;
   private base: Float32Array;
-  private sums: { stage: number; pop: number; n: number }[] = [];
+  private sums: SystemSum[] = [];
+  private ranked: Label[] = [];
+  private rankedFor: SystemSum[] | null = null;
 
   constructor(world: World) {
     this.ids = world.systems.filter((s) => s.region === 'local' || s.region === 'sol').map((s) => s.id);
@@ -333,10 +402,10 @@ export class LocalView implements View {
     this.ids.forEach((_, i) => {
       const s = this.sums[i];
       if (alive(s.stage)) {
-        tmpC.set(STAGE_COLORS[s.stage]).multiplyScalar(1.4);
+        modeColor(ctx, s, tmpC).multiplyScalar(1.4);
         this.stars.size[i] = 2.2 + Math.log10(1 + s.pop) * 0.55;
       } else if (s.stage === STAGE.SURVEY) {
-        tmpC.set(STAGE_COLORS[0]).multiplyScalar(1.6);
+        tmpC.set(STAGE_COLORS[0]).multiplyScalar(ctx.colorBy === 'stage' ? 1.6 : 0.9);
         this.stars.size[i] = 1.6;
       } else if (s.stage >= STAGE.ABANDONED) {
         tmpC.set(STAGE_COLORS[s.stage]);
@@ -378,24 +447,43 @@ export class LocalView implements View {
     dirty(this.shipHeads.pts);
   }
 
+  private picks: Pickable[] | null = null;
   pickables(ctx: Ctx): Pickable[] {
-    return this.ids.map((id, i) => ({ pos: new THREE.Vector3(this.stars.pos[i * 3], this.stars.pos[i * 3 + 1], this.stars.pos[i * 3 + 2]), kind: 'system' as const, id, name: ctx.world.systems[id].name }));
+    this.picks ??= this.ids.map((id, i) => ({ pos: new THREE.Vector3(this.stars.pos[i * 3], this.stars.pos[i * 3 + 1], this.stars.pos[i * 3 + 2]), kind: 'system' as const, id, name: ctx.world.systems[id].name }));
+    this.picks.forEach((p, i) => { const s = this.sums[i]; p.weight = s && alive(s.stage) ? 8 : ctx.world.systems[p.id].real ? 5 : 0; });
+    return this.picks;
   }
+
+  locate(ctx: Ctx, r: Ref): THREE.Vector3 | null {
+    if (r.kind === 'humanspace' || r.kind === 'galaxy') return new THREE.Vector3();
+    const sys = r.kind === 'system' ? r.id : r.kind === 'body' ? ctx.world.bodies[r.id].system : ctx.world.bodies[ctx.body].system;
+    const s = ctx.world.systems[sys];
+    return s.region === 'local' || s.region === 'sol' ? toScene(s.x, s.y, s.z) : null;
+  }
+
+  diveDist(_ctx: Ctx, r: Ref): number { return r.kind === 'system' ? 5 : 0; }
 
   labels(ctx: Ctx): Label[] {
     const out: Label[] = [];
     const cam = ctx.camera.position;
-    const ranked = this.ids
-      .map((id, i) => ({ id, i, s: this.sums[i] }))
-      .filter((x) => x.s && (alive(x.s.stage) || ctx.world.systems[x.id].real))
-      .sort((a, b) => (b.s.pop - a.s.pop) || (ctx.world.systems[a.id].dist - ctx.world.systems[b.id].dist))
-      .slice(0, 60);
-    for (const r of ranked) {
-      const p = new THREE.Vector3(this.stars.pos[r.i * 3], this.stars.pos[r.i * 3 + 1], this.stars.pos[r.i * 3 + 2]);
-      if (p.distanceTo(cam) > 900) continue;
-      const sys = ctx.world.systems[r.id];
-      out.push({ pos: p, text: sys.name, sub: alive(r.s.stage) ? `${STAGE_NAMES[r.s.stage]} · ${fmtNum(r.s.pop)}` : `${sys.dist.toFixed(1)} ly`, strong: alive(r.s.stage) });
+    // ranking only changes with the year; recompute on sync, not per frame
+    if (this.rankedFor !== this.sums) {
+      this.rankedFor = this.sums;
+      this.ranked = this.ids
+        .map((id, i) => ({ id, i, s: this.sums[i] }))
+        .filter((x) => x.s && (alive(x.s.stage) || ctx.world.systems[x.id].real))
+        .sort((a, b) => (b.s.pop - a.s.pop) || (ctx.world.systems[a.id].dist - ctx.world.systems[b.id].dist))
+        .slice(0, 120)
+        .map((r) => {
+          const sys = ctx.world.systems[r.id], on = alive(r.s.stage);
+          return {
+            pos: new THREE.Vector3(this.stars.pos[r.i * 3], this.stars.pos[r.i * 3 + 1], this.stars.pos[r.i * 3 + 2]),
+            text: sys.name, sub: on ? `${STAGE_NAMES[r.s.stage]} · ${fmtNum(r.s.pop)}` : `${sys.dist.toFixed(1)} ly`, strong: on,
+            ref: { kind: 'system' as const, id: r.id }, prio: on ? 10 + Math.log10(1 + r.s.pop) : 6 - sys.dist / 10,
+          };
+        });
     }
+    for (const l of this.ranked) if (l.pos.distanceTo(cam) < 900) out.push(l);
     return out;
   }
 }
@@ -415,6 +503,7 @@ export class SystemView implements View {
   private vis: BodyVis[] = [];
   private builtFor = -1;
   private star!: THREE.Group;
+  private starR = 1;
   private swarm: ReturnType<typeof pointCloud> | null = null;
 
   enter(ctx: Ctx): void {
@@ -434,6 +523,7 @@ export class SystemView implements View {
     this.star = new THREE.Group();
     const sc = specColor(sys.spec);
     const lumR = Math.min(3.2, 1.1 + 0.35 * Math.log10(sys.lum + 0.01));
+    this.starR = Math.max(0.6, lumR);
     const core = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.6, lumR), 48, 24), new THREE.MeshBasicMaterial({ color: sc.clone().multiplyScalar(2.2) }));
     this.star.add(core);
     this.star.add(glowSprite(sc.getHex(), lumR * 9, 0.9));
@@ -525,7 +615,7 @@ export class SystemView implements View {
   }
 
   frame(ctx: Ctx): void {
-    const yr = ctx.year + ctx.t * 0.04;
+    const yr = ctx.year + ctx.tm * 0.04;
     for (const v of this.vis) {
       const b = ctx.world.bodies[v.id];
       if (v.parent < 0) {
@@ -536,17 +626,33 @@ export class SystemView implements View {
         const ang = v.phase + (2 * Math.PI * yr * 365) / Math.max(b.period, 0.5) / 40;
         v.mesh.position.set(pv.mesh.position.x + Math.cos(ang) * v.orbitR, 0, pv.mesh.position.z - Math.sin(ang) * v.orbitR);
       }
-      v.mesh.rotation.y = ctx.t * 0.1;
+      v.mesh.rotation.y = ctx.tm * 0.1;
       const sun = v.mesh.position.clone().negate().normalize();
       (v.mesh.material as THREE.ShaderMaterial).uniforms.uSun.value.copy(sun);
       (v.mesh.material as THREE.ShaderMaterial).uniforms.uTime.value = ctx.t;
       v.marker.position.copy(v.mesh.position);
     }
-    if (this.swarm) this.swarm.pts.rotation.y = ctx.t * 0.03;
+    if (this.swarm) this.swarm.pts.rotation.y = ctx.tm * 0.03;
   }
 
   pickables(ctx: Ctx): Pickable[] {
-    return this.vis.map((v) => ({ pos: v.mesh.position.clone(), kind: 'body' as const, id: v.id, name: ctx.world.bodies[v.id].name }));
+    return this.vis.map((v) => ({ pos: v.mesh.position.clone(), kind: 'body' as const, id: v.id, name: ctx.world.bodies[v.id].name, weight: alive(stageOf(ctx.snap, v.id)) ? 6 : v.parent < 0 ? 3 : 0 }));
+  }
+
+  locate(ctx: Ctx, r: Ref): THREE.Vector3 | null {
+    if (r.kind === 'system') return r.id === this.builtFor ? new THREE.Vector3() : null;
+    const id = r.kind === 'body' ? r.id : r.kind === 'city' ? ctx.body : -1;
+    return this.vis.find((v) => v.id === id)?.mesh.position ?? null;
+  }
+
+  size(_ctx: Ctx, r: Ref): number {
+    if (r.kind === 'system') return this.starR * 1.3;
+    return (this.vis.find((x) => x.id === r.id)?.visR ?? 0) * 1.5;
+  }
+
+  diveDist(_ctx: Ctx, r: Ref): number {
+    const v = r.kind === 'body' ? this.vis.find((x) => x.id === r.id) : undefined;
+    return v ? Math.max(1.6, v.visR * 7) : 0;
   }
 
   labels(ctx: Ctx): Label[] {
@@ -558,6 +664,8 @@ export class SystemView implements View {
         text: b.name,
         sub: alive(st) ? `${STAGE_NAMES[st]} · ${fmtNum(popOf(ctx.snap, v.id))}` : st === STAGE.SURVEY ? 'surveyed' : st >= STAGE.ABANDONED ? STAGE_NAMES[st].toLowerCase() : undefined,
         strong: alive(st),
+        ref: { kind: 'body' as const, id: v.id },
+        prio: alive(st) ? 10 + Math.log10(1 + popOf(ctx.snap, v.id)) : v.parent < 0 ? 5 + v.visR : v.visR,
       };
     });
   }
@@ -621,7 +729,7 @@ export class PlanetView implements View {
     mat.uniforms.uLights.value = alive(st) ? Math.min(0.95, Math.log10(1 + pop) / 10.5) : 0;
     mat.uniforms.uGreen.value = ctx.snap ? Math.min(1, ctx.snap.S[b * NF + F.terraform] * 2) : 0;
     // cities: one marker per ~stage, positions stable per body
-    const nCities = alive(st) ? Math.min(48, Math.ceil(1 + st * st * 1.2 + Math.log10(1 + pop))) : 0;
+    const nCities = cityCount(st, pop);
     if (this.cities) this.pivot.remove(this.cities.pts);
     this.cities = pointCloud(Math.max(nCities, 1), pointsMaterial({ minPx: 2 }));
     this.cityPos = [];
@@ -662,9 +770,9 @@ export class PlanetView implements View {
   }
 
   frame(ctx: Ctx): void {
-    this.pivot.rotation.y = ctx.t * 0.02;
+    this.pivot.rotation.y = ctx.tm * 0.02;
     (this.planet.material as THREE.ShaderMaterial).uniforms.uTime.value = ctx.t;
-    if (this.habitats) this.habitats.rotation.y = ctx.t * 0.015;
+    if (this.habitats) this.habitats.rotation.y = ctx.tm * 0.015;
     if (this.cities) (this.cities.pts.material as THREE.ShaderMaterial).uniforms.uOpacity.value = 0.7 + 0.3 * Math.sin(ctx.t * 1.5);
   }
 
@@ -673,10 +781,20 @@ export class PlanetView implements View {
     return this.cityPos.map((p, i) => ({ pos: p.clone().applyMatrix4(this.pivot.matrixWorld), kind: 'city' as const, id: i, name: i === 0 ? `${name} capital` : `${name} settlement ${i}` }));
   }
 
+  locate(ctx: Ctx, r: Ref): THREE.Vector3 | null {
+    if (r.kind === 'body') return r.id === ctx.body ? new THREE.Vector3() : null;
+    if (r.kind === 'city') return this.cityPos[r.id]?.clone().applyMatrix4(this.pivot.matrixWorld) ?? null;
+    return null;
+  }
+
+  diveDist(): number { return 0; }
+
+  size(_ctx: Ctx, r: Ref): number { return r.kind === 'body' ? 10.9 : 0; }
+
   labels(ctx: Ctx): Label[] {
     const b = ctx.world.bodies[ctx.body];
     const st = stageOf(ctx.snap, ctx.body);
-    const out: Label[] = [{ pos: new THREE.Vector3(0, 11.5, 0), text: b.name, sub: alive(st) ? `${STAGE_NAMES[st]} · ${fmtNum(popOf(ctx.snap, ctx.body))} people` : st >= 0 ? STAGE_NAMES[st] : 'never settled', strong: true }];
+    const out: Label[] = [{ pos: new THREE.Vector3(0, 11.5, 0), text: b.name, sub: alive(st) ? `${STAGE_NAMES[st]} · ${fmtNum(popOf(ctx.snap, ctx.body))} people` : st >= 0 ? STAGE_NAMES[st] : 'never settled', strong: true, ref: { kind: 'body', id: ctx.body }, prio: 10 }];
     return out;
   }
 }
