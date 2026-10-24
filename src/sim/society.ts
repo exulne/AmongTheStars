@@ -125,7 +125,7 @@ export class SocietyModel {
 
     const name = body.name;
     const sentences = [
-      `${name} in ${Math.round(2040 + year)}: ${government.toLowerCase()} (${why}).`,
+      `${name} in ${Math.round(2040 + year)}: ${government.charAt(0).toLowerCase() + government.slice(1)} (${why}).`,
       `People speak ${language}${faiths.length ? `, and many follow ${faiths[0].name}, which teaches ${faiths[0].tenets}` : ''}. The fashionable art is ${art}.`,
       `They live in ${arch.name}. Work is ${work}; food is ${food}; they wear ${dress} and get around by ${transport}.`,
       `${family[0].toUpperCase() + family.slice(1)}, and ${lifespan}. The mood is ${mood}.`,

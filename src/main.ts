@@ -1181,11 +1181,11 @@ pendingYear = fromHash.year;
 
 let last = performance.now(), frame = 0, lastYear = 0;
 function loop(now: number): void {
-  const dt = Math.min(0.1, (now - last) / 1000);
+  const dt = Math.min(0.1, (now - last) / 1000), wall = Math.min(1, (now - last) / 1000); // trips run on the clock, even on a slow machine
   last = now;
   if (chronoTrip) {
     const c = chronoTrip;
-    c.t += dt;
+    c.t += wall;
     const k = Math.min(1, c.t / c.dur), e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
     timeline.set(c.from + (c.to - c.from) * e, true);
     if (k >= 1) { chronoTrip = null; c.done(ctx.year); }
