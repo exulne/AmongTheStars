@@ -11,6 +11,7 @@ import { Rng, hash01 } from '../sim/rng.ts';
 import { GALACTIC_CENTRE, GALAXIES, galToXYZ, type Body, type World } from '../sim/world.ts';
 import { fmtNum } from '../ui/format.ts';
 import { ageColor, factionColor, heatColor, type ColorMode } from './colorModes.ts';
+import { styleOf } from './epoch.ts';
 import { makeGalaxy } from './galaxyPoints.ts';
 import { atmosphereMaterial, planetMaterial } from './planetShader.ts';
 import { STAGE_COLORS, flareTex, galaxySpriteTex, glowTex, pointsMaterial, specColor } from './textures.ts';
@@ -838,7 +839,8 @@ export class PlanetView implements View {
   private sats: ReturnType<typeof pointCloud> | null = null;
   private elevators: THREE.Group[] = [];
   private elevSince = -1;
-  private cityKey = ''; private habKey = -1; private satKey = -1; private elevKey = -1;
+  private cityKey = ''; private habKey = -1; private satKey = -1; private elevKey = -1; private archKey = '';
+  private arch: THREE.InstancedMesh | null = null;
 
   enter(ctx: Ctx): void {
     this.build(ctx);
@@ -880,7 +882,7 @@ export class PlanetView implements View {
     this.orbit = new THREE.Group();
     this.group.add(this.orbit);
     this.cities = null; this.habitats = []; this.ringWorld = null; this.sats = null; this.elevators = [];
-    this.cityKey = ''; this.habKey = -1; this.satKey = -1; this.elevKey = -1;
+    this.cityKey = ''; this.habKey = -1; this.satKey = -1; this.elevKey = -1; this.archKey = ''; this.arch = null;
   }
 
   sync(ctx: Ctx): void {
@@ -910,6 +912,39 @@ export class PlanetView implements View {
       this.pivot.add(this.cities.pts);
     }
     const on = alive(st);
+    // the cities' buildings, seen from orbit: domes early, towers and spires later, in the culture's colours
+    const style = on ? styleOf(ctx.world, ctx.snap, b, ctx.year, { independence: false, speciation: false, collapse: false }) : null;
+    const archKey = style ? `${this.cityKey}:${style.arch}:${style.body.getHexString()}:${Math.round(style.height * 4)}` : '';
+    if (archKey !== this.archKey) {
+      this.archKey = archKey;
+      if (this.arch) { this.pivot.remove(this.arch); this.arch.geometry.dispose(); }
+      this.arch = null;
+      if (style && this.cityPos.length) {
+        const domes = style.arch === 'huts' || style.arch === 'warrens';
+        const per = Math.min(40, 6 + Math.round(Math.log10(1 + pop / this.cityPos.length) * 4));
+        const geo = domes ? new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2) : new THREE.CylinderGeometry(0.35, 0.5, 1, 6).translate(0, 0.5, 0);
+        const mat = new THREE.MeshStandardMaterial({ color: style.body.clone().multiplyScalar(2.4), roughness: 0.6, metalness: 0.3, emissive: style.glow, emissiveIntensity: 0.04 });
+        const im = new THREE.InstancedMesh(geo, mat, this.cityPos.length * per);
+        const m4 = new THREE.Matrix4(), qq = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), n = new THREE.Vector3(), p = new THREE.Vector3(), sc = new THREE.Vector3();
+        let k = 0;
+        this.cityPos.forEach((c, ci) => {
+          n.copy(c).normalize();
+          const t1 = new THREE.Vector3().crossVectors(n, up).normalize(), t2 = new THREE.Vector3().crossVectors(n, t1);
+          for (let j = 0; j < per; j++) {
+            const a = hash01(b, ci, j) * Math.PI * 2, r = Math.sqrt(hash01(b, ci, j, 2)) * (ci === 0 ? 0.45 : 0.25);
+            p.copy(n).multiplyScalar(10).addScaledVector(t1, Math.cos(a) * r).addScaledVector(t2, Math.sin(a) * r).normalize().multiplyScalar(10);
+            qq.setFromUnitVectors(up, p.clone().normalize());
+            const h = domes ? 0.025 + hash01(b, ci, j, 3) * 0.02 : (0.04 + Math.pow(hash01(b, ci, j, 3), 2) * 0.25) * style.height;
+            const wd = domes ? 0.03 : 0.018;
+            m4.compose(p, qq, sc.set(wd, h, wd));
+            im.setMatrixAt(k++, m4);
+          }
+        });
+        im.count = k;
+        this.arch = im;
+        this.pivot.add(im);
+      }
+    }
     // orbital habitats for cities and up: O'Neill cylinders and Stanford tori, lit by the star
     const nHab = st >= STAGE.CITY && on ? Math.min(400, Math.floor(Math.pow(st - 4, 2) * 18)) : 0;
     if (this.habKey !== nHab) {
