@@ -105,8 +105,23 @@ function resize(): void {
   composer.setSize(w, h);
   bloom.resolution.set(w, h);
   camera.aspect = w / h;
+  frameOffset();
+}
+
+/**
+ * Shift the projection so the middle of every view sits in the open area, left
+ * of the inspector and above the bottom panel. The orbit pivot doesn't move.
+ */
+function frameOffset(): void {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w || !h || !inspectorEl || !bottomEl) { camera.updateProjectionMatrix(); return; }
+  const ir = inspectorEl.getBoundingClientRect();
+  const side = ir.height > h * 0.5 ? ir.width : 0; // a bottom sheet on phones takes no side room
+  const below = bottomEl.offsetHeight + (side ? 0 : Math.max(0, h - bottomEl.offsetHeight - ir.top));
+  camera.setViewOffset(w, h, side / 2, Math.max(0, below - 70) / 2, w, h);
   camera.updateProjectionMatrix();
 }
+let inspectorEl: HTMLElement | null = null, bottomEl: HTMLElement | null = null;
 new ResizeObserver(resize).observe(canvas);
 
 // If frames stay slow (under ~40 fps for two seconds), render fewer pixels. Only ever steps down:
@@ -425,6 +440,9 @@ function measureOccluders(): void {
 }
 const occRO = new ResizeObserver(measureOccluders);
 occRO.observe(document.body); occRO.observe(inspector.el); occRO.observe(bottom); occRO.observe(legendEl);
+inspectorEl = inspector.el; bottomEl = bottom;
+new ResizeObserver(frameOffset).observe(inspector.el);
+new ResizeObserver(frameOffset).observe(bottom);
 const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
 function drawLabels(): void {
   const list = views[level].labels(ctx);
@@ -493,7 +511,9 @@ labelsEl.addEventListener('dblclick', (e) => { const ref = labelRef(e.target); i
 const ringEl = app.querySelector<HTMLElement>('.sel-ring')!;
 function drawRing(): void {
   const v = views[level];
-  const at = ctx.selected ? v.locate(ctx, ctx.selected) : null;
+  // in its own view the planet is the subject; a ring around it is just noise
+  const own = level === 'planet' && ctx.selected?.kind === 'body';
+  const at = ctx.selected && !own ? v.locate(ctx, ctx.selected) : null;
   if (!at) { ringEl.hidden = true; return; }
   proj.copy(at).project(camera);
   if (proj.z > 1) { ringEl.hidden = true; return; }

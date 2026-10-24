@@ -30,26 +30,26 @@ export const flareTex = canvasTex(256, (c, s) => {
   const m = s / 2;
   const g = c.createRadialGradient(m, m, 0, m, m, m);
   g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.05, 'rgba(255,255,255,0.9)');
-  g.addColorStop(0.15, 'rgba(255,255,255,0.25)');
-  g.addColorStop(0.5, 'rgba(255,255,255,0.04)');
+  g.addColorStop(0.04, 'rgba(255,255,255,0.85)');
+  g.addColorStop(0.12, 'rgba(255,255,255,0.32)');
+  g.addColorStop(0.3, 'rgba(255,255,255,0.08)');
+  g.addColorStop(0.6, 'rgba(255,255,255,0.015)');
   g.addColorStop(1, 'rgba(255,255,255,0)');
   c.fillStyle = g;
   c.fillRect(0, 0, s, s);
+  // faint hairline spikes that die off well before the edge
   c.globalCompositeOperation = 'lighter';
-  for (const [w, a] of [[1.6, 0.5], [0.8, 0.9]] as const) {
-    for (const rot of [0, Math.PI / 2]) {
-      c.save();
-      c.translate(m, m);
-      c.rotate(rot);
-      const lg = c.createLinearGradient(-m, 0, m, 0);
-      lg.addColorStop(0, 'rgba(255,255,255,0)');
-      lg.addColorStop(0.5, `rgba(255,255,255,${a})`);
-      lg.addColorStop(1, 'rgba(255,255,255,0)');
-      c.fillStyle = lg;
-      c.fillRect(-m, -w, s, w * 2);
-      c.restore();
-    }
+  for (const rot of [0, Math.PI / 2]) {
+    c.save();
+    c.translate(m, m);
+    c.rotate(rot);
+    const lg = c.createLinearGradient(-m, 0, m, 0);
+    lg.addColorStop(0.15, 'rgba(255,255,255,0)');
+    lg.addColorStop(0.5, 'rgba(255,255,255,0.22)');
+    lg.addColorStop(0.85, 'rgba(255,255,255,0)');
+    c.fillStyle = lg;
+    c.fillRect(-m, -0.5, s, 1);
+    c.restore();
   }
 });
 

@@ -2,7 +2,7 @@
 // so the first centuries get room. Era band and simulated frontier underneath.
 
 import { ERAS } from '../sim/catalog.ts';
-import { ERA_COLORS, HORIZON, posToYear, yearToPos } from './charts.ts';
+import { ERA_COLORS, HORIZON, eraRuns, posToYear, yearToPos } from './charts.ts';
 import { fmtYear } from './format.ts';
 
 export class Timeline {
@@ -127,11 +127,10 @@ export class Timeline {
     g.clearRect(0, 0, W, H);
     const e = this.eras;
     if (e) {
-      for (let i = 0; i < e.n - 1; i++) {
-        const x0 = yearToPos(e.years[i]) * W, x1 = yearToPos(e.years[i + 1]) * W;
-        g.fillStyle = ERA_COLORS[e.era(i)];
-        g.globalAlpha = 0.75;
-        g.fillRect(x0, 0, Math.max(0.6, x1 - x0), H);
+      g.globalAlpha = 0.75;
+      for (const r of eraRuns(e.years, e.n, e.era, W)) {
+        g.fillStyle = ERA_COLORS[r.e];
+        g.fillRect(r.x0, 0, Math.max(0.6, r.x1 - r.x0), H);
       }
       g.globalAlpha = 1;
     }

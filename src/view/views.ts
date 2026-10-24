@@ -174,9 +174,11 @@ class Trails {
   }
 }
 const SHIP_C = new THREE.Color(0.55, 0.9, 1), FTL_C = new THREE.Color(0.8, 0.6, 1);
-const HAB_MAT = new THREE.MeshStandardMaterial({ color: 0xd4dbe4, metalness: 0.55, roughness: 0.38, emissive: 0x0b1420 });
+const HAB_MAT = new THREE.MeshStandardMaterial({ color: 0x8a919b, metalness: 0.6, roughness: 0.55 });
 const ELEVATOR = TECHS.findIndex((t) => t.id === 'spaceElevator');
 const tv1 = new THREE.Vector3(), tv2 = new THREE.Vector3(), tv3 = new THREE.Vector3();
+const WHITE = new THREE.Color(1, 1, 1);
+const tmpC2 = new THREE.Color();
 
 /** Distant stars with a Milky Way band; follows the camera. */
 export function makeSky(seed = 7, count = 9000): THREE.Group {
@@ -307,12 +309,15 @@ export class GalaxyView implements View {
   private farIds: number[] = [];
   private reach = 0;
   private trails = new Trails(6000, 400, 1.6);
+  private nearIds: number[] = [];
+  private near: ReturnType<typeof pointCloud>;
+  private glow: THREE.Sprite;
 
   constructor(world: World) {
     this.group.add(makeGalaxy({ seed: 2040, count: 420000, radius: 500, arms: 4, pitch: 12, bar: 0.22, thickness: 0.018, sizeScale: 2.1, brightness: 1, dust: 0.3 }));
     this.sol = toScene(0, 0, 0, this.U, GALACTIC_CENTRE[0]);
     this.sol.y = 0;
-    this.bubble = glowSprite(0x7fe3ff, 6, 0.9, flareTex);
+    this.bubble = glowSprite(0x7fe3ff, 6, 0.5, glowTex);
     this.bubble.position.copy(this.sol);
     this.group.add(this.bubble);
     this.ring = new THREE.Mesh(new THREE.RingGeometry(0.97, 1, 96), new THREE.MeshBasicMaterial({ color: 0x7fe3ff, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
@@ -327,6 +332,18 @@ export class GalaxyView implements View {
       this.far.pos.set([p.x, p.y, p.z], i * 3);
     });
     this.group.add(this.far.pts);
+    // humanity: every settled nearby system as a point, under a glow that grows with reach
+    this.nearIds = world.systems.filter((s) => s.region === 'local' || s.region === 'sol').map((s) => s.id);
+    this.near = pointCloud(this.nearIds.length, pointsMaterial({ minPx: 1.1, maxPx: 5 }));
+    this.nearIds.forEach((id, i) => {
+      const s = world.systems[id];
+      const p = toScene(s.x, s.y, s.z, this.U, GALACTIC_CENTRE[0]);
+      this.near.pos.set([p.x, p.y, p.z], i * 3);
+    });
+    this.group.add(this.near.pts);
+    this.glow = glowSprite(0x7fe3ff, 8, 0);
+    this.glow.position.copy(this.sol);
+    this.group.add(this.glow);
     this.trails.addTo(this.group);
   }
 
@@ -356,6 +373,17 @@ export class GalaxyView implements View {
       this.far.size[i] = on ? 3 + Math.log10(1 + sum.pop) * 0.5 : 0;
     });
     dirty(this.far.pts);
+    let n = 0;
+    this.nearIds.forEach((id, i) => {
+      const sum = systemSummary(ctx.world, snap, id);
+      const on = alive(sum.stage);
+      if (on) { n++; modeColor(ctx, sum, tmpC).lerp(WHITE, 0.25); } else tmpC.set(0x000000);
+      this.near.col.set([tmpC.r, tmpC.g, tmpC.b], i * 3);
+      this.near.size[i] = on ? 1.5 + Math.log10(1 + sum.pop) * 0.35 : 0;
+    });
+    dirty(this.near.pts);
+    this.glow.scale.setScalar(16 + reach * this.U * 14);
+    (this.glow.material as THREE.SpriteMaterial).opacity = n ? Math.min(0.75, 0.2 + 0.15 * Math.log10(1 + n)) : 0;
   }
 
   frame(ctx: Ctx): void {
@@ -413,7 +441,7 @@ export class GalaxyView implements View {
   labels(): Label[] {
     return [
       { pos: this.sol, text: 'Human space', sub: this.reach > 0 ? `${fmtNum(this.reach)} ly across the dark` : 'one star system', strong: true, ref: { kind: 'humanspace', id: 0 }, prio: 10 },
-      { pos: new THREE.Vector3(0, 0, 0), text: 'Sagittarius A*', sub: '26,000 ly' },
+      { pos: new THREE.Vector3(0, 18, 0), text: 'Sagittarius A*', sub: '26,000 ly' },
     ];
   }
 }
@@ -429,6 +457,7 @@ export class LocalView implements View {
   private shipLines: THREE.LineSegments;
   private shipHeads: ReturnType<typeof pointCloud>;
   private base: Float32Array;
+  private spec: Float32Array;
   private sums: SystemSum[] = [];
   private ranked: Label[] = [];
   private rankedFor: SystemSum[] | null = null;
@@ -437,11 +466,14 @@ export class LocalView implements View {
     this.ids = world.systems.filter((s) => s.region === 'local' || s.region === 'sol').map((s) => s.id);
     this.stars = pointCloud(this.ids.length, pointsMaterial({ minPx: 1.1 }));
     this.base = new Float32Array(this.ids.length * 3);
+    this.spec = new Float32Array(this.ids.length * 3);
     this.ids.forEach((id, i) => {
       const s = world.systems[id];
       const p = toScene(s.x, s.y, s.z);
       this.stars.pos.set([p.x, p.y, p.z], i * 3);
-      tmpC.copy(specColor(s.spec)).multiplyScalar(s.real ? 0.9 : 0.55);
+      tmpC.copy(specColor(s.spec));
+      this.spec.set([tmpC.r, tmpC.g, tmpC.b], i * 3);
+      tmpC.multiplyScalar(s.real ? 0.9 : 0.55);
       this.base.set([tmpC.r, tmpC.g, tmpC.b], i * 3);
     });
     this.group.add(this.stars.pts);
@@ -474,7 +506,7 @@ export class LocalView implements View {
     this.ids.forEach((_, i) => {
       const s = this.sums[i];
       if (alive(s.stage)) {
-        modeColor(ctx, s, tmpC).multiplyScalar(1.4);
+        modeColor(ctx, s, tmpC).lerp(tmpC2.setRGB(this.spec[i * 3], this.spec[i * 3 + 1], this.spec[i * 3 + 2]), 0.55).multiplyScalar(1.1);
         this.stars.size[i] = 2.2 + Math.log10(1 + s.pop) * 0.55;
       } else if (s.stage === STAGE.SURVEY) {
         tmpC.set(STAGE_COLORS[0]).multiplyScalar(ctx.colorBy === 'stage' ? 1.6 : 0.9);
@@ -564,6 +596,8 @@ export class LocalView implements View {
 
 interface BodyVis { id: number; mesh: THREE.Mesh; orbitR: number; parent: number; phase: number; marker: THREE.Sprite; visR: number }
 
+const hazeOf = (b: Body) => (b.name === 'Titan' || b.name === 'Venus' ? 1 : 0);
+
 export function bodyVisRadius(b: Body): number {
   return Math.max(0.18, 0.35 + 0.6 * Math.log10(Math.max(b.radius, 20) / 400));
 }
@@ -643,7 +677,7 @@ export class SystemView implements View {
 
   private addBody(ctx: Ctx, b: Body, orbitR: number, parent: number, i: number): void {
     const visR = parent >= 0 ? bodyVisRadius(b) * 0.45 : bodyVisRadius(b);
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(visR, 48, 32), planetMaterial(b.kind, b.color, b.id));
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(visR, 48, 32), planetMaterial(b.kind, b.color, b.id, hazeOf(b)));
     if (b.kind === 'asteroid') mesh.scale.set(1, 0.75, 0.85);
     this.group.add(mesh);
     if (b.kind === 'gas' && (b.name === 'Saturn' || hash01(b.id, 5) < 0.4)) {
@@ -811,7 +845,7 @@ export class PlanetView implements View {
     this.pivot = new THREE.Group();
     const b = ctx.world.bodies[ctx.body];
     const R = 10;
-    const mat = planetMaterial(b.kind, b.color, b.id);
+    const mat = planetMaterial(b.kind, b.color, b.id, hazeOf(b));
     mat.uniforms.uDetail.value = 1.6;
     this.planet = new THREE.Mesh(new THREE.SphereGeometry(R, 128, 96), mat);
     if (b.kind === 'asteroid') this.planet.scale.set(1, 0.72, 0.86);
@@ -878,8 +912,8 @@ export class PlanetView implements View {
       if (nHab > 0) {
         const r = new Rng(b * 13), m = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
         const nTor = Math.floor(nHab * 0.25);
-        const cyl = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.07, 0.07, 0.42, 14, 1), HAB_MAT, nHab - nTor);
-        const tor = new THREE.InstancedMesh(new THREE.TorusGeometry(0.16, 0.035, 8, 24), HAB_MAT, Math.max(1, nTor));
+        const cyl = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.04, 0.04, 0.24, 12, 1), HAB_MAT, nHab - nTor);
+        const tor = new THREE.InstancedMesh(new THREE.TorusGeometry(0.1, 0.022, 8, 24), HAB_MAT, Math.max(1, nTor));
         tor.count = nTor;
         for (let i = 0; i < nHab; i++) {
           const R = 14 + r.next() * 9, th = r.range(0, Math.PI * 2), inc = r.gauss() * 0.15;
@@ -913,7 +947,7 @@ export class PlanetView implements View {
     }
     if (this.ringWorld && st !== STAGE.MEGA) { this.group.remove(this.ringWorld); this.ringWorld = null; }
     if (!this.ringWorld && st === STAGE.MEGA) {
-      this.ringWorld = new THREE.Mesh(new THREE.TorusGeometry(17, 0.18, 16, 256), new THREE.MeshStandardMaterial({ color: 0xffe2bd, metalness: 0.5, roughness: 0.35, emissive: 0x3a2a18 }));
+      this.ringWorld = new THREE.Mesh(new THREE.TorusGeometry(17, 0.1, 12, 256), new THREE.MeshStandardMaterial({ color: 0xb8ad9e, metalness: 0.5, roughness: 0.5, transparent: true, opacity: 0.4, depthWrite: false }));
       this.ringWorld.rotation.x = Math.PI / 2 + 0.2;
       this.group.add(this.ringWorld);
     }
