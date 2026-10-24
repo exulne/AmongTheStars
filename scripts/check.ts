@@ -22,6 +22,7 @@ interface SeedResult {
   reach: number; systems: number; kardashev: number; k1: number; k2: number; wars: number; factions: number;
   eraYears: number[]; longestDark: number; longestWar: number; events: Record<string, number>; finalPop: number;
   churn: number; maxPopGrowth: number;
+  earthPeak: number; earthPeakYear: number; le: Record<number, number>; medAge2100: number; growth2100: number; growth2300: number;
 }
 
 function eq(a: ArrayLike<number>, b: ArrayLike<number>): number {
@@ -35,7 +36,7 @@ function sameState(a: SimState, b: SimState): string | null {
   if (a.nSettled !== b.nSettled) return `nSettled ${a.nSettled} vs ${b.nSettled}`;
   const parts: [string, ArrayLike<number>, ArrayLike<number>][] = [
     ['S', a.S, b.S], ['g', a.g, b.g], ['techProg', a.techProg, b.techProg], ['techDone', a.techDone, b.techDone],
-    ['ships', a.ships, b.ships], ['shipRetry', a.shipRetry, b.shipRetry], ['ages', a.ages, b.ages], ['settled', a.settled.subarray(0, a.nSettled), b.settled.subarray(0, b.nSettled)], ['rng', a.rng, b.rng],
+    ['ships', a.ships, b.ships], ['shipRetry', a.shipRetry, b.shipRetry], ['ages', a.ages, b.ages], ['swarm', a.swarm, b.swarm], ['settled', a.settled.subarray(0, a.nSettled), b.settled.subarray(0, b.nSettled)], ['rng', a.rng, b.rng],
   ];
   const ca = civParts(a.hx), cb = civParts(b.hx);
   ca.forEach(([name, x], k) => parts.push([name, x, cb[k][1]]));
@@ -55,6 +56,7 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
   const nT = TECHS.length;
   const prevTech = new Float64Array(nT).fill(-1);
   const prevShip = new Map<string, number>();
+  let earthPeak = 0, earthPeakYear = 0;
   let earthMin = Infinity, earthMinYear = 0, firstStarColony = NaN, marsAt2100 = NaN, marsBiggest2140 = false;
   // replay checkpoints: snapshot at a multiple of SNAP_EVERY, compare a few steps later
   const checkFrom = [2, 17, 43, 61].map((k) => k * SNAP_EVERY).filter((s) => s < e.years.length - 30);
@@ -140,6 +142,7 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
       prevShip.set(key, s.arrive);
     }
     if (y >= 1 && earthPop < earthMin) { earthMin = earthPop; earthMinYear = YEAR0 + y; }
+    if (y < 300 && earthPop > earthPeak) { earthPeak = earthPop; earthPeakYear = YEAR0 + e.years[st.step]; }
     if (e.years[st.step] === 60) marsAt2100 = S[mars * NF + F.pop];
     if (e.years[st.step] === 100) {
       let best = -1, bp = 0;
@@ -199,7 +202,12 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
   }
   const popAt: Record<number, number> = {}, offAt: Record<number, number> = {};
   for (const yr of [2100, 2140, 2200, 2540, 3040, 5040, 12040]) { popAt[yr] = col(GM.pop, stepOf(yr - YEAR0)); offAt[yr] = col(GM.offEarth, stepOf(yr - YEAR0)); }
+  const le: Record<number, number> = {};
+  for (const yr of [2050, 2100, 2500, 5040]) le[yr] = col(GM.lifeExp, stepOf(yr - YEAR0));
+  const gpc = (yr: number) => col(GM.gdpPerCap, stepOf(yr - YEAR0));
   return {
+    earthPeak, earthPeakYear, le, medAge2100: col(GM.medianAge, stepOf(60)),
+    growth2100: Math.log(gpc(2100) / gpc(2040)) / 60, growth2300: Math.log(gpc(2300) / gpc(2100)) / 200,
     seed, ms: simMs, fails, tech,
     firstStar: firstYear((s) => col(GM.interstellarPop, s) > 0), firstStarColony,
     popAt, offAt, marsAt2100, marsBiggest2140, earthMin, earthMinYear,
@@ -234,7 +242,7 @@ function report(rs: SeedResult[]): void {
   row('first people at another star', rs.map((r) => r.firstStar));
   row('first interstellar colony', rs.map((r) => r.firstStarColony), '2250–2700');
   row('Dyson swarm I (year)', rs.map((r) => r.tech.dyson1), '2500–3500');
-  row('Kardashev 1.0 (year)', rs.map((r) => r.k1), '~2250');
+  row('Kardashev 1.0 (year)', rs.map((r) => r.k1), '2300–2600 (needs a swarm)');
   row('Kardashev 2.0 (year)', rs.map((r) => r.k2), '~3500, never in ~40%');
   row('FTL / warp (year)', rs.map((r) => r.tech.warp), '5–10% of seeds');
   row('wormholes (year)', rs.map((r) => r.tech.wormholes));
@@ -244,6 +252,15 @@ function report(rs: SeedResult[]): void {
   row('off-Earth pop 2200', rs.map((r) => r.offAt[2200]), '~1e7');
   for (const yr of [2140, 2540, 3040, 5040, 12040]) row(`population ${yr}`, rs.map((r) => r.popAt[yr]), yr === 12040 ? '1e11–1e13' : '');
   row('Earth minimum pop', rs.map((r) => r.earthMin), '>4e9 unless Collapse');
+  row('Earth peak pop (before 2340)', rs.map((r) => r.earthPeak), '1.0e10–1.2e10 (UN WPP 2024: 10.3e9)');
+  row('Earth peak year', rs.map((r) => r.earthPeakYear), '2080–2130 (UN: 2084)');
+  row('life expectancy 2050', rs.map((r) => r.le[2050]), '77–80 (UN WPP 2024 ≈ 77)');
+  row('life expectancy 2100', rs.map((r) => r.le[2100]), '85–100 (genetic medicine)');
+  row('life expectancy 2500', rs.map((r) => r.le[2500]), '100–250');
+  row('life expectancy 5040', rs.map((r) => r.le[5040]), '150–250 (life extension)');
+  row('median age 2100', rs.map((r) => r.medAge2100), '40–50 (UN 2100 ≈ 42)');
+  row('product/person growth 2040–2100 (%/yr)', rs.map((r) => 100 * r.growth2100), '1.5–3');
+  row('product/person growth 2100–2300 (%/yr)', rs.map((r) => 100 * r.growth2300), '0.5–2');
   row('reach at end (ly)', rs.map((r) => r.reach), '60–300 (bible 40–200)');
   row('systems settled at end', rs.map((r) => r.systems), '~50 (0–2000)');
   row('Kardashev at end', rs.map((r) => r.kardashev));

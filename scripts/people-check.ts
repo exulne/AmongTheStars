@@ -218,11 +218,14 @@ function checkSeed(world: World, seed: number, samples: number, det: boolean): R
     // merge sparse cells so every expected count is at least 5
     let chi2 = 0, dof = -1, accE = 0, accO = 0, exact = 0;
     const cells = pyr.flatMap((r) => [[`${r.band}:0`, r.women], [`${r.band}:1`, r.men]] as const);
+    const merged: [number, number][] = [];
     for (const [key, n] of cells) {
       accE += (n / c.total) * N; accO += obs.get(key) ?? 0; obs.delete(key);
-      if (accE >= 5) { chi2 += (accO - accE) ** 2 / accE; dof++; accE = 0; accO = 0; }
+      if (accE >= 5) { merged.push([accE, accO]); accE = 0; accO = 0; }
     }
-    if (accE > 0) chi2 += (accO - accE) ** 2 / Math.max(accE, 1e-9);
+    // a sparse tail joins the last full cell (alone it would be a cell with expectation < 5)
+    if (accE > 0 || accO > 0) { if (merged.length) { merged[merged.length - 1][0] += accE; merged[merged.length - 1][1] += accO; } else merged.push([accE, accO]); }
+    for (const [E, O] of merged) { chi2 += (O - E) ** 2 / Math.max(E, 1e-9); dof++; }
     if (obs.size) fail(`census draws at ${b}/${p} landed in cells the pyramid lacks: ${[...obs.keys()].join(',')}`);
     const pv = gammaQ(Math.max(1, dof) / 2, chi2 / 2);
     // exact: the pyramid's women per band against a count of even native ranks among each pool's alive ranks
@@ -235,7 +238,8 @@ function checkSeed(world: World, seed: number, samples: number, det: boolean): R
     }
     for (const r of pyr) if (r.women !== want.get(r.band)) exact++;
     chi.push({ label: `${b === world.earth ? 'Earth' : world.bodies[b]?.name ?? b}@${2040 + periodStart(p + 1)}`, chi2, dof, p: pv, exact });
-    if (pv < 0.01) fail(`age x sex chi-square at ${b}/${p}: chi2 ${chi2.toFixed(1)} on ${dof} dof, p = ${pv.toExponential(2)}`);
+    // two tests a seed, four seeds: at p < 0.01 an exact model would still fail one run in twelve
+    if (pv < 0.001) fail(`age x sex chi-square at ${b}/${p}: chi2 ${chi2.toFixed(1)} on ${dof} dof, p = ${pv.toExponential(2)}`);
     if (exact) fail(`pyramid miscounts women in ${exact} age bands at ${b}/${p}`);
   }
 

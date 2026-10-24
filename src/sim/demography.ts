@@ -279,10 +279,12 @@ export class Demography {
     if (D > now) { births -= D - now; D = now; }
     // deaths fall by age as the engine's did: its Gompertz–Makeham law for this place and period (ages.ts)
     const mt = this.L.mortality.get(t.body);
-    const law: Mortality | null = mt && mt[p * 4] >= 0 ? { A: mt[p * 4], B: mt[p * 4 + 1], b: mt[p * 4 + 2], inf: mt[p * 4 + 3] } : null;
+    const law: Mortality | null = mt && mt[p * 4 + 1] > 0 ? { A: mt[p * 4], B: mt[p * 4 + 1], b: mt[p * 4 + 2], inf: mt[p * 4 + 3] } : null;
     const lon = law ? 1 : this.longevity(periodStart(p));
     const pool = [...before, ...arrivals].filter((x) => x.alive > 0);
     const w = pool.map((x) => { const age = periodMid(p) - periodMid(x.q); return x.alive * (law ? hazard(age, law) : gompertz(age, lon)); });
+    // never leave deaths unplaced: with no usable weights, everyone is equally at risk
+    if (D > 0 && !(w.reduce((a, v) => a + v, 0) > 0)) pool.forEach((x, i) => { w[i] = x.alive; });
     const dead = split(D, w, pool.map((x) => x.alive));
     pool.forEach((x, i) => { x.alive -= dead[i]; });
     const deadOf = new Map(pool.map((x, i) => [x, dead[i]] as const));

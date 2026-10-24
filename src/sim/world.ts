@@ -55,7 +55,22 @@ export const GALAXIES = [
   { name: 'Triangulum', l: 133.6, b: -31.3, dist: 2_730_000, radius: 30000, kind: 'spiral' },
 ] as const;
 
-const SPEC_LUM: Record<string, number> = { O: 30000, B: 500, A: 15, F: 3, G: 1, K: 0.35, M: 0.02 };
+/** Main-sequence luminosity by spectral type: log10(L/L_sun) at points along the
+ *  O0…M9 sequence (index = 10 × class + subclass), from Pecaut & Mamajek 2013 (ApJS 208, 9)
+ *  and Mamajek's updated dwarf table. The old per-letter table put every M dwarf at
+ *  0.02 L_sun, ten to thirty times too bright for the late M dwarfs that dominate the sky. */
+const LOGL: [number, number][] = [
+  [3, 5.9], [5, 5.6], [10, 4.3], [15, 2.7], [20, 1.6], [25, 1.15], [30, 0.73], [35, 0.43], [40, 0.13], [42, 0], [45, -0.1],
+  [50, -0.35], [52, -0.5], [55, -0.86], [57, -1.0], [60, -1.13], [62, -1.5], [63, -1.75], [64, -2.13], [65, -2.5],
+  [66, -2.9], [67, -3.07], [68, -3.31], [69, -3.42],
+];
+export function mainSequenceLum(spec: string): number {
+  const x = 10 * 'OBAFGKM'.indexOf(spec[0]) + (Number(spec.slice(1)) || 0);
+  let i = 0;
+  while (i < LOGL.length - 2 && LOGL[i + 1][0] <= x) i++;
+  const [x0, y0] = LOGL[i], [x1, y1] = LOGL[i + 1];
+  return 10 ** (y0 + ((Math.min(Math.max(x, LOGL[0][0]), LOGL[LOGL.length - 1][0]) - x0) / (x1 - x0)) * (y1 - y0));
+}
 const LETTERS = 'bcdefgh';
 
 export function galToXYZ(l: number, b: number, d: number): [number, number, number] {
@@ -156,7 +171,7 @@ export function buildWorld(seed = 2040): World {
   // --- Real nearby stars
   for (const st of NEARBY_STARS) {
     const [x, y, z] = eqToGal(st.ra, st.dec, st.dist);
-    const lum = SPEC_LUM[st.spec[0]] * (st.spec[0] === 'M' ? Math.pow(0.6, Number(st.spec.slice(1)) / 2) : 1);
+    const lum = st.lum;
     const sys = addSystem({ name: st.name, x, y, z, spec: st.spec, lum, real: true, region: 'local', galaxy: 'Milky Way' });
     for (const p of st.planets) {
       const radius = 6371 * Math.pow(Math.max(p.mass, 0.001), p.mass > 10 ? 0.06 : 0.28) * (p.mass > 10 ? 5 : 1);
@@ -180,7 +195,7 @@ export function buildWorld(seed = 2040): World {
     const flat = Math.sqrt(1 - u * u);
     const x = d * flat * Math.cos(th), y = d * flat * Math.sin(th), z = d * u * 0.45;
     const spec = randomSpec(r);
-    const lum = SPEC_LUM[spec[0]] * r.range(0.5, 1.6);
+    const lum = mainSequenceLum(spec) * r.range(0.7, 1.4); // age and metallicity spread
     const sys = addSystem({ name: procName(r), x, y, z, spec, lum, real: false, region: 'local', galaxy: 'Milky Way' });
     const n = r.next() < 0.45 ? 1 : r.next() < 0.7 ? 2 : 3;
     for (let k = 0; k < n; k++) {
@@ -210,7 +225,7 @@ export function buildWorld(seed = 2040): World {
     const gx = R * Math.cos(theta), gy = R * Math.sin(theta), gz = r.gauss() * 300;
     const spec = randomSpec(r);
     const sys = addSystem({
-      name: procName(r), x: gx + GALACTIC_CENTRE[0], y: gy, z: gz, spec, lum: SPEC_LUM[spec[0]],
+      name: procName(r), x: gx + GALACTIC_CENTRE[0], y: gy, z: gz, spec, lum: mainSequenceLum(spec),
       real: false, region: 'galaxy', galaxy: 'Milky Way',
     });
     const kind = r.pick<BodyKind>(['rocky', 'superearth', 'ocean', 'desert', 'ice', 'moon']);
@@ -231,7 +246,7 @@ export function buildWorld(seed = 2040): World {
       const spec = randomSpec(r);
       const sys = addSystem({
         name: `${gal.name.split(' ').map((w) => w[0]).join('')}-${procName(r)}`, x: cx + rr * Math.cos(th), y: cy + rr * Math.sin(th), z: cz + r.gauss() * gal.radius * 0.05,
-        spec, lum: SPEC_LUM[spec[0]], real: false, region: 'extra', galaxy: gal.name,
+        spec, lum: mainSequenceLum(spec), real: false, region: 'extra', galaxy: gal.name,
       });
       const kind = r.pick<BodyKind>(['rocky', 'superearth', 'ocean', 'desert']);
       addBody(sys, {
