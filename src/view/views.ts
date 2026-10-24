@@ -50,6 +50,8 @@ export interface View {
   locate(ctx: Ctx, r: Ref): THREE.Vector3 | null;
   /** camera distance at which wheeling into `r` enters it; 0 = not enterable */
   diveDist(ctx: Ctx, r: Ref): number;
+  /** world-space radius of the thing, for the selection ring; 0 = a point */
+  size?(ctx: Ctx, r: Ref): number;
 }
 
 // ---------------------------------------------------------------- helpers
@@ -475,6 +477,7 @@ export class SystemView implements View {
   private vis: BodyVis[] = [];
   private builtFor = -1;
   private star!: THREE.Group;
+  private starR = 1;
   private swarm: ReturnType<typeof pointCloud> | null = null;
 
   enter(ctx: Ctx): void {
@@ -494,6 +497,7 @@ export class SystemView implements View {
     this.star = new THREE.Group();
     const sc = specColor(sys.spec);
     const lumR = Math.min(3.2, 1.1 + 0.35 * Math.log10(sys.lum + 0.01));
+    this.starR = Math.max(0.6, lumR);
     const core = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.6, lumR), 48, 24), new THREE.MeshBasicMaterial({ color: sc.clone().multiplyScalar(2.2) }));
     this.star.add(core);
     this.star.add(glowSprite(sc.getHex(), lumR * 9, 0.9));
@@ -613,6 +617,11 @@ export class SystemView implements View {
     if (r.kind === 'system') return r.id === this.builtFor ? new THREE.Vector3() : null;
     const id = r.kind === 'body' ? r.id : r.kind === 'city' ? ctx.body : -1;
     return this.vis.find((v) => v.id === id)?.mesh.position ?? null;
+  }
+
+  size(_ctx: Ctx, r: Ref): number {
+    if (r.kind === 'system') return this.starR * 1.3;
+    return (this.vis.find((x) => x.id === r.id)?.visR ?? 0) * 1.5;
   }
 
   diveDist(_ctx: Ctx, r: Ref): number {
@@ -751,6 +760,8 @@ export class PlanetView implements View {
   }
 
   diveDist(): number { return 0; }
+
+  size(_ctx: Ctx, r: Ref): number { return r.kind === 'body' ? 10.9 : 0; }
 
   labels(ctx: Ctx): Label[] {
     const b = ctx.world.bodies[ctx.body];

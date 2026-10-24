@@ -42,6 +42,7 @@ app.innerHTML = `
     <div class="legend-modes" role="group" aria-label="Colour settled stars by">Colour by ${COLOR_MODES.map((m) => `<button class="link" type="button" data-mode="${m.id}" aria-pressed="${m.id === 'stage'}">${m.label}</button>`).join(' ')}</div>
     <div class="legend-keys"></div>
   </div>
+  <div class="sel-ring" aria-hidden="true" hidden><i></i><i></i></div>
   <div class="tooltip" hidden></div>
   <footer class="bottom">
     <button class="charts-toggle link" type="button" aria-expanded="true">Hide charts</button>
@@ -393,6 +394,25 @@ function drawLabels(): void {
   for (let i = n; i < labelPool.length; i++) labelPool[i].hidden = true;
 }
 
+// ------------------------------------------------------------------ selection ring
+
+const ringEl = app.querySelector<HTMLElement>('.sel-ring')!;
+function drawRing(): void {
+  const v = views[level];
+  const at = ctx.selected ? v.locate(ctx, ctx.selected) : null;
+  if (!at) { ringEl.hidden = true; return; }
+  proj.copy(at).project(camera);
+  if (proj.z > 1) { ringEl.hidden = true; return; }
+  const r = canvas.getBoundingClientRect();
+  const worldR = v.size?.(ctx, ctx.selected!) ?? 0;
+  const d = camera.position.distanceTo(at);
+  const px = worldR ? (worldR / (d * Math.tan((camera.fov * Math.PI) / 360))) * (r.height / 2) : 0;
+  const R = Math.min(Math.max(px + 6, 13), Math.max(r.width, r.height));
+  ringEl.hidden = false;
+  ringEl.style.transform = `translate(${((proj.x * 0.5 + 0.5) * r.width).toFixed(1)}px, ${((-proj.y * 0.5 + 0.5) * r.height).toFixed(1)}px)`;
+  ringEl.style.setProperty('--r', `${R.toFixed(1)}px`);
+}
+
 // ------------------------------------------------------------------ sim wiring
 
 let inFlight = false, wanted = -1, lastStep = -1;
@@ -614,6 +634,7 @@ function loop(now: number): void {
   sky.position.copy(camera.position);
   composer.render();
   if (frame++ % 2 === 0) drawLabels();
+  drawRing();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

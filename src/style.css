@@ -59,6 +59,11 @@ button, select, input { font: inherit; color: inherit; }
 .label b { font-weight: 400; display: block; }
 .label span { font-family: var(--mono); font-size: 0.62rem; opacity: 0.8; }
 .label.strong { color: var(--ink); }
+.sel-ring { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; }
+.sel-ring i { position: absolute; left: calc(var(--r) * -1); top: calc(var(--r) * -1); width: calc(var(--r) * 2); height: calc(var(--r) * 2); box-sizing: border-box;
+  border: 1px solid var(--accent); border-radius: 50%; opacity: 0.85; box-shadow: 0 0 10px rgba(127, 227, 255, 0.35), inset 0 0 6px rgba(127, 227, 255, 0.2); }
+.sel-ring i + i { opacity: 0; box-shadow: none; animation: ring-pulse 2.4s cubic-bezier(0.2, 0.6, 0.3, 1) infinite; }
+@keyframes ring-pulse { 0% { transform: scale(1); opacity: 0.55; } 100% { transform: scale(2.1); opacity: 0; } }
 .tooltip { position: fixed; left: 0; top: 0; pointer-events: none; font-size: 0.8rem; padding: 0.15rem 0.45rem; background: var(--wash); border: 1px solid var(--faint); white-space: nowrap; }
 
 /* legend */
@@ -162,4 +167,4 @@ button, select, input { font: inherit; color: inherit; }
   .charts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .charts .chart:nth-child(n + 3) { display: none; }
 }
-@media (prefers-reduced-motion: reduce) { .xfade { display: none; } .tick { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .xfade { display: none; } .tick { animation: none; } .sel-ring i + i { animation: none; } }
