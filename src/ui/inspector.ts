@@ -150,8 +150,29 @@ export class Inspector {
       <h2>${esc(sys.name)}</h2>
       <p class="lede">${sys.spec}-type star, ${sys.dist < 0.01 ? 'home' : `${sys.dist.toFixed(1)} light years from the Sun`}. ${sys.real ? 'Real star.' : 'Procedural star.'}</p>
       <p class="act"><button class="link" data-act="dive-system" data-id="${id}" type="button">Enter system</button></p>
-      ${this.kv([['People', fmtNum(sum.pop)], ['Settlements', String(sum.n)], ['Luminosity', `${sys.lum.toPrecision(2)} L☉`], ['Light delay to Earth', sys.dist < 0.01 ? 'minutes' : `${sys.dist.toFixed(1)} yr`]])}
+      ${this.kv([['People', fmtNum(sum.pop)], ['Settlements', String(sum.n)], ...this.systemTotals(c, id), ['Luminosity', `${sys.lum.toPrecision(2)} L☉`], ['Light delay to Earth', sys.dist < 0.01 ? 'minutes' : `${sys.dist.toFixed(1)} yr`]])}
       <div class="tbl-wrap"><table class="bodies"><tbody>${rows}</tbody></table></div>`;
+  }
+
+  /** Whole-system sums at this year; averages are weighted by head-count. */
+  private systemTotals(c: InspectorCtx, id: number): [string, string][] {
+    const S = c.snap?.S;
+    if (!S) return [];
+    const add = { energy: 0, gdp: 0, research: 0, capital: 0, military: 0 }, avg = { stability: 0, happiness: 0 };
+    let pop = 0;
+    for (const b of c.world.systems[id].bodies) {
+      if (!alive(S[b * NF + F.stage])) continue;
+      const p = S[b * NF + F.pop];
+      pop += p;
+      for (const k of Object.keys(add) as (keyof typeof add)[]) add[k] += S[b * NF + F[k]];
+      for (const k of Object.keys(avg) as (keyof typeof avg)[]) avg[k] += S[b * NF + F[k]] * p;
+    }
+    if (!pop) return [];
+    return [
+      ['Energy use', fmtUnit(add.energy, 'W')], ['Gross product', fmtUnit(add.gdp, '$/yr')], ['Research', fmtUnit(add.research, 'pts/yr')],
+      ['Capital', fmtUnit(add.capital, '$')], ['Military', fmtUnit(add.military, '$/yr')],
+      ['Stability', (avg.stability / pop).toFixed(2)], ['Happiness', (avg.happiness / pop).toFixed(2)],
+    ];
   }
 
   private bodyView(c: InspectorCtx, id: number, city?: number): string {

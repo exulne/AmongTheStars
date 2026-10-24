@@ -16,6 +16,7 @@ export interface GalaxyParams {
   thickness: number;   // fraction of radius
   sizeScale: number;
   brightness?: number;
+  maxPx?: number;      // stars stay points, not discs, when the camera dives in
   dust?: number;       // dust particles per star
 }
 
@@ -76,7 +77,7 @@ export function makeGalaxy(p: GalaxyParams): THREE.Group {
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geo.setAttribute('size', new THREE.BufferAttribute(size, 1));
-  const stars = new THREE.Points(geo, pointsMaterial({ sizeScale: 1, minPx: 0.6 }));
+  const stars = new THREE.Points(geo, pointsMaterial({ sizeScale: 1, minPx: 0.6, maxPx: p.maxPx ?? 7 }));
   stars.frustumCulled = false;
   group.add(stars);
 
@@ -96,7 +97,7 @@ export function makeGalaxy(p: GalaxyParams): THREE.Group {
   dgeo.setAttribute('position', new THREE.BufferAttribute(dpos, 3));
   dgeo.setAttribute('color', new THREE.BufferAttribute(dcol, 3));
   dgeo.setAttribute('size', new THREE.BufferAttribute(dsize, 1));
-  const dust = new THREE.Points(dgeo, pointsMaterial({ opacity: 0.55, blending: THREE.NormalBlending }));
+  const dust = new THREE.Points(dgeo, pointsMaterial({ opacity: 0.55, blending: THREE.NormalBlending, maxPx: (p.maxPx ?? 7) * 6 }));
   dust.renderOrder = 2;
   dust.frustumCulled = false;
   group.add(dust);

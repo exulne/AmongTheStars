@@ -10,7 +10,8 @@ export const WARP = 2.4;
 export const posToYear = (p: number) => HORIZON * Math.pow(Math.min(1, Math.max(0, p)), WARP);
 export const yearToPos = (y: number) => Math.pow(Math.min(1, Math.max(0, y / HORIZON)), 1 / WARP);
 
-export const ERA_COLORS = ['#6f9bd8', '#8a93a3', '#f3d27a', '#5b5f66', '#c2483b', '#8fbf6a', '#3a2b2b', '#c08bd8'];
+// muted and earthy, so eras never read as settlement stages
+export const ERA_COLORS = ['#7a9a4a', '#66708f', '#c9a24a', '#4a4844', '#8c2a2a', '#7b5ea7', '#2e2427', '#3f8fa0'];
 
 export interface Series { years: number[]; values: (i: number) => number; n: number; def: MetricDef }
 

@@ -26,11 +26,12 @@ const app = document.getElementById('app')!;
 app.innerHTML = `
   <canvas class="scene" aria-label="3D view of human space"></canvas>
   <div class="labels" aria-hidden="true"></div>
+  <div class="scrim" aria-hidden="true"></div>
   <canvas class="xfade" aria-hidden="true"></canvas>
   <header class="top">
     <div class="intro">
       <h1>2SOON2026</h1>
-      <p>Humanity lands on Mars in 2040. This is one possible next ten thousand years, simulated settlement by settlement. Drag time. Click anything. Double-click, or scroll into it, to go closer.</p>
+      <p>Humanity lands on Mars in 2040. This is one possible next ten thousand years, simulated settlement by settlement. Drag time. Click anything. Double-click, or scroll into it, to go closer. Press ? for keys.</p>
       <nav class="crumbs" aria-label="Zoom level"></nav>
     </div>
     <div class="run">
@@ -108,6 +109,21 @@ function resize(): void {
 }
 new ResizeObserver(resize).observe(canvas);
 
+// If frames stay slow (under ~40 fps for two seconds), render fewer pixels. Only ever steps down:
+// on a 60 Hz screen frame times can't show spare headroom, so stepping back up would oscillate.
+let pixelRatio = Math.min(window.devicePixelRatio, 2), frameEma = 1 / 60, slowFor = 0;
+function govern(dt: number): void {
+  if (document.hidden || flight || pixelRatio <= 1) return;
+  frameEma += (dt - frameEma) * 0.05;
+  slowFor = frameEma > 1 / 40 ? slowFor + dt : 0;
+  if (slowFor < 2) return;
+  pixelRatio = Math.max(1, pixelRatio - 0.5);
+  renderer.setPixelRatio(pixelRatio);
+  composer.setPixelRatio(pixelRatio);
+  resize();
+  slowFor = 0; frameEma = 1 / 60;
+}
+
 // ------------------------------------------------------------------ state
 
 const world = buildWorld();
@@ -140,6 +156,7 @@ function enterLevel(next: Level): void {
   controls.maxDistance = v.limits[1];
   renderCrumbs();
   renderLegend();
+  writeHash();
 }
 
 // ------------------------------------------------------------------ legend and colour modes
@@ -308,9 +325,18 @@ function select(p: Pickable | null): void {
   refreshEvents();
   refreshPanels();
   if (changed) inspector.toTop();
+  if (changed) inspector.el.classList.toggle('open', !!p);
+  writeHash();
 }
 inspector.onSelect = (p) => select(p);
 inspector.onClose = () => select(null);
+// on phones the inspector is a bottom sheet: the grab bar folds it down to its title
+const grab = document.createElement('button');
+grab.className = 'insp-grab';
+grab.type = 'button';
+grab.setAttribute('aria-label', 'Show or hide details');
+grab.addEventListener('click', () => inspector.el.classList.toggle('open'));
+inspector.el.prepend(grab);
 inspector.onDive = (p) => { select(p); dive(p); };
 
 // Wheel out past the outer limit goes up a level. Wheel in over a thing pulls
@@ -397,7 +423,8 @@ function measureOccluders(): void {
     if (el.offsetParent !== null || el === bottom) occluders.push(el.getBoundingClientRect());
   }
 }
-new ResizeObserver(measureOccluders).observe(document.body);
+const occRO = new ResizeObserver(measureOccluders);
+occRO.observe(document.body); occRO.observe(inspector.el); occRO.observe(bottom);
 const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
 function drawLabels(): void {
   const list = views[level].labels(ctx);
@@ -429,12 +456,18 @@ function drawLabels(): void {
       // estimated from glyph counts so placement never forces a layout
       e.w = 10 + Math.max(c.l.text.length * 6, (c.l.sub?.length ?? 0) * 6); e.h = c.l.sub ? 26 : 15;
     }
-    // .label draws from (x + 0, y - 0.6em)
-    const box = { x0: c.x - 4, y0: c.y - e.h * 0.45, x1: c.x + e.w, y1: c.y + e.h * 0.6 };
-    const ax = r.left + c.x, ay = r.top + c.y;
-    let ok = box.y0 > 4 && box.x1 < r.width - 4 && !occluders.some((o) => ax + e.w > o.left && ax - 4 < o.right && ay + e.h * 0.6 > o.top && ay - e.h * 0.45 < o.bottom);
-    if (ok) for (const q of placed) if (box.x0 < q.x1 && box.x1 > q.x0 && box.y0 < q.y1 && box.y1 > q.y0) { ok = false; break; }
-    if (!ok) continue;
+    // try the label to the right of its point, then to the left
+    const fits = (x0: number, x1: number) => {
+      const b = { x0, y0: c.y - e!.h * 0.45, x1, y1: c.y + e!.h * 0.6 };
+      if (b.y0 < 4 || b.x0 < 4 || b.x1 > r.width - 4) return null;
+      if (occluders.some((o) => r.left + b.x1 > o.left && r.left + b.x0 < o.right && r.top + b.y1 > o.top && r.top + b.y0 < o.bottom)) return null;
+      for (const q of placed) if (b.x0 < q.x1 && b.x1 > q.x0 && b.y0 < q.y1 && b.y1 > q.y0) return null;
+      return b;
+    };
+    const right = fits(c.x - 4, c.x + e.w);
+    const box = right ?? fits(c.x - e.w, c.x + 4);
+    if (!box) continue;
+    e.el.classList.toggle('left', !right);
     placed.push(box);
     used.add(c.key);
     e.el.classList.toggle('strong', !!c.l.strong);
@@ -589,6 +622,7 @@ ticker.onPick = (it) => {
 let panelsAt = 0;
 timeline.onChange = (y) => {
   ctx.year = y;
+  if (!timeline.playing) writeHash();
   refreshForecast();
   pollTicker(y);
   const now = performance.now();
@@ -604,7 +638,43 @@ sim.onProgress = () => {
   charts.draw();
   if (!ctx.snap) requestState(ctx.year);
   if (sim.done) refreshForecast();
+  // a year from the URL waits until the run has reached it
+  if (pendingYear !== null && (sim.done || sim.years[sim.frontier] >= pendingYear)) { const y = pendingYear; pendingYear = null; timeline.set(y, true); }
 };
+
+// ------------------------------------------------------------------ URL: #future3-y1360-b123-lplanet
+
+let pendingYear: number | null = null, hashTimer = 0;
+const REF_CODE: Record<string, string> = { body: 'b', system: 's', galaxy: 'g', humanspace: 'h', city: 'c' };
+function writeHash(): void {
+  clearTimeout(hashTimer);
+  hashTimer = window.setTimeout(() => {
+    const sel = ctx.selected;
+    const parts = [`future${sim.seed}`, `y${Math.round(ctx.year)}`];
+    if (sel) parts.push(sel.kind === 'city' ? `c${ctx.body}.${sel.id}` : `${REF_CODE[sel.kind]}${sel.id}`);
+    parts.push(`l${level}`);
+    // replaceState so scrubbing doesn't flood the back button
+    try { window.history.replaceState(null, '', `#${parts.join('-')}`); } catch { /* sandboxed frames may refuse */ }
+  }, 400);
+}
+
+function readHash(): { seed: number; year: number | null; sel: Pickable | null; level: Level | null } {
+  const h = location.hash.slice(1);
+  const seed = Number(h.match(/future(\d+)/)?.[1]) || 0;
+  const y = h.match(/(?:^|-)y(\d+)/);
+  const lv = h.match(/(?:^|-)l(universe|galaxy|local|system|planet)/)?.[1] as Level | undefined;
+  const r = h.match(/(?:^|-)([bsghc])(\d+)(?:\.(\d+))?(?=-|$)/);
+  let sel: Pickable | null = null;
+  if (r) {
+    const id = Number(r[2]);
+    if (r[1] === 'b' && world.bodies[id]) sel = asPick({ kind: 'body', id });
+    else if (r[1] === 's' && world.systems[id]) sel = asPick({ kind: 'system', id });
+    else if (r[1] === 'g' && GALAXIES[id]) sel = { kind: 'galaxy', id, name: GALAXIES[id].name, pos: new THREE.Vector3() };
+    else if (r[1] === 'h') sel = asPick({ kind: 'humanspace', id: 0 });
+    else if (r[1] === 'c' && world.bodies[id] && r[3]) { ctx.body = id; sel = { kind: 'city', id: Number(r[3]), name: `${world.bodies[id].name} settlement ${r[3]}`, pos: new THREE.Vector3() }; }
+  }
+  return { seed, year: y ? Math.min(10000, Number(y[1])) : null, sel, level: lv ?? null };
+}
 
 function startRun(seed: number): void {
   runGen++;
@@ -613,7 +683,7 @@ function startRun(seed: number): void {
   sim.run(seed);
   timeline.set(0);
   ctx.year = 0;
-  try { location.hash = `future${seed}`; } catch { /* sandboxed frames may refuse */ }
+  writeHash();
 }
 seedInput.addEventListener('change', () => startRun(Math.max(1, Math.floor(Number(seedInput.value)) || 1)));
 app.querySelector('#reroll')!.addEventListener('click', () => {
@@ -621,11 +691,28 @@ app.querySelector('#reroll')!.addEventListener('click', () => {
   seedInput.value = String(s);
   startRun(s);
 });
+const help = document.createElement('div');
+help.className = 'help';
+help.setAttribute('role', 'dialog');
+help.setAttribute('aria-label', 'Keyboard shortcuts');
+help.hidden = true;
+help.innerHTML = `<h2>Keys</h2><dl>${([
+  ['Space', 'play or pause'], ['← →', 'step through time (Shift: ten steps)'], ['/', 'search'], ['Enter', 'go into the selected thing'],
+  ['Backspace', 'up a level'], ['Esc', 'clear the selection'], ['?', 'this list'],
+] as const).map(([k, v]) => `<dt><kbd>${k}</kbd></dt><dd>${v}</dd>`).join('')}</dl><p class="muted">Scroll into anything to enter it; scroll out past the edge to go up. Type a year into the year to jump there.</p><button class="link" type="button">Close</button>`;
+app.append(help);
+help.querySelector('button')!.addEventListener('click', () => { help.hidden = true; });
+
 window.addEventListener('keydown', (e) => {
-  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.code === 'Space') { e.preventDefault(); timeline.toggle(); }
-  if (e.key === 'Escape') select(null);
-  if (e.key === '/') { e.preventDefault(); search.focus(); }
+  else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); timeline.step(e.key === 'ArrowRight' ? 1 : -1, e.shiftKey); }
+  else if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; else select(null); }
+  else if (e.key === '/') { e.preventDefault(); search.focus(); }
+  else if (e.key === '?') help.hidden = !help.hidden;
+  else if (e.key === 'Enter' && ctx.selected && !(e.target instanceof HTMLButtonElement)) dive(ctx.selected);
+  else if (e.key === 'Backspace') { const i = LEVELS.indexOf(level); if (i > 0) setLevel(LEVELS[i - 1]); }
 });
 
 // ------------------------------------------------------------------ search
@@ -713,15 +800,23 @@ search.onPick = (h) => {
 
 // ------------------------------------------------------------------ go
 
-const fromHash = Number(location.hash.match(/future(\d+)/)?.[1]);
-if (fromHash) seedInput.value = String(fromHash);
-startRun(fromHash || 1);
-setLevel('system', null, undefined, false);
+const fromHash = readHash();
+if (fromHash.seed) seedInput.value = String(fromHash.seed);
+startRun(fromHash.seed || 1);
+if (fromHash.sel) {
+  const b = fromHash.sel.kind === 'body' ? fromHash.sel.id : fromHash.sel.kind === 'city' ? ctx.body : -1;
+  if (b >= 0) { ctx.body = b; ctx.system = world.bodies[b].system; }
+  if (fromHash.sel.kind === 'system') ctx.system = fromHash.sel.id;
+  select(fromHash.sel);
+}
+setLevel(fromHash.level ?? 'system', null, undefined, false);
+pendingYear = fromHash.year;
 
 let last = performance.now(), frame = 0;
 function loop(now: number): void {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  govern(dt);
   ctx.t += dt;
   motion += ((hovering ? 0 : 1) - motion) * (1 - Math.exp(-dt * 5));
   ctx.tm += dt * motion;

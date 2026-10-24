@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { STAGE, STAGE_NAMES } from '../sim/catalog.ts';
+import { STAGE, STAGE_NAMES, TECHS } from '../sim/catalog.ts';
 import type { StateMsg } from '../sim/client.ts';
 import { F, NF } from '../sim/metrics.ts';
 import { Rng, hash01 } from '../sim/rng.ts';
@@ -136,6 +136,48 @@ function glowSprite(color: number, scale: number, opacity = 1, tex = glowTex): T
   return s;
 }
 
+/** Ship routes: additive line segments with per-vertex colour, plus glowing heads. */
+class Trails {
+  lines: THREE.LineSegments;
+  heads: ReturnType<typeof pointCloud>;
+  private pos: Float32Array; private col: Float32Array;
+  private ns = 0; private nh = 0;
+  constructor(private maxSeg: number, private maxHeads: number, headPx = 2) {
+    const g = new THREE.BufferGeometry();
+    this.pos = new Float32Array(maxSeg * 6); this.col = new Float32Array(maxSeg * 6);
+    g.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(this.col, 3));
+    this.lines = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    this.lines.frustumCulled = false;
+    this.heads = pointCloud(maxHeads, pointsMaterial({ minPx: headPx }));
+  }
+  addTo(g: THREE.Group): void { g.add(this.lines, this.heads.pts); }
+  begin(): void { this.ns = 0; this.nh = 0; }
+  seg(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Color, ka: number, kb: number): void {
+    if (this.ns >= this.maxSeg) return;
+    this.pos.set([a.x, a.y, a.z, b.x, b.y, b.z], this.ns * 6);
+    this.col.set([c.r * ka, c.g * ka, c.b * ka, c.r * kb, c.g * kb, c.b * kb], this.ns * 6);
+    this.ns++;
+  }
+  head(p: THREE.Vector3, c: THREE.Color, size: number): void {
+    if (this.nh >= this.maxHeads) return;
+    this.heads.pos.set([p.x, p.y, p.z], this.nh * 3);
+    this.heads.col.set([c.r, c.g, c.b], this.nh * 3);
+    this.heads.size[this.nh++] = size;
+  }
+  end(): void {
+    const g = this.lines.geometry;
+    g.setDrawRange(0, this.ns * 2);
+    g.attributes.position.needsUpdate = true; g.attributes.color.needsUpdate = true;
+    this.heads.pts.geometry.setDrawRange(0, this.nh);
+    dirty(this.heads.pts);
+  }
+}
+const SHIP_C = new THREE.Color(0.55, 0.9, 1), FTL_C = new THREE.Color(0.8, 0.6, 1);
+const HAB_MAT = new THREE.MeshStandardMaterial({ color: 0xd4dbe4, metalness: 0.55, roughness: 0.38, emissive: 0x0b1420 });
+const ELEVATOR = TECHS.findIndex((t) => t.id === 'spaceElevator');
+const tv1 = new THREE.Vector3(), tv2 = new THREE.Vector3(), tv3 = new THREE.Vector3();
+
 /** Distant stars with a Milky Way band; follows the camera. */
 export function makeSky(seed = 7, count = 9000): THREE.Group {
   const r = new Rng(seed);
@@ -167,23 +209,24 @@ export class UniverseView implements View {
 
   constructor() {
     const U = 1 / 10000; // 1 unit = 10,000 ly
+    const G = 3; // galaxies drawn at three times true size so the Local Group reads as a map
     for (const gal of GALAXIES) {
       const [x, y, z] = gal.name === 'Milky Way' ? GALACTIC_CENTRE : galToXYZ(gal.l, gal.b, gal.dist);
       const pos = toScene(x, y, z, U, GALACTIC_CENTRE[0] * 0 + 0).sub(toScene(GALACTIC_CENTRE[0], 0, 0, U));
       let obj: THREE.Object3D;
       if (gal.kind === 'spiral') {
-        const R = gal.radius * U;
-        obj = makeGalaxy({ seed: gal.name.length * 31, count: gal.name === 'Milky Way' ? 60000 : gal.name === 'Andromeda' ? 70000 : 18000, radius: R, arms: gal.name === 'Triangulum' ? 2 : 4, pitch: gal.name === 'Andromeda' ? 9 : 13, bar: gal.name === 'Milky Way' ? 0.25 : 0.1, thickness: 0.03, sizeScale: R * 0.012 });
+        const R = gal.radius * U * G;
+        obj = makeGalaxy({ seed: gal.name.length * 31, count: gal.name === 'Milky Way' ? 90000 : gal.name === 'Andromeda' ? 120000 : 30000, radius: R, arms: gal.name === 'Triangulum' ? 2 : 4, pitch: gal.name === 'Andromeda' ? 9 : 13, bar: gal.name === 'Milky Way' ? 0.25 : 0.1, thickness: 0.03, sizeScale: R * 0.006 });
         if (gal.name === 'Andromeda') obj.rotation.set(1.35, 0.6, 0.2);
         if (gal.name === 'Triangulum') obj.rotation.set(0.9, -0.4, 0);
       } else {
-        const R = gal.radius * U;
-        obj = makeGalaxy({ seed: gal.name.length * 7, count: 9000, radius: R, arms: 1, pitch: 30, bar: 0.4, thickness: 0.2, sizeScale: R * 0.02, brightness: 0.8 });
+        const R = gal.radius * U * G;
+        obj = makeGalaxy({ seed: gal.name.length * 7, count: 12000, radius: R, arms: 1, pitch: 30, bar: 0.4, thickness: 0.2, sizeScale: R * 0.012, brightness: 0.8, dust: 0.05 });
         obj.rotation.set(0.7, 0.3, 0.4);
       }
       obj.position.copy(pos);
       this.group.add(obj);
-      const glow = glowSprite(0x7fe3ff, gal.radius * U * 2.2, 0);
+      const glow = glowSprite(0x7fe3ff, gal.radius * U * G * 2.2, 0);
       glow.position.copy(pos);
       this.group.add(glow);
       this.centres.push({ name: gal.name, pos, glow });
@@ -204,8 +247,11 @@ export class UniverseView implements View {
   }
 
   enter(ctx: Ctx): void {
-    ctx.controls.target.set(0, 0, 0);
-    ctx.camera.position.set(60, 90, 300);
+    // frame the Milky Way and Andromeda together
+    const m31 = this.centres.find((c) => c.name === 'Andromeda')!.pos;
+    const mid = m31.clone().multiplyScalar(0.6); // a little past halfway: the inspector covers the right edge
+    ctx.controls.target.copy(mid);
+    ctx.camera.position.copy(mid).add(new THREE.Vector3(-m31.z, 0, m31.x).normalize().multiplyScalar(200)).add(new THREE.Vector3(0, 40, 0));
   }
 
   sync(ctx: Ctx): void {
@@ -242,7 +288,7 @@ export class UniverseView implements View {
   labels(): Label[] {
     return this.centres.map((c) => {
       const n = this.colonies.get(c.name) ?? 0;
-      return { pos: c.pos, text: c.name, sub: n ? `${fmtNum(n)} settlements` : 'untouched', strong: n > 0, ref: { kind: 'galaxy' as const, id: GALAXIES.findIndex((g) => g.name === c.name), name: c.name }, prio: c.name === 'Milky Way' ? 10 : 5 - c.pos.length() / 1000 };
+      return { pos: c.pos, text: c.name, sub: n ? `${fmtNum(n)} settlements` : 'untouched', strong: n > 0, ref: { kind: 'galaxy' as const, id: GALAXIES.findIndex((g) => g.name === c.name), name: c.name }, prio: c.name === 'Milky Way' ? 10 : c.name === 'Andromeda' ? 8 : 5 - c.pos.length() / 1000 };
     });
   }
 }
@@ -260,6 +306,7 @@ export class GalaxyView implements View {
   private far: ReturnType<typeof pointCloud>;
   private farIds: number[] = [];
   private reach = 0;
+  private trails = new Trails(6000, 400, 1.6);
 
   constructor(world: World) {
     this.group.add(makeGalaxy({ seed: 2040, count: 420000, radius: 500, arms: 4, pitch: 12, bar: 0.22, thickness: 0.018, sizeScale: 2.1, brightness: 1, dust: 0.3 }));
@@ -280,6 +327,7 @@ export class GalaxyView implements View {
       this.far.pos.set([p.x, p.y, p.z], i * 3);
     });
     this.group.add(this.far.pts);
+    this.trails.addTo(this.group);
   }
 
   enter(ctx: Ctx): void {
@@ -313,6 +361,30 @@ export class GalaxyView implements View {
   frame(ctx: Ctx): void {
     this.group.rotation.y = 0;
     (this.ring.material as THREE.MeshBasicMaterial).opacity = 0.35 + 0.2 * Math.sin(ctx.t * 2);
+    this.drawShips(ctx);
+  }
+
+  /** FTL voyages arc above the disc; slower-than-light ones are short hops inside the bubble. */
+  private drawShips(ctx: Ctx): void {
+    const t = this.trails, w = ctx.world;
+    t.begin();
+    for (const sh of ctx.snap?.ships ?? []) {
+      const a = w.systems[w.bodies[sh.from].system], b = w.systems[w.bodies[sh.to].system];
+      const pa = toScene(a.x, a.y, a.z, this.U, GALACTIC_CENTRE[0]), pb = toScene(b.x, b.y, b.z, this.U, GALACTIC_CENTRE[0]);
+      const f = Math.min(1, Math.max(0, (ctx.year - sh.depart) / Math.max(0.1, sh.arrive - sh.depart)));
+      const c = sh.kind === 1 ? FTL_C : SHIP_C;
+      const lift = sh.kind === 1 ? pa.distanceTo(pb) * 0.18 : 0;
+      const N = sh.kind === 1 ? 32 : 1;
+      const at = (u: number, out: THREE.Vector3) => out.lerpVectors(pa, pb, u).setY(out.y + lift * 4 * u * (1 - u));
+      for (let k = 0; k < N; k++) {
+        const u0 = k / N, u1 = (k + 1) / N;
+        // brighter just behind the ship, faint ahead of it
+        const w0 = u0 <= f ? 0.15 + 0.6 * Math.pow(u0 / Math.max(f, 1e-3), 3) : 0.07, w1 = u1 <= f ? 0.15 + 0.6 * Math.pow(u1 / Math.max(f, 1e-3), 3) : 0.07;
+        t.seg(at(u0, tv1), at(u1, tv2), c, w0, w1);
+      }
+      t.head(at(f, tv3), c, sh.kind === 1 ? 5 + Math.sin(ctx.t * 5) : 2.5);
+    }
+    t.end();
   }
 
   pickables(ctx: Ctx): Pickable[] {
@@ -505,6 +577,8 @@ export class SystemView implements View {
   private star!: THREE.Group;
   private starR = 1;
   private swarm: ReturnType<typeof pointCloud> | null = null;
+  private trails = new Trails(512, 512, 1.8);
+  private edge = 60;
 
   enter(ctx: Ctx): void {
     this.build(ctx);
@@ -550,6 +624,8 @@ export class SystemView implements View {
     }
     if (sys.id === 0) { this.addBelt(this.vis.find((v) => ctx.world.bodies[v.id].name === 'Ceres')!.orbitR, 1, 2600); this.addBelt(this.vis.find((v) => ctx.world.bodies[v.id].name === 'Pluto')!.orbitR, 2, 3500, 5); }
     this.swarm = null;
+    this.edge = Math.max(40, ...this.vis.map((v) => v.orbitR)) * 1.35;
+    this.trails.addTo(this.group);
   }
 
   private addBelt(R: number, seed: number, n = 1600, width = 2.2): void {
@@ -633,6 +709,38 @@ export class SystemView implements View {
       v.marker.position.copy(v.mesh.position);
     }
     if (this.swarm) this.swarm.pts.rotation.y = ctx.tm * 0.03;
+    this.drawShips(ctx);
+  }
+
+  /** Interstellar ships leaving or reaching this system: a trail from the world to the edge, toward the other star, with motes flowing along it. */
+  private drawShips(ctx: Ctx): void {
+    const t = this.trails, w = ctx.world, here = w.systems[this.builtFor];
+    t.begin();
+    let i = 0;
+    // the 48 most recent departures and nearest arrivals; more is a hairball
+    const mine = (ctx.snap?.ships ?? []).filter((sh) => (w.bodies[sh.from].system === this.builtFor) !== (w.bodies[sh.to].system === this.builtFor));
+    const near = (sh: (typeof mine)[number]) => (w.bodies[sh.from].system === this.builtFor ? ctx.year - sh.depart : sh.arrive - ctx.year);
+    for (const sh of mine.sort((a, b) => near(a) - near(b)).slice(0, 48)) {
+      const fs = w.bodies[sh.from].system, ts = w.bodies[sh.to].system;
+      const out = fs === this.builtFor;
+      const v = this.vis.find((x) => x.id === (out ? sh.from : sh.to));
+      if (!v) continue;
+      const o = w.systems[out ? ts : fs];
+      const dir = toScene(o.x - here.x, o.y - here.y, o.z - here.z);
+      dir.y *= 0.25; // keep routes near the orbital plane so they read against it
+      dir.normalize();
+      const body = v.mesh.position, far = tv1.copy(dir).multiplyScalar(Math.min(this.edge * 0.5, 22)).add(body);
+      const a = out ? body : far, b = out ? far : body;
+      const c = sh.kind === 1 ? FTL_C : SHIP_C;
+      t.seg(a, b, c, out ? 0.22 : 0, out ? 0 : 0.22);
+      for (let k = 0; k < 3; k++) {
+        const u = (ctx.t * 0.06 + k / 3 + hash01(i, 3)) % 1;
+        const fade = out ? 1 - u : u;
+        t.head(tv2.lerpVectors(a, b, u), tmpC.copy(c).multiplyScalar(0.2 + 0.6 * fade), 0.4 + 0.7 * fade);
+      }
+      i++;
+    }
+    t.end();
   }
 
   pickables(ctx: Ctx): Pickable[] {
@@ -681,9 +789,14 @@ export class PlanetView implements View {
   private planet!: THREE.Mesh;
   private cities: ReturnType<typeof pointCloud> | null = null;
   private cityPos: THREE.Vector3[] = [];
-  private habitats: THREE.InstancedMesh | null = null;
+  private habitats: THREE.InstancedMesh[] = [];
   private ringWorld: THREE.Mesh | null = null;
   private pivot = new THREE.Group();
+  private orbit = new THREE.Group();
+  private sats: ReturnType<typeof pointCloud> | null = null;
+  private elevators: THREE.Group[] = [];
+  private elevSince = -1;
+  private cityKey = ''; private habKey = -1; private satKey = -1; private elevKey = -1;
 
   enter(ctx: Ctx): void {
     this.build(ctx);
@@ -718,7 +831,14 @@ export class PlanetView implements View {
     sun.position.set(400, 80, 120);
     this.group.add(sun);
     mat.uniforms.uSun.value.copy(sun.position).normalize();
-    this.cities = null; this.habitats = null; this.ringWorld = null;
+    // habitats and the ring world are lit by the star; the planet itself uses its own shader
+    const light = new THREE.DirectionalLight(specColor(sys.spec), 2.4);
+    light.position.copy(sun.position);
+    this.group.add(light, new THREE.AmbientLight(0x404a5a, 0.35));
+    this.orbit = new THREE.Group();
+    this.group.add(this.orbit);
+    this.cities = null; this.habitats = []; this.ringWorld = null; this.sats = null; this.elevators = [];
+    this.cityKey = ''; this.habKey = -1; this.satKey = -1; this.elevKey = -1;
   }
 
   sync(ctx: Ctx): void {
@@ -730,49 +850,108 @@ export class PlanetView implements View {
     mat.uniforms.uGreen.value = ctx.snap ? Math.min(1, ctx.snap.S[b * NF + F.terraform] * 2) : 0;
     // cities: one marker per ~stage, positions stable per body
     const nCities = cityCount(st, pop);
-    if (this.cities) this.pivot.remove(this.cities.pts);
-    this.cities = pointCloud(Math.max(nCities, 1), pointsMaterial({ minPx: 2 }));
-    this.cityPos = [];
-    for (let i = 0; i < nCities; i++) {
-      const u = hash01(b, i, 1) * 2 - 1, th = hash01(b, i, 2) * Math.PI * 2, s = Math.sqrt(1 - u * u);
-      const p = new THREE.Vector3(s * Math.cos(th), u * 0.85, s * Math.sin(th)).normalize().multiplyScalar(10.05);
-      this.cityPos.push(p);
-      this.cities.pos.set([p.x, p.y, p.z], i * 3);
-      tmpC.set(STAGE_COLORS[Math.max(1, st)]);
-      this.cities.col.set([tmpC.r, tmpC.g, tmpC.b], i * 3);
-      this.cities.size[i] = i === 0 ? 1.3 : 0.6 + hash01(b, i, 3) * 0.5;
-    }
-    dirty(this.cities.pts);
-    this.pivot.add(this.cities.pts);
-    // orbital habitats and rings for hubs and megastructures
-    const nHab = st >= STAGE.CITY && alive(st) ? Math.min(400, Math.floor(Math.pow(st - 4, 2) * 18)) : 0;
-    if (this.habitats) this.group.remove(this.habitats);
-    this.habitats = null;
-    if (nHab > 0) {
-      const geo = new THREE.CylinderGeometry(0.08, 0.08, 0.5, 10);
-      this.habitats = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ color: 0xcfe6ff }), nHab);
-      const m = new THREE.Matrix4(), q = new THREE.Quaternion(), r = new Rng(b * 13);
-      for (let i = 0; i < nHab; i++) {
-        const R = 14 + r.next() * 9, th = r.range(0, Math.PI * 2), inc = r.gauss() * 0.15;
-        q.setFromEuler(new THREE.Euler(r.next() * 3, r.next() * 3, 0));
-        m.compose(new THREE.Vector3(Math.cos(th) * R, Math.sin(inc) * R, Math.sin(th) * R), q, new THREE.Vector3(1, 1, 1));
-        this.habitats.setMatrixAt(i, m);
+    if (this.cityKey !== `${b}:${nCities}:${st}`) {
+      this.cityKey = `${b}:${nCities}:${st}`;
+      if (this.cities) { this.pivot.remove(this.cities.pts); this.cities.pts.geometry.dispose(); }
+      this.cities = pointCloud(Math.max(nCities, 1), pointsMaterial({ minPx: 2 }));
+      this.cityPos = [];
+      for (let i = 0; i < nCities; i++) {
+        const u = hash01(b, i, 1) * 2 - 1, th = hash01(b, i, 2) * Math.PI * 2, s = Math.sqrt(1 - u * u);
+        const p = new THREE.Vector3(s * Math.cos(th), u * 0.85, s * Math.sin(th)).normalize().multiplyScalar(10.05);
+        this.cityPos.push(p);
+        this.cities.pos.set([p.x, p.y, p.z], i * 3);
+        tmpC.set(STAGE_COLORS[Math.max(1, st)]);
+        this.cities.col.set([tmpC.r, tmpC.g, tmpC.b], i * 3);
+        this.cities.size[i] = i === 0 ? 1.3 : 0.6 + hash01(b, i, 3) * 0.5;
       }
-      this.group.add(this.habitats);
+      dirty(this.cities.pts);
+      this.pivot.add(this.cities.pts);
     }
-    if (this.ringWorld) this.group.remove(this.ringWorld);
-    this.ringWorld = null;
-    if (st === STAGE.MEGA) {
-      this.ringWorld = new THREE.Mesh(new THREE.TorusGeometry(17, 0.18, 12, 256), new THREE.MeshBasicMaterial({ color: 0xffd9a8 }));
+    const on = alive(st);
+    // orbital habitats for cities and up: O'Neill cylinders and Stanford tori, lit by the star
+    const nHab = st >= STAGE.CITY && on ? Math.min(400, Math.floor(Math.pow(st - 4, 2) * 18)) : 0;
+    if (this.habKey !== nHab) {
+      this.habKey = nHab;
+      this.orbit.remove(...this.habitats);
+      for (const h of this.habitats) h.geometry.dispose();
+      this.habitats = [];
+      if (nHab > 0) {
+        const r = new Rng(b * 13), m = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
+        const nTor = Math.floor(nHab * 0.25);
+        const cyl = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.07, 0.07, 0.42, 14, 1), HAB_MAT, nHab - nTor);
+        const tor = new THREE.InstancedMesh(new THREE.TorusGeometry(0.16, 0.035, 8, 24), HAB_MAT, Math.max(1, nTor));
+        tor.count = nTor;
+        for (let i = 0; i < nHab; i++) {
+          const R = 14 + r.next() * 9, th = r.range(0, Math.PI * 2), inc = r.gauss() * 0.15;
+          q.setFromEuler(new THREE.Euler(r.next() * 3, r.next() * 3, 0));
+          m.compose(tv1.set(Math.cos(th) * R, Math.sin(inc) * R, Math.sin(th) * R), q, one);
+          if (i < nTor) tor.setMatrixAt(i, m); else cyl.setMatrixAt(i - nTor, m);
+        }
+        this.habitats = [cyl, tor];
+        this.orbit.add(cyl, tor);
+      }
+    }
+    // satellites on a few inclined shells, more as the place grows
+    const nSat = on ? Math.min(900, 30 + st * st * 22) : 0;
+    if (this.satKey !== nSat) {
+      this.satKey = nSat;
+      if (this.sats) { this.orbit.remove(this.sats.pts); this.sats.pts.geometry.dispose(); }
+      this.sats = null;
+      if (nSat) {
+        const r = new Rng(b * 7 + 1);
+        this.sats = pointCloud(nSat, pointsMaterial({ minPx: 0.8, maxPx: 3 }));
+        for (let i = 0; i < nSat; i++) {
+          const shell = i % 3, R = 10.6 + shell * 0.9 + r.next() * 0.25, inc = (shell - 1) * 0.6 + r.gauss() * 0.08, th = r.range(0, Math.PI * 2);
+          tv1.set(Math.cos(th) * R, 0, Math.sin(th) * R).applyAxisAngle(tv2.set(1, 0, 0), inc);
+          this.sats.pos.set([tv1.x, tv1.y, tv1.z], i * 3);
+          this.sats.col.set([0.75, 0.85, 0.95], i * 3);
+          this.sats.size[i] = 0.12 + r.next() * 0.1;
+        }
+        dirty(this.sats.pts);
+        this.orbit.add(this.sats.pts);
+      }
+    }
+    if (this.ringWorld && st !== STAGE.MEGA) { this.group.remove(this.ringWorld); this.ringWorld = null; }
+    if (!this.ringWorld && st === STAGE.MEGA) {
+      this.ringWorld = new THREE.Mesh(new THREE.TorusGeometry(17, 0.18, 16, 256), new THREE.MeshStandardMaterial({ color: 0xffe2bd, metalness: 0.5, roughness: 0.35, emissive: 0x3a2a18 }));
       this.ringWorld.rotation.x = Math.PI / 2 + 0.2;
       this.group.add(this.ringWorld);
+    }
+    // space elevators once the tech exists: tether from the equator to a counterweight past synchronous orbit
+    const elev = ctx.snap && on && st >= STAGE.COLONY && ctx.snap.techDone[ELEVATOR] >= 0 ? (st >= STAGE.HUB ? 3 : 1) : 0;
+    this.elevSince = elev ? ctx.snap!.techDone[ELEVATOR] : -1;
+    if (this.elevKey !== elev) {
+      this.elevKey = elev;
+      this.pivot.remove(...this.elevators);
+      this.elevators = [];
+      for (let k = 0; k < elev; k++) {
+        const th = hash01(b, k, 9) * Math.PI * 2 + k * 2.1;
+        const dir = new THREE.Vector3(Math.cos(th), 0, Math.sin(th));
+        const g = new THREE.Group();
+        const tether = new THREE.BufferGeometry().setFromPoints([dir.clone().multiplyScalar(10), dir.clone().multiplyScalar(27)]);
+        g.add(new THREE.Line(tether, new THREE.LineBasicMaterial({ color: 0x9fdcff, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false })));
+        const cw = glowSprite(0xbfe9ff, 0.9, 0.9);
+        cw.position.copy(dir).multiplyScalar(27);
+        const climber = glowSprite(0xffffff, 0.5, 1);
+        climber.userData.dir = dir;
+        g.add(cw, climber);
+        g.userData.climber = climber;
+        this.elevators.push(g);
+        this.pivot.add(g);
+      }
     }
   }
 
   frame(ctx: Ctx): void {
     this.pivot.rotation.y = ctx.tm * 0.02;
     (this.planet.material as THREE.ShaderMaterial).uniforms.uTime.value = ctx.t;
-    if (this.habitats) this.habitats.rotation.y = ctx.tm * 0.015;
+    this.orbit.rotation.y = ctx.tm * 0.015;
+    if (this.sats) this.sats.pts.rotation.y = ctx.tm * 0.05;
+    for (const g of this.elevators) {
+      const c = g.userData.climber as THREE.Sprite;
+      const u = (ctx.t * 0.05 + g.id * 0.37) % 1;
+      c.position.copy(c.userData.dir as THREE.Vector3).multiplyScalar(10.2 + 16.6 * (0.5 - 0.5 * Math.cos(u * Math.PI * 2)));
+    }
     if (this.cities) (this.cities.pts.material as THREE.ShaderMaterial).uniforms.uOpacity.value = 0.7 + 0.3 * Math.sin(ctx.t * 1.5);
   }
 
@@ -794,7 +973,12 @@ export class PlanetView implements View {
   labels(ctx: Ctx): Label[] {
     const b = ctx.world.bodies[ctx.body];
     const st = stageOf(ctx.snap, ctx.body);
-    const out: Label[] = [{ pos: new THREE.Vector3(0, 11.5, 0), text: b.name, sub: alive(st) ? `${STAGE_NAMES[st]} · ${fmtNum(popOf(ctx.snap, ctx.body))} people` : st >= 0 ? STAGE_NAMES[st] : 'never settled', strong: true, ref: { kind: 'body', id: ctx.body }, prio: 10 }];
+    const out: Label[] = [];
+    if (this.elevators[0]) {
+      const top = (this.elevators[0].children[1] as THREE.Sprite).position.clone().applyMatrix4(this.pivot.matrixWorld);
+      out.push({ pos: top, text: this.elevators.length > 1 ? `${this.elevators.length} space elevators` : 'Space elevator', sub: `since ${Math.round(2040 + this.elevSince)}`, prio: 4 });
+    }
+    out.push({ pos: new THREE.Vector3(0, 11.5, 0), text: b.name, sub: alive(st) ? `${STAGE_NAMES[st]} · ${fmtNum(popOf(ctx.snap, ctx.body))} people` : st >= 0 ? STAGE_NAMES[st] : 'never settled', strong: true, ref: { kind: 'body', id: ctx.body }, prio: 10 });
     return out;
   }
 }
