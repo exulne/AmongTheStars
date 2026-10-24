@@ -291,6 +291,8 @@ export class ChartStrip {
 const exprHistory: string[] = [];
 const registry = new Map<string, Series>();
 export function registerSeries(key: string, s: Series | null): void { if (s) registry.set(key, s); else registry.delete(key); }
+/** Series other panels registered (query results), by key. */
+export function registeredSeries(): ReadonlyMap<string, Series> { return registry; }
 
 const exprCache = new Map<string, { n: number; series: Float64Array; out: Series | null }>();
 function exprSeries(years: number[], series: Float64Array, n: number, src: string): Series | null {

@@ -179,6 +179,7 @@ const dataPanel = installDataDesk({
   app, scene: canvas, world, sim, ctx, view: () => views[level],
   selectBody: (b) => select(asPick({ kind: 'body', id: b })),
   showSeries: (key) => { if (charts.el.hidden) chartsToggle.click(); charts.show(key); },
+  pickYear: (y) => timeline.set(y, true),
 });
 
 const views: Record<Level, View> = {
