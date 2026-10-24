@@ -173,8 +173,9 @@ export function buildWorld(seed = 2040): World {
   // --- Procedural local neighbourhood: notable systems out to 900 ly
   const N_LOCAL = 6000;
   for (let i = 0; i < N_LOCAL; i++) {
-    // denser near the Sun so the first centuries have choices
-    const d = 14 + Math.pow(r.next(), 1.6) * 886;
+    // N(<d) grows as d^1.5: a sample of the real ~0.004 stars/ly^3 that thins with
+    // distance (the old d^0.6 law put 400 systems inside 20 ly; the sky has ~130)
+    const d = 13 + Math.pow(r.next(), 2 / 3) * 887;
     const u = r.range(-1, 1), th = r.range(0, Math.PI * 2);
     const flat = Math.sqrt(1 - u * u);
     const x = d * flat * Math.cos(th), y = d * flat * Math.sin(th), z = d * u * 0.45;

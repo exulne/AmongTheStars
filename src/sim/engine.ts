@@ -832,7 +832,7 @@ function cellId(i: number, j: number, k: number): number {
 
 // Static per-world neighbour lists (CSR, sorted by distance) for systems a ship
 // can reach in one hop. Built once per world and shared by every engine.
-const MAX_HOP = 45;
+const MAX_HOP = 60;
 interface Neighbours { start: Int32Array; sys: Int32Array; d: Float32Array }
 const NBR_CACHE = new WeakMap<World, Neighbours>();
 function neighbours(world: World): Neighbours {
