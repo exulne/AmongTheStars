@@ -5,12 +5,13 @@
 import { EV } from './catalog.ts';
 import { Engine, type SimState } from './engine.ts';
 import { HIST_FIELDS, NGM } from './metrics.ts';
+import { Chronicle, type Entry } from './chronicle.ts';
 import { Lives, type Biography, type PersonBrief } from './lives.ts';
 import { buildWorld } from './world.ts';
 
 const SNAP_EVERY = 20;
 // event types whose `a` is a second body (source, opponent, old capital); elsewhere it is a stage, tech or era index
-const A_IS_BODY = new Set([EV['Colony founded'], EV.War, EV.Independence, EV['Mutiny in transit'], EV['Ship lost']]);
+const A_IS_BODY = new Set([EV['Colony founded'], EV.War, EV.Independence, EV['Mutiny in transit'], EV['Ship lost'], EV['Ship launched'], EV['Ship arrived']]);
 
 export type ToWorker =
   | { type: 'run'; seed: number }
@@ -19,7 +20,9 @@ export type ToWorker =
   | { type: 'events'; id: number; fromYear: number; toYear: number; body?: number; limit?: number }
   | { type: 'residents'; id: number; body: number; year: number; offset: number; count: number }
   | { type: 'person'; id: number; person: string; year: number }
-  | { type: 'residentAt'; id: number; body: number; year: number; k: number };
+  | { type: 'residentAt'; id: number; body: number; year: number; k: number }
+  | { type: 'chronicle'; id: number; from: number; to: number; body?: number; query?: string; limit?: number; minWeight?: number }
+  | { type: 'inventions'; id: number };
 
 export type FromWorker =
   | { type: 'progress'; seed: number; step: number; years: number[]; series: Float64Array; done: boolean; ms: number }
@@ -28,7 +31,9 @@ export type FromWorker =
   | { type: 'events'; id: number; events: Engine['events'] }
   | { type: 'residents'; id: number; pending?: boolean; total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] }
   | { type: 'person'; id: number; pending?: boolean; bio: Biography | null }
-  | { type: 'residentAt'; id: number; pending?: boolean; person: string | null };
+  | { type: 'residentAt'; id: number; pending?: boolean; person: string | null }
+  | { type: 'chronicle'; id: number; pending?: boolean; entries: Entry[] }
+  | { type: 'inventions'; id: number; pending?: boolean; list: { tech: number; year: number; entry: Entry | null }[] };
 
 const world = buildWorld();
 let main: Engine | null = null;
@@ -36,10 +41,16 @@ let replay: Engine | null = null;
 let snaps: SimState[] = [];
 let runToken = 0;
 let lives: Lives | null = null;
+let chron: Chronicle | null = null;
 /** People need the whole ledger (and every event) of the run, so they wait for it to finish. */
 function people(): Lives | null {
   if (!main || !main.done) return null;
-  return (lives ??= new Lives(main));
+  if (!lives) {
+    lives = new Lives(main);
+    const c = (chron = new Chronicle(main, lives));
+    lives.deeds = (pid, stays) => c.deedsOf(pid, stays).map((en) => ({ year: en.year, text: en.segs.map((s) => (typeof s === 'string' ? s : s.t)).join('') }));
+  }
+  return lives;
 }
 
 const post = (m: FromWorker, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage(m, transfer);
@@ -47,7 +58,7 @@ const post = (m: FromWorker, transfer: Transferable[] = []) => (self as unknown 
 function run(seed: number): void {
   const token = ++runToken;
   main = new Engine(world, seed);
-  lives = null;
+  lives = null; chron = null;
   replay = new Engine(world, seed);
   replay.logEvents = false;
   snaps = [main.snapshot()];
@@ -111,6 +122,12 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
   } else if (m.type === 'residentAt') {
     const L = people();
     post({ type: 'residentAt', id: m.id, pending: !L, person: L ? L.residentAt(m.body, m.year, m.k) : null });
+  } else if (m.type === 'chronicle') {
+    const ok = people() && chron;
+    post({ type: 'chronicle', id: m.id, pending: !ok, entries: ok ? chron!.list(m.from, m.to, { body: m.body, query: m.query, limit: m.limit, minWeight: m.minWeight }) : [] });
+  } else if (m.type === 'inventions') {
+    const ok = people() && chron;
+    post({ type: 'inventions', id: m.id, pending: !ok, list: ok ? chron!.inventions() : [] });
   } else if (m.type === 'events' && main) {
     const out: Engine['events'] = [];
     const limit = m.limit ?? 200;

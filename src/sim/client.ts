@@ -56,6 +56,8 @@ export class SimClient {
   residents(body: number, year: number, offset: number, count: number) { return this.ask<Msg<'residents'>>({ type: 'residents', body, year, offset, count }); }
   person(person: string, year: number) { return this.ask<Msg<'person'>>({ type: 'person', person, year }); }
   residentAt(body: number, year: number, k: number) { return this.ask<Msg<'residentAt'>>({ type: 'residentAt', body, year, k }); }
+  chronicle(from: number, to: number, opts: { body?: number; query?: string; limit?: number; minWeight?: number } = {}) { return this.ask<Msg<'chronicle'>>({ type: 'chronicle', from, to, ...opts }); }
+  inventions() { return this.ask<Msg<'inventions'>>({ type: 'inventions' }); }
   state(step: number) { return this.ask<StateMsg>({ type: 'state', step }); }
   history(body: number) { return this.ask<HistoryMsg>({ type: 'history', body }); }
   events(fromYear: number, toYear: number, body?: number, limit?: number) {

@@ -45,6 +45,8 @@ export class Ledger {
   private carry = new Map<number, number>();
   private birthAcc = new Map<number, number>();
   closed = -1;                               // last period closed
+  /** every ship by travel id: where from and to, when, how many, and its ledger flow */
+  ships = new Map<number, { src: number; dst: number; n: number; depart: number; arrive: number; flow: number; generation: boolean }>();
 
   private arr(m: Map<number, Float64Array>, b: number): Float64Array {
     let a = m.get(b);
@@ -74,19 +76,31 @@ export class Ledger {
   voyage(seq: number, src: number, dst: number, n: number, depart: number, arrive: number, kind: number): number {
     const ship = SHIP_BODY + seq;
     const board = this.depart(src, ship, n, depart, depart, kind);
-    const p0 = periodOf(depart), p1 = periodOf(arrive);
-    const br = this.arr(this.births, ship), pe = this.arr(this.popEnd, ship);
-    for (let p = p0; p <= p1; p++) {
-      const len = Math.min(periodStart(p + 1), arrive) - Math.max(periodStart(p), depart);
-      br[p] = Math.max(0, n * len / 55);
-      pe[p] = p < p1 ? Math.round(n) : 0;
-    }
+    this.aboard(ship, n, depart, periodOf(depart), arrive);
     return board;
   }
 
-  /** The people aboard ship `seq` reach (or never reach) dst. */
+  /** Fill a ship's births (replacing deaths) and head-count from period p0 up to `until`. */
+  private aboard(ship: number, n: number, depart: number, p0: number, until: number): void {
+    const br = this.arr(this.births, ship), pe = this.arr(this.popEnd, ship);
+    for (let p = p0; p <= periodOf(until); p++) {
+      const len = Math.min(periodStart(p + 1), until) - Math.max(periodStart(p), depart);
+      br[p] = Math.max(0, n * len / 55);
+      pe[p] = Math.round(n);
+    }
+  }
+
+  /** The people aboard ship `seq` reach (or never reach) dst. The engine notices an
+   *  arrival at its next step, which can fall in a later period than the planned
+   *  arrival, so the ship stays inhabited until the period it actually lands in. */
   land(seq: number, dst: number, n: number, year: number, lost: boolean): void {
-    const id = this.depart(SHIP_BODY + seq, dst, n, year, year, FLOW.LANDING);
+    const ship = SHIP_BODY + seq;
+    const pe = this.arr(this.popEnd, ship), br = this.arr(this.births, ship);
+    let last = periodOf(year);
+    while (last > 0 && pe[last] < 0) last--;
+    if (last < periodOf(year)) this.aboard(ship, n, periodStart(last + 1), last + 1, year);
+    pe[periodOf(year)] = 0; br[periodOf(year)] = 0;
+    const id = this.depart(ship, dst, n, year, year, FLOW.LANDING);
     this.flows[id].lost = lost;
   }
 

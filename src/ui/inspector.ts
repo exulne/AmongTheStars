@@ -12,7 +12,16 @@ import type { Biography, PersonBrief } from '../sim/lives.ts';
 import { biographyHtml, residentsHtml } from './peoplePanel.ts';
 
 type Residents = { total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] };
+type Seg = string | { t: string; kind: 'person' | 'body'; id: string | number };
+type Entry = { year: number; type: number; segs: Seg[]; weight: number };
+export function segsHtml(segs: Seg[]): string {
+  return segs.map((x) => typeof x === 'string' ? esc(x)
+    : x.kind === 'person' ? `<button class="link" data-act="open-person" data-pid="${x.id}" type="button">${esc(x.t)}</button>`
+    : `<button class="link" data-act="body" data-id="${x.id}" type="button">${esc(x.t)}</button>`).join('');
+}
 export interface PeopleApi {
+  chronicle(from: number, to: number, opts: { body?: number; query?: string; limit?: number; minWeight?: number }): Promise<{ entries: Entry[]; pending?: boolean }>;
+  inventions(): Promise<{ list: { tech: number; year: number; entry: Entry | null }[]; pending?: boolean }>;
   residents(body: number, year: number, offset: number, count: number): Promise<Residents & { pending?: boolean }>;
   person(id: string, year: number): Promise<{ bio: Biography | null; pending?: boolean }>;
   residentAt(body: number, year: number, k: number): Promise<{ person: string | null; pending?: boolean }>;
@@ -53,7 +62,35 @@ export class Inspector {
   private lastBio: Biography | null = null;
   private inflight = new Set<string>();
   /** drop everything cached for the previous future */
-  resetPeople(): void { this.residentsCache.clear(); this.bioCache.clear(); this.lastBio = null; this.personId = null; }
+  resetPeople(): void { this.residentsCache.clear(); this.bioCache.clear(); this.chronCache.clear(); this.inv = null; this.lastBio = null; this.personId = null; }
+  chronicleOpen = false;
+  private chronQuery = '';
+  private chronBig = true;
+  private chronCache = new Map<string, Entry[]>();
+  private inv: Map<number, Entry | null> | null = null;
+  onYear: (y: number) => void = () => {};
+
+  private inventions(): Map<number, Entry | null> | null {
+    if (!this.inv) this.fetch('inventions', () => this.api!.inventions(), (v: { list: { tech: number; entry: Entry | null }[] }) => { this.inv = new Map(v.list.map((x) => [x.tech, x.entry])); });
+    return this.inv;
+  }
+
+  private chronicle(c: InspectorCtx, body?: number): string {
+    const all = body !== undefined;
+    const from = all ? -1 : Math.max(-1, c.year - 400), minW = all ? 3 : this.chronBig ? 4 : 0;
+    const key = `${body ?? 'all'}:${Math.floor(c.year / 4)}:${this.chronQuery}:${minW}`;
+    const list = this.chronCache.get(key);
+    if (!list) this.fetch(key, () => this.api!.chronicle(from, c.year, { body, query: this.chronQuery || undefined, limit: all ? 14 : 90, minWeight: minW }), (v: { entries: Entry[] }) => {
+      if (this.chronCache.size > 60) this.chronCache.clear();
+      this.chronCache.set(key, v.entries);
+    });
+    const items = list ? list.map((e) => `<li><button class="link num ev-year" data-act="year" data-id="${e.year}" type="button">${fmtYear(e.year)}</button> ${segsHtml(e.segs)}</li>`).join('') : '';
+    const head = all ? '' : `<p class="eyebrow muted">Chronicle</p><h2>The last four centuries, to ${fmtYear(c.year)}</h2>
+      <p class="muted">Everything here happened in this future, to people who lived in it. Click a name to read their life, a year to go there.</p>
+      <div class="chron-tools"><input id="chron-q" type="search" placeholder="Search: a name, a ship, a world" value="${esc(this.chronQuery)}" aria-label="Search the chronicle">
+      <label><input id="chron-big" type="checkbox" ${this.chronBig ? 'checked' : ''}> turning points only</label></div>`;
+    return `${head}${list ? (items ? `<ol class="events chron">${items}</ol>` : `<p class="muted">${all ? 'Nothing here has made history yet.' : 'Nothing matches.'}</p>`) : '<p class="muted">Reading the record…</p>'}`;
+  }
 
   private fetch<T>(key: string, get: () => Promise<T & { pending?: boolean }>, put: (v: T) => void): void {
     if (this.inflight.has(key) || !this.api) return;
@@ -93,10 +130,14 @@ export class Inspector {
       if (act === 'page') { this.peoplePage = Math.max(0, this.peoplePage + id); this.render(this.last); }
       if (act === 'open-person') this.openPerson(t.dataset.pid!);
       if (act === 'close-person') this.openPerson(null);
+      if (act === 'close-chronicle') { this.chronicleOpen = false; this.render(this.last); }
+      if (act === 'year') this.onYear(Number(t.dataset.id));
       if (act === 'goto-body') { this.openPerson(null); this.onSelect({ kind: 'body', id, name: this.last.world.bodies[id].name, pos: null! }); }
     });
     this.el.addEventListener('change', (e) => {
       const t = e.target as HTMLInputElement;
+      if (t.id === 'chron-big' && this.last) { this.chronBig = t.checked; this.render(this.last); }
+      if (t.id === 'chron-q' && this.last) { this.chronQuery = t.value; this.render(this.last); }
       if (t.id === 'person-jump' && this.last && this.api) {
         const n = Math.max(1, parseCount(t.value) || 1);
         const raw = t.value.trim();
@@ -128,6 +169,7 @@ export class Inspector {
     const s = c.selected;
     let html = '';
     if (this.personId) html = `<button class="insp-close" type="button" data-act="close-person" aria-label="Close this person">×</button>${this.person(c, this.personId)}`;
+    else if (this.chronicleOpen) html = `<button class="insp-close" type="button" data-act="close-chronicle" aria-label="Close the chronicle">×</button>${this.chronicle(c)}`;
     else if (!s || s.kind === 'humanspace') html = this.global(c);
     else if (s.kind === 'galaxy') html = this.galaxy(c, s);
     else if (s.kind === 'system') html = this.system(c, s.id);
@@ -200,13 +242,19 @@ export class Inspector {
   private techList(c: InspectorCtx, done: { t: (typeof TECHS)[number]; y: number }[], next: (typeof TECHS)[number][]): string {
     if (!c.snap) return '';
     if (!this.allTechs) {
-      return `<ul class="techs">${done.slice(0, 8).map((x) => `<li><span class="num">${fmtYear(x.y)}</span> ${esc(x.t.name)}</li>`).join('')}</ul>
+      const inv = this.inventions();
+      const by = (i: number) => { const e = inv?.get(i); return e ? `<span class="blurb">${segsHtml(e.segs.slice(0, 3))}</span>` : ''; };
+      return `<ul class="techs">${done.slice(0, 8).map((x) => `<li><span class="num">${fmtYear(x.y)}</span> ${esc(x.t.name)}${by(TECHS.indexOf(x.t))}</li>`).join('')}</ul>
         ${next.length ? `<p class="muted">Researching: ${next.map((t) => esc(t.name)).join(', ')}</p>` : ''}
         <p><button class="link" data-act="techs" type="button">All ${TECHS.length} technologies</button></p>`;
     }
     // every tech: invented ones in order, then those still to come
     const rows = TECHS.map((t, i) => ({ t, i, y: c.snap!.techDone[i] })).sort((a, b) => (a.y < 0 ? 1e9 : a.y) - (b.y < 0 ? 1e9 : b.y) || a.t.cost - b.t.cost);
-    return `<ul class="techs all">${rows.map((r) => `<li class="${r.y < 0 ? 'future' : ''}${r.i === this.techMark ? ' mark' : ''}"><span class="num">${r.y >= 0 ? fmtYear(r.y) : next.includes(r.t) ? 'now' : '—'}</span> ${esc(r.t.name)}<span class="blurb">${esc(r.t.blurb)}</span></li>`).join('')}</ul>
+    const inv = this.inventions();
+    return `<ul class="techs all">${rows.map((r) => {
+      const e = r.y >= 0 ? inv?.get(r.i) : null;
+      return `<li class="${r.y < 0 ? 'future' : ''}${r.i === this.techMark ? ' mark' : ''}"><span class="num">${r.y >= 0 ? fmtYear(r.y) : next.includes(r.t) ? 'now' : '—'}</span> ${esc(r.t.name)}<span class="blurb">${e ? segsHtml(e.segs.slice(0, 3)) + '. ' : ''}${esc(r.t.blurb)}</span></li>`;
+    }).join('')}</ul>
       <p><button class="link" data-act="techs" type="button">Fewer</button></p>`;
   }
 
@@ -275,7 +323,7 @@ export class Inspector {
     ]);
     const res = `<div class="bars">${RES_NAMES.map((r, k) => `<div class="bar"><span>${r === 'he3' ? 'helium-3' : r}</span><i style="--v:${b.res[k]}"></i></div>`).join('')}</div>`;
     if (!alive(st)) {
-      return `${header}${fly}<h3>World</h3>${phys}<h3>Resources</h3>${res}<h3>Events here</h3>${this.eventsList(c, 8)}`;
+      return `${header}${fly}<h3>History</h3>${this.chronicle(c, id)}<h3>World</h3>${phys}<h3>Resources</h3>${res}<h3>Events here</h3>${this.eventsList(c, 8)}`;
     }
     const factionId = v('faction');
     const faction = factionId === id ? 'Independent' : `Loyal to ${c.world.bodies[factionId]?.name ?? '?'}`;
@@ -292,6 +340,7 @@ export class Inspector {
       <h3>All metrics</h3>${this.kv(metrics)}
       <h3>World</h3>${phys}
       <h3>Resources</h3>${res}
+      <h3>History</h3>${this.chronicle(c, id)}
       <h3>Events here</h3>${this.eventsList(c, 10)}`;
   }
 

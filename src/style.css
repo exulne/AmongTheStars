@@ -259,3 +259,8 @@ input.tl-big:focus { outline: none; border-bottom-color: var(--accent); }
 .lineage .num { display: inline-block; min-width: 6.5rem; }
 .story li { padding: 0.15rem 0; line-height: 1.45; }
 .people li { padding: 0.12rem 0; font-size: 0.8125rem; }
+.chron li { padding: 0.25rem 0; line-height: 1.45; font-size: 0.8125rem; }
+.chron .ev-year { text-decoration: none; margin-right: 0.35rem; }
+.chron-tools { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; font-size: 0.8rem; margin: 0.4rem 0 0.6rem; }
+.chron-tools input[type=search] { flex: 1 1 10rem; min-width: 0; background: transparent; border: 0; border-bottom: 1px solid var(--rule); font: inherit; color: var(--ink); padding: 0.1rem 0; }
+.techs .blurb .link { font-size: inherit; }

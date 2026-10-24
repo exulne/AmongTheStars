@@ -387,9 +387,11 @@ export class Engine {
       const sy = this.bSys[b];
       const immig = recv[b] - sent[b];
       void sy;
-      this.ledger?.addBirths(b, births * dt);
       // exponential step: a 10-year step at a high crowding death rate must not overshoot zero
+      const pop0 = pop;
       pop = Math.max(0, pop * Math.exp(pop > 0 ? ((births - deaths) / pop) * dt : 0) + immig * dt);
+      // the ledger gets every newcomer born here: compounding can add more than births·dt
+      this.ledger?.addBirths(b, Math.max(births * dt, pop - pop0 - immig * dt + deaths * dt));
       if (pop > cap * 1.5) pop = cap * 1.5;
       S[o + F.births] = births; S[o + F.deaths] = deaths; S[o + F.imports] = Math.max(0, immig) * 10;
 
@@ -479,7 +481,9 @@ export class Engine {
     const id = st.g[G.flowSeq]++;
     if (!this.ledger) return id;
     const long = (kind === FLOW.SHIP || kind === FLOW.FTL) && arrive - depart > GENERATION;
-    this.flowIndex.set(id, long ? this.ledger.voyage(id, src, dst, n, depart, arrive, kind) : this.ledger.depart(src, dst, n, depart, arrive, kind));
+    const fi = long ? this.ledger.voyage(id, src, dst, n, depart, arrive, kind) : this.ledger.depart(src, dst, n, depart, arrive, kind);
+    this.flowIndex.set(id, fi);
+    if (kind === FLOW.SHIP || kind === FLOW.FTL) this.ledger.ships.set(id, { src, dst, n: Math.round(n), depart, arrive, flow: fi, generation: long });
     if (long) this.generationShips.add(id);
     return id;
   }
@@ -559,7 +563,7 @@ export class Engine {
       const k = Math.floor(r() * 5); S[o + F.water + k] += pop * 40 + 1e4; this.log(EV['Rich deposit found'], b, k);
     }
     if (fx.fission && !fx.fusion && r() < dt * 0.0008) { S[o + F.pop] *= 0.98; this.log(EV['Reactor accident'], b); }
-    if (S[o + F.happiness] > 0.7 && S[o + F.pop] < S[o + F.capacity] && r() < dt * 0.001) { S[o + F.pop] *= 1.03; this.log(EV['Baby boom'], b); }
+    if (S[o + F.happiness] > 0.7 && S[o + F.pop] < S[o + F.capacity] && r() < dt * 0.001) { this.ledger?.addBirths(b, S[o + F.pop] * 0.03); S[o + F.pop] *= 1.03; this.log(EV['Baby boom'], b); }
     if (pop > 1e7 && S[o + F.research] > 0 && r() < dt * 0.0012) { this.st.g[G.knowledge] += S[o + F.research] * 30; this.log(EV.Breakthrough, b); }
   }
 
@@ -578,9 +582,27 @@ export class Engine {
       st.techProg[i] += amount * (1 / TECHS[i].cost) / w;
       if (st.techProg[i] < TECHS[i].cost * this.techCostMult[i] || year + YEAR0 < TECH_FLOOR[i]) continue;
       if (!this.feasible[i]) { st.techProg[i] = -1; continue; }
-      st.techDone[i] = year; changed = true; this.log(EV.Technology, -1, i);
+      st.techDone[i] = year; changed = true;
+      // an invention happens somewhere: a lab picked in proportion to its research,
+      // and now and then a second, independent one at the same time (Merton's multiples)
+      const where = this.pickLab(-1), twin = this.rand() < 0.12 ? this.pickLab(where) : -1;
+      this.log(EV.Technology, where, i, twin);
     }
     if (changed) this.recomputeFx();
+  }
+
+  private pickLab(not: number): number {
+    const S = this.st.S;
+    let total = 0;
+    for (let n = 0; n < this.st.nSettled; n++) { const b = this.st.settled[n]; if (b !== not) total += Math.max(0, S[b * NF + F.research]); }
+    let x = this.rand() * total;
+    for (let n = 0; n < this.st.nSettled; n++) {
+      const b = this.st.settled[n];
+      if (b === not) continue;
+      x -= Math.max(0, S[b * NF + F.research]);
+      if (x <= 0 && S[b * NF + F.research] > 0) return b;
+    }
+    return not === this.world.earth ? -1 : this.world.earth;
   }
 
   private expand(dt: number, year: number, eraLaunch: number): void {
@@ -614,8 +636,9 @@ export class Engine {
           const sc = (this.bHab[t] + 0.15 * (this.bRes[t * 5] + this.bRes[t * 5 + 1])) * (0.5 + this.rand());
           if (sc > bestS) { bestS = sc; best = t; }
         }
-        if (best >= 0) {
-          const crew = isEarth ? 8 + Math.floor(this.rand() * 30) : 20 + Math.floor(this.rand() * 200);
+        // nobody can send more people than they have
+        const crew = best >= 0 ? Math.min(Math.floor(S[o + F.pop]) - 1, isEarth ? 8 + Math.floor(this.rand() * 30) : 20 + Math.floor(this.rand() * 200)) : 0;
+        if (best >= 0 && crew >= 4) {
           this.found(st, best, STAGE.OUTPOST, crew, b, year);
           S[o + F.pop] = Math.max(0, S[o + F.pop] - crew);
           this.travel(st, b, best, crew, year, year, FLOW.CREW);
@@ -697,6 +720,7 @@ export class Engine {
     st.ships[o + SH.from] = from; st.ships[o + SH.to] = to; st.ships[o + SH.depart] = depart;
     st.ships[o + SH.arrive] = arrive; st.ships[o + SH.colonists] = colonists; st.ships[o + SH.kind] = kind;
     st.ships[o + SH.flow] = this.travel(st, from, to, colonists, depart, arrive, kind === 1 ? FLOW.FTL : FLOW.SHIP);
+    this.log(EV['Ship launched'], from, to, st.ships[o + SH.flow]);
     st.g[G.nShips] = n + 1;
     st.g[G.shipsLaunched]++;
     // reserve the target so two ships don't race for it
@@ -733,13 +757,14 @@ export class Engine {
         if (gen) this.ledger?.land(seq, to, colonists, year, false);
         if (this.rand() < 0.08) { st.S[to * NF + F.stability] = 0.4; this.log(EV['Mutiny in transit'], to, from); }
         if (!joined) this.log(EV['Colony founded'], to, from, 1);
+        this.log(EV['Ship arrived'], to, from, seq);
       } else {
         st.g[G.shipsLost]++;
         const fi = this.flowIndex.get(seq);
         if (gen) this.ledger?.land(seq, to, colonists, year, true);
         else if (this.ledger && fi !== undefined) this.ledger.flows[fi].lost = true;
         if (st.S[to * NF + F.stage] === STAGE.SURVEY && st.S[to * NF + F.pop] === 0) st.S[to * NF + F.parent] = -1;
-        this.log(EV['Ship lost'], to, from);
+        this.log(EV['Ship lost'], to, from, seq);
       }
       // swap-remove
       n--;
