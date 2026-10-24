@@ -62,8 +62,14 @@ function blockMaterial(warm: THREE.Color): THREE.MeshStandardMaterial {
           vec2 f = fract(g);
           float pane = step(0.25, f.x) * step(f.x, 0.75) * step(0.3, f.y) * step(f.y, 0.8);
           float h = fract(sin(dot(floor(vec3(g, vWorld.x * 0.37 + vWorld.z * 0.53)), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
-          float works = step(0.5, vColor.r - vColor.b);
-          float ruin = 1.0 - step(0.004, vColor.g);
+          // no instance colours yet (an empty street compiles first): plain lit blocks
+          #if defined( USE_COLOR_ALPHA ) || defined( USE_COLOR ) || defined( USE_INSTANCING_COLOR ) || defined( USE_BATCHING_COLOR )
+            vec3 code = vColor.rgb;
+          #else
+            vec3 code = vec3(1.0);
+          #endif
+          float works = step(0.5, code.r - code.b);
+          float ruin = 1.0 - step(0.004, code.g);
           float on = step(1.0 - uLit * (1.0 - works * 0.6), h) * step(0.12, vWorld.y) * (1.0 - ruin);
           vec3 warm = mix(uWarm, vec3(0.75, 0.88, 1.0), step(0.85, fract(h * 7.0)));
           totalEmissiveRadiance += mix(warm, vec3(1.0, 0.55, 0.2), works) * pane * on * side * 0.45;
