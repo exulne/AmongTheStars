@@ -24,6 +24,9 @@ import { EraBanner, eraRun, eraTitle } from './ui/eraBanner.ts';
 import { EraMood } from './view/eraMood.ts';
 import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionCss, stageLegend, type ColorMode } from './view/colorModes.ts';
 import { StreetView } from './view/street.ts';
+import { Picker } from './explain/picker.ts';
+import { explainLocate, explainName, explainerFor } from './explain/registry.ts';
+import { resetShips, setShipApi } from './explain/ships.ts';
 import { GalaxyView, LocalView, LEVELS, PlanetView, SystemView, UniverseView, alive, cityCount, cityDir, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
 
 // ------------------------------------------------------------------ DOM
@@ -171,7 +174,7 @@ const dataPanel = installDataDesk({
 });
 
 const views: Record<Level, View> = {
-  universe: new UniverseView(),
+  universe: new UniverseView(world),
   galaxy: new GalaxyView(world),
   local: new LocalView(world),
   system: new SystemView(),
@@ -318,7 +321,7 @@ function setLevel(next: Level, focus: Ref | null = null, prep?: () => void, anim
     if (deeper) {
       camera.position.copy(endT).addScaledVector(off, 4.5);
     } else {
-      const at = views[next].locate(ctx, was) ?? endT;
+      const at = locateRef(views[next], was) ?? endT;
       controls.target.copy(at);
       camera.position.copy(at).addScaledVector(off, 0.035);
     }
@@ -328,7 +331,7 @@ function setLevel(next: Level, focus: Ref | null = null, prep?: () => void, anim
       const q = queued; queued = null; q?.();
     });
   };
-  const here = deeper && focus ? views[from].locate(ctx, focus) : null;
+  const here = deeper && focus ? locateRef(views[from], focus) : null;
   if (here) {
     const p = here.clone();
     fly(p.clone().add(camera.position.clone().sub(p).multiplyScalar(0.07)), p, 0.6, easeInOut, swap);
@@ -437,6 +440,7 @@ inspector.api = {
   residentAt: (b, y, k) => sim.residentAt(b, y, k),
 };
 inspector.onSelect = (p) => select(p);
+setShipApi((f, t, d) => sim.ship(f, t, d), () => refreshPanels());
 inspector.onYear = (y) => timeline.set(y, true);
 app.querySelector('#chronicle')!.addEventListener('click', () => {
   inspector.chronicleOpen = !inspector.chronicleOpen;
@@ -470,18 +474,24 @@ canvas.addEventListener('wheel', (e) => {
     return;
   }
   // within one gesture keep pulling the same thing even as it slides out from under the cursor
-  const keep = pull && v.locate(ctx, pull) ? pull : null;
-  const sel = ctx.selected && v.locate(ctx, ctx.selected) ? ctx.selected : null;
+  const keep = pull && locateRef(v, pull) ? pull : null;
+  const sel = ctx.selected && locateRef(v, ctx.selected) ? ctx.selected : null;
   const p: Ref | null = (gesture && keep) || pickAt(e.clientX, e.clientY) || keep || sel;
   if (!p || level === 'street' || (level === 'planet' && p.kind !== 'city')) return;
   pull = p;
-  const at = v.locate(ctx, p);
+  const at = locateRef(v, p);
   const dd = v.diveDist(ctx, p);
   if (at && dd > 0 && camera.position.distanceTo(at) < Math.max(dd, v.limits[0] * 1.4)) { pull = null; select(asPick(p)); dive(p); }
 }, { passive: true });
 canvas.addEventListener('pointerdown', () => { pull = null; });
 
+/** Where a selected thing sits in a view: explained things (stars, asteroids, ships…) know their own place. */
+function locateRef(v: View, r: Ref): THREE.Vector3 | null {
+  return r.kind === 'thing' ? (r.ex ? explainLocate(r.ex, r.id) : null) : v.locate(ctx, r);
+}
+
 function asPick(r: Ref): Pickable {
+  if (r.kind === 'thing') return { kind: 'thing', id: r.id, ex: r.ex, name: r.name ?? '', pos: new THREE.Vector3() };
   const name = r.kind === 'system' ? world.systems[r.id].name : r.kind === 'body' ? world.bodies[r.id].name : r.kind === 'humanspace' ? 'Human space' : r.name ?? '';
   return { kind: r.kind, id: r.id, name, pos: new THREE.Vector3() };
 }
@@ -489,9 +499,11 @@ function asPick(r: Ref): Pickable {
 // ------------------------------------------------------------------ picking
 
 const proj = new THREE.Vector3();
+let pickScore = Infinity;
 function pickAt(x: number, y: number): Pickable | null {
   const r = canvas.getBoundingClientRect();
   let best: Pickable | null = null, bestD = 16;
+  pickScore = Infinity;
   for (const p of views[level].pickables(ctx)) {
     proj.copy(p.pos).project(camera);
     if (proj.z > 1) continue;
@@ -502,22 +514,48 @@ function pickAt(x: number, y: number): Pickable | null {
     const score = d - (p.weight ?? 0);
     if (score < bestD) { bestD = score; best = p; }
   }
+  if (best) pickScore = bestD;
   return best;
+}
+
+// Everything else drawn (every star particle, asteroid, ship, satellite…) is picked by src/explain:
+// GPU colour-ID picking for point clouds, a CPU path for sprites and lines. The sim's own things win ties.
+const picker = new Picker(renderer, camera);
+const exCtx = () => ({ world, snap: ctx.snap, year: ctx.year });
+function pickAny(x: number, y: number): Pickable | null {
+  const p = pickAt(x, y), ps = pickScore;
+  const r = canvas.getBoundingClientRect();
+  const t = picker.pick(x - r.left, y - r.top, r.width, r.height);
+  if (!t || (p && ps <= t.score + 2)) return p;
+  const e = explainerFor(t.kind);
+  const id = e?.idOf ? e.idOf(t.i) : t.i;
+  if (!e || id < 0) return p;
+  const as = e.selectAs?.(id, exCtx());
+  if (as) return { ...asPick({ kind: as.kind, id: as.id, name: as.name }), name: e.name ? e.name(id, exCtx()) : as.name };
+  return { kind: 'thing', id, ex: t.kind, name: explainName(t.kind, id, exCtx()), pos: new THREE.Vector3() };
+}
+// hover picks run in the frame loop, at most ~25 times a second, never per pointer event
+let hoverAt: { x: number; y: number } | null = null, hoverT = 0;
+function hover(now: number): void {
+  if (!hoverAt || flight || now - hoverT < 40) return;
+  hoverT = now;
+  const { x, y } = hoverAt;
+  hoverAt = null;
+  const p = pickAny(x, y);
+  // backdrop stars don't stop the orbits; anything else does, so it can be clicked
+  hovering = !!p && !(p.kind === 'thing' && /^(sky|bgal|dust)/.test(p.ex ?? ''));
+  tooltip.hidden = !p;
+  if (p) { tooltip.textContent = p.name; tooltip.style.transform = `translate(${x + 14}px, ${y + 10}px)`; }
+  canvas.style.cursor = p ? 'pointer' : '';
 }
 let downAt = { x: 0, y: 0 };
 canvas.addEventListener('pointerdown', (e) => { downAt = { x: e.clientX, y: e.clientY }; });
 let hovering = false, motion = 1;
-canvas.addEventListener('pointerleave', () => { hovering = false; tooltip.hidden = true; });
-canvas.addEventListener('pointermove', (e) => {
-  const p = pickAt(e.clientX, e.clientY);
-  hovering = !!p;
-  tooltip.hidden = !p;
-  if (p) { tooltip.textContent = p.name; tooltip.style.transform = `translate(${e.clientX + 14}px, ${e.clientY + 10}px)`; }
-  canvas.style.cursor = p ? 'pointer' : '';
-});
+canvas.addEventListener('pointerleave', () => { hovering = false; hoverAt = null; tooltip.hidden = true; });
+canvas.addEventListener('pointermove', (e) => { hoverAt = { x: e.clientX, y: e.clientY }; });
 canvas.addEventListener('click', (e) => {
   if (Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5) return;
-  const p = pickAt(e.clientX, e.clientY);
+  const p = pickAny(e.clientX, e.clientY);
   if (p?.kind === 'person') openResident(p.id);
   else if (p) select(p);
   else if (level === 'street') street.follow = -1;
@@ -534,7 +572,7 @@ function openResident(k: number): void {
 }
 canvas.addEventListener('dblclick', (e) => {
   if (busy) return;
-  const p = pickAt(e.clientX, e.clientY);
+  const p = pickAny(e.clientX, e.clientY);
   if (p?.kind === 'person') openResident(p.id);
   else if (p) { select(p); dive(p); }
 });
@@ -659,12 +697,12 @@ function drawRing(): void {
   const v = views[level];
   // in its own view the planet is the subject; a ring around it is just noise
   const own = level === 'planet' && ctx.selected?.kind === 'body';
-  const at = ctx.selected && !own ? v.locate(ctx, ctx.selected) : null;
+  const at = ctx.selected && !own ? locateRef(v, ctx.selected) : null;
   if (!at) { ringEl.hidden = true; return; }
   proj.copy(at).project(camera);
   if (proj.z > 1) { ringEl.hidden = true; return; }
   const r = canvas.getBoundingClientRect();
-  const worldR = v.size?.(ctx, ctx.selected!) ?? 0;
+  const worldR = ctx.selected!.kind === 'thing' ? 0 : v.size?.(ctx, ctx.selected!) ?? 0;
   const d = camera.position.distanceTo(at);
   const px = worldR ? (worldR / (d * Math.tan((camera.fov * Math.PI) / 360))) * (r.height / 2) : 0;
   const R = Math.min(Math.max(px + 6, 13), Math.max(r.width, r.height));
@@ -851,7 +889,7 @@ function writeHash(): void {
   hashTimer = window.setTimeout(() => {
     const sel = ctx.selected;
     const parts = [`future${sim.seed}`, `y${Math.round(ctx.year)}`];
-    if (sel) parts.push(sel.kind === 'city' ? `c${ctx.body}.${sel.id}` : `${REF_CODE[sel.kind]}${sel.id}`);
+    if (sel) parts.push(sel.kind === 'city' ? `c${ctx.body}.${sel.id}` : sel.kind === 'thing' ? `x${sel.ex}.${sel.id}` : `${REF_CODE[sel.kind]}${sel.id}`);
     parts.push(`l${level}`, STAMP_CODE);
     // replaceState so scrubbing doesn't flood the back button
     try { window.history.replaceState(null, '', `#${parts.join('-')}`); } catch { /* sandboxed frames may refuse */ }
@@ -873,12 +911,15 @@ function readHash(): { seed: number; year: number | null; sel: Pickable | null; 
     else if (r[1] === 'h') sel = asPick({ kind: 'humanspace', id: 0 });
     else if (r[1] === 'c' && world.bodies[id] && r[3]) { ctx.body = id; ctx.city = Number(r[3]); sel = { kind: 'city', id: Number(r[3]), name: `${world.bodies[id].name} settlement ${r[3]}`, pos: new THREE.Vector3() }; }
   }
+  const x = h.match(/(?:^|-)x([a-z0-9]+)\.(\d+)(?=-|$)/);
+  if (x && explainerFor(x[1])) sel = { kind: 'thing', id: Number(x[2]), ex: x[1], name: '', pos: new THREE.Vector3() };
   return { seed, year: y ? Math.min(10000, Number(y[1])) : null, sel, level: lv ?? null };
 }
 
 function startRun(seed: number): void {
   runGen++;
   inspector.resetPeople();
+  resetShips();
   ctx.snap = null; lastStep = -1; wanted = -1; inFlight = false; events = []; history = null; fc = null;
   ticker.clear(); tickFrom = 0;
   eraBanner.reset(); calendar.reset();
@@ -1044,7 +1085,7 @@ function loop(now: number): void {
   if (flight) stepFlight(dt);
   else {
     // wheel-in target drifts to the thing under the cursor
-    const at = pull ? views[level].locate(ctx, pull) : null;
+    const at = pull ? locateRef(views[level], pull) : null;
     if (at) controls.target.lerp(at, 1 - Math.exp(-dt * 6));
     controls.update();
   }
@@ -1052,6 +1093,7 @@ function loop(now: number): void {
   sky.position.copy(camera.position);
   eraMood.frame(dt, ctx.t, camera.aspect);
   composer.render();
+  hover(now);
   if (frame++ % 2 === 0) drawLabels();
   drawRing();
   requestAnimationFrame(loop);

@@ -329,3 +329,15 @@ input.tl-big:focus { outline: none; border-bottom-color: var(--accent); }
 .q-count { color: var(--quiet); }
 .data-chart { width: 100%; height: 12rem; display: block; border-top: 1px solid var(--faint); border-bottom: 1px solid var(--faint); }
 .data [hidden] { display: none !important; }
+
+/* explain cards: any dot, sprite or line, what it is and where each fact comes from */
+.ex-card .lede { font-size: 0.875rem; line-height: 1.5; }
+.ex-facts { grid-template-columns: minmax(0, 1fr) auto; margin-bottom: 0.7rem; }
+.ex-facts dd { text-align: right; font-variant-numeric: tabular-nums; max-width: 13rem; overflow-wrap: anywhere; }
+.ex-tag { display: inline-block; margin-left: 0.4em; font-family: var(--mono); font-size: 0.58rem; line-height: 1; vertical-align: 0.15em; color: var(--quiet); text-decoration: none; letter-spacing: 0; cursor: help; }
+.ex-tag.ex-R { color: var(--ink); }
+.ex-tag.ex-P { font-style: italic; }
+.ex-why { font-size: 0.8125rem; line-height: 1.5; font-style: italic; margin: 0.6rem 0; padding-top: 0.6rem; border-top: 1px solid var(--faint); }
+.ex-story { font-size: 0.8125rem; line-height: 1.5; margin: 0.4rem 0; }
+.ex-key { font-size: 0.66rem; margin: 0.6rem 0 0; }
+.ex-key .ex-tag { margin: 0 0.15em 0 0; }

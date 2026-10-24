@@ -18,6 +18,14 @@ import { Orbitals, StarWorks, tierRank } from './orbitals.ts';
 import { BEAM, SCOOP, shipStyle } from './shipStyles.ts';
 import { REDUCED_MOTION, applyPlanetLook } from './timeLook.ts';
 import { STAGE_COLORS, flareTex, galaxySpriteTex, glowTex, pointsMaterial, specColor } from './textures.ts';
+import { explainGalaxy } from '../explain/galaxy.ts';
+import { addCpuSet, addGpuSet, nearestPoint, pxPerUnit } from '../explain/picker.ts';
+import { pointWorld, registerExplainer } from '../explain/registry.ts';
+import { explainShips, shipId } from '../explain/ships.ts';
+import { explainSky, type Observer } from '../explain/sky.ts';
+import { explainBackground } from '../explain/universe.ts';
+import { explainBelt, type BeltInfo, explainElevators, explainOrbits, explainRings, explainSats, explainSwarm } from '../explain/worlds.ts';
+import { explainLocalRings } from '../explain/local.ts';
 
 export type Level = 'universe' | 'galaxy' | 'local' | 'system' | 'planet' | 'street';
 export const LEVELS: Level[] = ['universe', 'galaxy', 'local', 'system', 'planet', 'street'];
@@ -37,11 +45,11 @@ export interface Ctx {
   colorBy: ColorMode;
 }
 
-export type PickKind = 'galaxy' | 'system' | 'body' | 'city' | 'humanspace' | 'person';
-/** `weight` (px) lets important things win near-ties when picking */
-export interface Pickable { pos: THREE.Vector3; kind: PickKind; id: number; name: string; weight?: number; r?: number }
+export type PickKind = 'galaxy' | 'system' | 'body' | 'city' | 'humanspace' | 'person' | 'thing';
+/** `weight` (px) lets important things win near-ties when picking. A 'thing' is anything else drawn, explained by kind `ex` (src/explain). */
+export interface Pickable { pos: THREE.Vector3; kind: PickKind; id: number; name: string; weight?: number; r?: number; ex?: string }
 /** Enough to find a thing again in any view. */
-export interface Ref { kind: PickKind; id: number; name?: string }
+export interface Ref { kind: PickKind; id: number; name?: string; ex?: string }
 /** Higher `prio` labels win when two would overlap on screen. */
 export interface Label { pos: THREE.Vector3; text: string; sub?: string; strong?: boolean; ref?: Ref; prio?: number }
 
@@ -159,6 +167,9 @@ class Trails {
   heads: ReturnType<typeof pointCloud>;
   private pos: Float32Array; private col: Float32Array;
   private ns = 0; private nh = 0;
+  // which ship each segment and head belongs to, and where each ship's head is, for picking
+  private headIds: number[] = []; private segIds: number[] = [];
+  private at = new Map<number, THREE.Vector3>(); private pool: THREE.Vector3[] = [];
   constructor(private maxSeg: number, private maxHeads: number, headPx = 2) {
     const g = new THREE.BufferGeometry();
     this.pos = new Float32Array(maxSeg * 6); this.col = new Float32Array(maxSeg * 6);
@@ -169,15 +180,22 @@ class Trails {
     this.heads = pointCloud(maxHeads, pointsMaterial({ minPx: headPx }));
   }
   addTo(g: THREE.Group): void { g.add(this.lines, this.heads.pts); }
-  begin(): void { this.ns = 0; this.nh = 0; }
-  seg(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Color, ka: number, kb: number): void {
+  begin(): void { this.ns = 0; this.nh = 0; this.headIds.length = 0; this.segIds.length = 0; this.at.clear(); }
+  /** make heads and routes pickable as ships under `kind` */
+  explain(kind: string): void {
+    explainShips(kind, { heads: this.heads.pts, headIds: this.headIds, lines: this.lines, segIds: this.segIds, segCount: () => this.ns, at: this.at });
+  }
+  seg(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Color, ka: number, kb: number, ship = -1): void {
     if (this.ns >= this.maxSeg) return;
+    this.segIds[this.ns] = ship;
     this.pos.set([a.x, a.y, a.z, b.x, b.y, b.z], this.ns * 6);
     this.col.set([c.r * ka, c.g * ka, c.b * ka, c.r * kb, c.g * kb, c.b * kb], this.ns * 6);
     this.ns++;
   }
-  head(p: THREE.Vector3, c: THREE.Color, size: number): void {
+  head(p: THREE.Vector3, c: THREE.Color, size: number, ship = -1): void {
     if (this.nh >= this.maxHeads) return;
+    this.headIds[this.nh] = ship;
+    if (ship >= 0 && !this.at.has(ship)) this.at.set(ship, (this.pool[this.at.size] ??= new THREE.Vector3()).copy(p));
     this.heads.pos.set([p.x, p.y, p.z], this.nh * 3);
     this.heads.col.set([c.r, c.g, c.b], this.nh * 3);
     this.heads.size[this.nh++] = size;
@@ -197,22 +215,26 @@ const WHITE = new THREE.Color(1, 1, 1);
 const tmpC2 = new THREE.Color();
 
 /** Distant stars with a Milky Way band; follows the camera. */
-export function makeSky(seed = 7, count = 9000): THREE.Group {
+export function makeSky(seed = 7, count = 9000, kind?: string, observer?: () => Observer): THREE.Group {
   const r = new Rng(seed);
   const { pts, pos, col, size } = pointCloud(count, pointsMaterial({ attenuate: false, minPx: 0.5 }));
+  const cls = new Uint8Array(count), bri = new Float32Array(count);
   for (let i = 0; i < count; i++) {
     let lon = r.range(0, Math.PI * 2), lat: number;
     if (r.next() < 0.55) lat = r.gauss() * 0.12 * (1 + 0.6 * Math.cos(lon)); else lat = Math.asin(r.range(-1, 1));
     if (r.next() < 0.12) { lon = r.gauss() * 0.35; lat = r.gauss() * 0.15; } // galactic bulge toward +x
     const R = 1;
     pos[i * 3] = R * Math.cos(lat) * Math.cos(lon); pos[i * 3 + 1] = R * Math.sin(lat); pos[i * 3 + 2] = -R * Math.cos(lat) * Math.sin(lon);
-    tmpC.copy(specColor(r.pick(['M', 'K', 'K', 'G', 'F', 'A', 'B']))).multiplyScalar(0.25 + Math.pow(r.next(), 4) * 0.9);
+    const letter = r.pick(['M', 'K', 'K', 'G', 'F', 'A', 'B']), b = 0.25 + Math.pow(r.next(), 4) * 0.9;
+    tmpC.copy(specColor(letter)).multiplyScalar(b);
+    cls[i] = 'OBAFGKM'.indexOf(letter); bri[i] = b;
     col[i * 3] = tmpC.r; col[i * 3 + 1] = tmpC.g; col[i * 3 + 2] = tmpC.b;
     size[i] = 0.8 + Math.pow(r.next(), 6) * 2.6;
   }
   const g = new THREE.Group();
   pts.scale.setScalar(5e5);
   g.add(pts);
+  if (kind) explainSky(kind, { pts, cls, bri, seed }, observer ?? (() => ({ name: 'the Sun', x: 0, y: 0, z: 0, sol: true })));
   return g;
 }
 
@@ -225,10 +247,10 @@ export class UniverseView implements View {
   private centres: { name: string; pos: THREE.Vector3; glow: THREE.Sprite }[] = [];
   private colonies = new Map<string, number>();
 
-  constructor() {
+  constructor(world?: World) {
     const U = 1 / 10000; // 1 unit = 10,000 ly
     const G = 3; // galaxies drawn at three times true size so the Local Group reads as a map
-    for (const gal of GALAXIES) {
+    for (const [gi, gal] of GALAXIES.entries()) {
       const [x, y, z] = gal.name === 'Milky Way' ? GALACTIC_CENTRE : galToXYZ(gal.l, gal.b, gal.dist);
       const pos = toScene(x, y, z, U, GALACTIC_CENTRE[0] * 0 + 0).sub(toScene(GALACTIC_CENTRE[0], 0, 0, U));
       let obj: THREE.Object3D;
@@ -244,6 +266,18 @@ export class UniverseView implements View {
       }
       obj.position.copy(pos);
       this.group.add(obj);
+      if (world) {
+        // every particle is a star of that galaxy; pickable once the galaxy fills a good part of the view
+        const centre = gal.name === 'Milky Way' ? GALACTIC_CENTRE : galToXYZ(gal.l, gal.b, gal.dist);
+        const R = gal.radius * U * G, at = pos.clone();
+        const real = ({ 'Milky Way': 2.5e11, Andromeda: 1e12, Triangulum: 4e10, 'Large Magellanic Cloud': 3e10, 'Small Magellanic Cloud': 3e9 } as Record<string, number>)[gal.name] ?? 1e10;
+        const data = obj.userData.galaxy;
+        explainGalaxy(world, {
+          key: `u${gi}`, seed: 100 + gi, name: gal.name, data, obj, scaleLy: 1 / (U * G), centre: [centre[0], centre[1], centre[2]],
+          starsPer: real / data.stars.geometry.attributes.position.count,
+          enabled: (p) => R * pxPerUnit(p, p.camera.position.distanceTo(at)) > 140,
+        });
+      }
       const glow = glowSprite(0x7fe3ff, gal.radius * U * G * 2.2, 0);
       glow.position.copy(pos);
       this.group.add(glow);
@@ -252,16 +286,20 @@ export class UniverseView implements View {
     // background galaxies along a few cosmic-web filaments
     const r = new Rng(99);
     const texes = Array.from({ length: 8 }, (_, i) => galaxySpriteTex(i + 1));
+    const bg: THREE.Sprite[] = [], bgTex: number[] = [];
     const nodes = Array.from({ length: 14 }, () => new THREE.Vector3(r.gauss(), r.gauss() * 0.6, r.gauss()).multiplyScalar(1600));
     for (let i = 0; i < 520; i++) {
       const a = r.pick(nodes), b = r.pick(nodes), t = r.next();
       const p = a.clone().lerp(b, t).add(new THREE.Vector3(r.gauss(), r.gauss(), r.gauss()).multiplyScalar(90));
       if (p.length() < 400) p.setLength(400 + r.next() * 300);
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: r.pick(texes), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.5 + r.next() * 0.5, rotation: r.range(0, 6.28) }));
+      const tex = r.pick(texes);
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.5 + r.next() * 0.5, rotation: r.range(0, 6.28) }));
       s.position.copy(p);
       s.scale.setScalar(6 + Math.pow(r.next(), 3) * 30);
       this.group.add(s);
+      bg.push(s); bgTex.push(texes.indexOf(tex) + 1);
     }
+    explainBackground(this.group, bg, bgTex);
   }
 
   enter(ctx: Ctx): void {
@@ -330,7 +368,9 @@ export class GalaxyView implements View {
   private glow: THREE.Sprite;
 
   constructor(world: World) {
-    this.group.add(makeGalaxy({ seed: 2040, count: 420000, radius: 500, arms: 4, pitch: 12, bar: 0.22, thickness: 0.018, sizeScale: 2.1, brightness: 1, dust: 0.3 }));
+    const mw = makeGalaxy({ seed: 2040, count: 420000, radius: 500, arms: 4, pitch: 12, bar: 0.22, thickness: 0.018, sizeScale: 2.1, brightness: 1, dust: 0.3 });
+    this.group.add(mw);
+    explainGalaxy(world, { key: 'g', seed: 1, name: 'Milky Way', data: mw.userData.galaxy, obj: mw, scaleLy: 100, centre: [GALACTIC_CENTRE[0], 0, 0], starsPer: 2.5e11 / 420000 });
     this.sol = toScene(0, 0, 0, this.U, GALACTIC_CENTRE[0]);
     this.sol.y = 0;
     this.bubble = glowSprite(0x7fe3ff, 6, 0.5, glowTex);
@@ -357,10 +397,19 @@ export class GalaxyView implements View {
       this.near.pos.set([p.x, p.y, p.z], i * 3);
     });
     this.group.add(this.near.pts);
+    // a settled nearby system drawn at galaxy scale is that system
+    registerExplainer('neargal', {
+      obj: this.near.pts, explain: () => ({ eyebrow: '', title: '', lede: '', facts: [] }),
+      name: (i, c) => c.world.systems[this.nearIds[i]].name,
+      locate: (i, out) => pointWorld(this.near.pts, i, out),
+      selectAs: (i, c) => ({ kind: 'system', id: this.nearIds[i], name: c.world.systems[this.nearIds[i]].name }),
+    });
+    addGpuSet({ kind: 'neargal', points: this.near.pts, prio: 6, minLum: 0.02, pickPx: 6 });
     this.glow = glowSprite(0x7fe3ff, 8, 0);
     this.glow.position.copy(this.sol);
     this.group.add(this.glow);
     this.trails.addTo(this.group);
+    this.trails.explain('shipg');
   }
 
   enter(ctx: Ctx): void {
@@ -418,19 +467,19 @@ export class GalaxyView implements View {
       const f = Math.min(1, Math.max(0, (ctx.year - sh.depart) / Math.max(0.1, sh.arrive - sh.depart)));
       const st = shipStyle(ctx.snap, sh), c = st.trail;
       const lift = sh.kind === 1 ? pa.distanceTo(pb) * 0.18 : 0;
-      const N = sh.kind === 1 ? 32 : 1;
+      const N = sh.kind === 1 ? 32 : 1, id = shipId(sh);
       const at = (u: number, out: THREE.Vector3) => out.lerpVectors(pa, pb, u).setY(out.y + lift * 4 * u * (1 - u));
       for (let k = 0; k < N; k++) {
         const u0 = k / N, u1 = (k + 1) / N;
         // brighter just behind the ship, faint ahead of it
         const w0 = u0 <= f ? 0.15 + 0.6 * Math.pow(u0 / Math.max(f, 1e-3), 3) : 0.07, w1 = u1 <= f ? 0.15 + 0.6 * Math.pow(u1 / Math.max(f, 1e-3), 3) : 0.07;
-        t.seg(at(u0, tv1), at(u1, tv2), c, w0, w1);
+        t.seg(at(u0, tv1), at(u1, tv2), c, w0, w1, id);
       }
       at(f, tv3);
-      if (st.plume > 0 && sh.kind !== 1) t.seg(at(Math.max(0, f - 0.04), tv1), tv3, st.head, 0, st.plume);
-      if (st.beam) t.seg(pa, tv3, BEAM, 0.35, 0.08);
-      if (st.scoop) t.head(tv3, SCOOP, 6);
-      t.head(tv3, st.head, sh.kind === 1 ? 5 + Math.sin(ctx.t * 5) : 2.5 * st.headSize);
+      if (st.plume > 0 && sh.kind !== 1) t.seg(at(Math.max(0, f - 0.04), tv1), tv3, st.head, 0, st.plume, id);
+      if (st.beam) t.seg(pa, tv3, BEAM, 0.35, 0.08, id);
+      if (st.scoop) t.head(tv3, SCOOP, 6, id);
+      t.head(tv3, st.head, sh.kind === 1 ? 5 + Math.sin(ctx.t * 5) : 2.5 * st.headSize, id);
     }
     t.end();
   }
@@ -461,7 +510,7 @@ export class GalaxyView implements View {
   labels(): Label[] {
     return [
       { pos: this.sol, text: 'Human space', sub: this.reach > 0 ? `${fmtNum(this.reach)} ly across the dark` : 'one star system', strong: true, ref: { kind: 'humanspace', id: 0 }, prio: 10 },
-      { pos: new THREE.Vector3(0, 18, 0), text: 'Sagittarius A*', sub: '26,000 ly' },
+      { pos: new THREE.Vector3(0, 18, 0), text: 'Sagittarius A*', sub: '26,000 ly', ref: { kind: 'thing', id: 0, ex: 'coreg', name: 'Sagittarius A*' } },
     ];
   }
 }
@@ -481,6 +530,9 @@ export class LocalView implements View {
   private sums: SystemSum[] = [];
   private ranked: Label[] = [];
   private rankedFor: SystemSum[] | null = null;
+  private shipIds: number[] = [];      // ship id per line segment
+  private shipHeadIds: number[] = [];  // ship id per head point
+  private shipAt = new Map<number, THREE.Vector3>();
 
   constructor(world: World) {
     this.ids = world.systems.filter((s) => s.region === 'local' || s.region === 'sol').map((s) => s.id);
@@ -498,10 +550,13 @@ export class LocalView implements View {
     });
     this.group.add(this.stars.pts);
     // distance rings in the galactic plane
+    const rings = new THREE.Group();
+    this.group.add(rings);
+    explainLocalRings('lring', rings, [10, 50, 100, 250, 500, 900]);
     for (const R of [10, 50, 100, 250, 500, 900]) {
       const ring = new THREE.Mesh(new THREE.RingGeometry(R * 0.998, R, 160), new THREE.MeshBasicMaterial({ color: 0x9aa4b4, transparent: true, opacity: 0.07, side: THREE.DoubleSide, depthWrite: false }));
       ring.rotation.x = -Math.PI / 2;
-      this.group.add(ring);
+      rings.add(ring);
     }
     const lg = new THREE.BufferGeometry();
     lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(4096 * 6), 3));
@@ -511,6 +566,7 @@ export class LocalView implements View {
     this.group.add(this.shipLines);
     this.shipHeads = pointCloud(4096, pointsMaterial({ minPx: 2 }));
     this.group.add(this.shipHeads.pts);
+    explainShips('shipl', { heads: this.shipHeads.pts, headIds: this.shipHeadIds, lines: this.shipLines, segIds: this.shipIds, segCount: () => this.shipIds.length, at: this.shipAt });
     const sun = glowSprite(0xfff1d6, 1.6, 1, flareTex);
     this.group.add(sun);
   }
@@ -549,35 +605,44 @@ export class LocalView implements View {
     const pos = this.shipLines.geometry.attributes.position.array as Float32Array;
     const col = this.shipLines.geometry.attributes.color.array as Float32Array;
     let n = 0;
+    this.shipIds.length = 0; this.shipHeadIds.length = 0;
+    if (this.shipAt.size > 8192) this.shipAt.clear();
     if (snap) {
       let h = 0;
       for (const sh of snap.ships) {
         if (n >= 4093 || h >= 4094 || sh.kind === 1) continue;
+        const id = shipId(sh);
         const a = ctx.world.systems[ctx.world.bodies[sh.from].system], b = ctx.world.systems[ctx.world.bodies[sh.to].system];
         const pa = toScene(a.x, a.y, a.z), pb = toScene(b.x, b.y, b.z);
         // route and ship look follow the drive known when it left; generation ships trail amber
         const st = shipStyle(snap, sh), tc = st.trail, hc = st.head;
         pos.set([pa.x, pa.y, pa.z, pb.x, pb.y, pb.z], n * 6);
         col.set([tc.r * 0.2, tc.g * 0.2, tc.b * 0.2, tc.r * 0.8, tc.g * 0.8, tc.b * 0.8], n * 6);
+        this.shipIds[n] = id;
         n++;
         const f = Math.min(1, Math.max(0, (ctx.year - sh.depart) / (sh.arrive - sh.depart)));
         const hp = tv3.lerpVectors(pa, pb, f);
+        (this.shipAt.get(id) ?? this.shipAt.set(id, new THREE.Vector3()).get(id)!).copy(hp);
         if (st.plume > 0) {
           const tail = tv1.lerpVectors(pa, pb, Math.max(0, f - 0.12));
           pos.set([tail.x, tail.y, tail.z, hp.x, hp.y, hp.z], n * 6);
           col.set([0, 0, 0, hc.r * 2 * st.plume, hc.g * 2 * st.plume, hc.b * 2 * st.plume], n * 6);
+          this.shipIds[n] = id;
           n++;
         }
         if (st.beam) {
           pos.set([pa.x, pa.y, pa.z, hp.x, hp.y, hp.z], n * 6);
           col.set([BEAM.r * 1.6, BEAM.g * 1.6, BEAM.b * 1.6, BEAM.r * 0.3, BEAM.g * 0.3, BEAM.b * 0.3], n * 6);
+          this.shipIds[n] = id;
           n++;
         }
         if (st.scoop) {
+          this.shipHeadIds[h] = id;
           this.shipHeads.pos.set([hp.x, hp.y, hp.z], h * 3);
           this.shipHeads.col.set([SCOOP.r * 0.5, SCOOP.g * 0.5, SCOOP.b * 0.5], h * 3);
           this.shipHeads.size[h++] = 5;
         }
+        this.shipHeadIds[h] = id;
         this.shipHeads.pos.set([hp.x, hp.y, hp.z], h * 3);
         this.shipHeads.col.set([hc.r, hc.g, hc.b], h * 3);
         this.shipHeads.size[h++] = (1.6 + 0.4 * Math.sin(ctx.t * 4 + n)) * st.headSize;
@@ -635,6 +700,9 @@ export class LocalView implements View {
 
 interface BodyVis { id: number; mesh: THREE.Mesh; orbitR: number; parent: number; phase: number; marker: THREE.Sprite; visR: number }
 
+// real orbital ranges of the main-belt families the named asteroids belong to, AU
+const SOL_FAMILY: Record<string, [number, number]> = { Vesta: [2.26, 2.48], Psyche: [2.85, 3.0], Hygiea: [3.06, 3.24] };
+
 const hazeOf = (b: Body) => (b.name === 'Titan' || b.name === 'Venus' ? 1 : 0);
 
 export function bodyVisRadius(b: Body): number {
@@ -653,6 +721,8 @@ export class SystemView implements View {
   private works = new StarWorks();
   private trails = new Trails(512, 512, 1.8);
   private edge = 60;
+  private rings: { mesh: THREE.Mesh; body: number }[] = [];
+  private belts = 0;
 
   enter(ctx: Ctx): void {
     this.build(ctx);
@@ -666,7 +736,7 @@ export class SystemView implements View {
     if (this.builtFor === ctx.system) return;
     this.builtFor = ctx.system;
     this.group.clear();
-    this.vis = [];
+    this.vis = []; this.rings = []; this.belts = 0;
     const sys = ctx.world.systems[ctx.system];
     // star
     this.star = new THREE.Group();
@@ -679,7 +749,7 @@ export class SystemView implements View {
     this.star.add(glowSprite(sc.getHex(), lumR * 26, 0.35, flareTex));
     this.group.add(this.star);
     this.works.reset();
-    this.group.add(makeSky(sys.id + 3));
+    this.group.add(makeSky(sys.id + 3, 9000, 'skys', () => ({ name: sys.name, x: sys.x, y: sys.y, z: sys.z, sol: sys.id === 0 })));
 
     const planets = sys.bodies.map((id) => ctx.world.bodies[id]).filter((b) => b.parent < 0).sort((a, b) => a.a - b.a);
     const a0 = planets[0]?.a ?? 1;
@@ -689,7 +759,10 @@ export class SystemView implements View {
       const orbit = new THREE.Mesh(new THREE.RingGeometry(orbitR - 0.02, orbitR + 0.02, 256), new THREE.MeshBasicMaterial({ color: 0x9aa4b4, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }));
       orbit.rotation.x = -Math.PI / 2;
       this.group.add(orbit);
-      if (b.kind === 'asteroid' && b.a > 0) this.addBelt(orbitR, b.id);
+      if (b.kind === 'asteroid' && b.a > 0) {
+        const fam = SOL_FAMILY[b.name];
+        this.addBelt(ctx.world, orbitR, b.id, { sys: sys.id, members: [b.id], label: sys.id === 0 ? `${b.name} family of the main belt` : `belt of ${b.name}`, au: fam ?? [+(b.a * 0.92).toFixed(2), +(b.a * 1.08).toFixed(2)], icy: b.temp < 120, count: sys.id === 0 ? 15000 : 1e5 });
+      }
     });
     // moons
     const moonsOf = new Map<number, Body[]>();
@@ -698,13 +771,20 @@ export class SystemView implements View {
       const pv = this.vis.find((v) => v.id === p)!;
       ms.sort((a, b) => a.a - b.a).forEach((m, j) => this.addBody(ctx, m, pv.visR * 1.8 + 0.8 + j * 0.9, p, j));
     }
-    if (sys.id === 0) { this.addBelt(this.vis.find((v) => ctx.world.bodies[v.id].name === 'Ceres')!.orbitR, 1, 2600); this.addBelt(this.vis.find((v) => ctx.world.bodies[v.id].name === 'Pluto')!.orbitR, 2, 3500, 5); }
+    if (sys.id === 0) {
+      const id = (n: string) => ctx.world.bodies.findIndex((b) => b.name === n && b.system === 0);
+      this.addBelt(ctx.world, this.vis.find((v) => ctx.world.bodies[v.id].name === 'Ceres')!.orbitR, 1, { sys: 0, members: ['Ceres', 'Vesta', 'Psyche', 'Hygiea'].map(id), label: 'main belt', au: [2.1, 3.3], icy: false, count: 1.2e6 }, 2600);
+      this.addBelt(ctx.world, this.vis.find((v) => ctx.world.bodies[v.id].name === 'Pluto')!.orbitR, 2, { sys: 0, members: ['Pluto', 'Haumea', 'Eris'].map(id), label: 'Kuiper belt', au: [30, 50], icy: true, count: 1e5 }, 3500, 5);
+    }
+    explainOrbits('orbit', this.group, () => this.vis.filter((v) => v.parent < 0).map((v) => ({ body: v.id, r: v.orbitR })), () => this.builtFor);
+    explainRings('pring', this.group, () => this.rings);
     this.swarm = null;
     this.edge = Math.max(40, ...this.vis.map((v) => v.orbitR)) * 1.35;
     this.trails.addTo(this.group);
+    this.trails.explain('shipy');
   }
 
-  private addBelt(R: number, seed: number, n = 1600, width = 2.2): void {
+  private addBelt(world: World, R: number, seed: number, info: Omit<BeltInfo, 'centreR' | 'width'>, n = 1600, width = 2.2): void {
     const r = new Rng(seed * 17);
     const { pts, pos, col, size } = pointCloud(n, pointsMaterial({ minPx: 0.6 }));
     for (let i = 0; i < n; i++) {
@@ -715,6 +795,7 @@ export class SystemView implements View {
       size[i] = 0.25 + r.next() * 0.4;
     }
     this.group.add(pts);
+    explainBelt(`belt${this.belts++}`, pts, { ...info, centreR: R, width }, world);
   }
 
   private addBody(ctx: Ctx, b: Body, orbitR: number, parent: number, i: number): void {
@@ -726,6 +807,7 @@ export class SystemView implements View {
       const ring = new THREE.Mesh(new THREE.RingGeometry(visR * 1.35, visR * 2.3, 96), new THREE.MeshBasicMaterial({ color: 0xd8c39a, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }));
       ring.rotation.x = -Math.PI / 2 + 0.45;
       mesh.add(ring);
+      this.rings.push({ mesh: ring, body: b.id });
     }
     if (b.kind === 'ocean' || b.kind === 'gas' || b.kind === 'icegiant' || b.name === 'Titan' || b.name === 'Venus') {
       const atm = new THREE.Mesh(new THREE.SphereGeometry(visR * 1.12, 48, 32), atmosphereMaterial(b.kind === 'ocean' ? 0x5aa0ff : b.color));
@@ -762,6 +844,7 @@ export class SystemView implements View {
         this.swarm.size[i] = 0.12 + r.next() * 0.2;
       }
       this.group.add(this.swarm.pts);
+      explainSwarm('swarm', this.swarm.pts, ctx.system, ctx.world);
     } else if (!mega && this.swarm) { this.group.remove(this.swarm.pts); this.swarm = null; }
     this.works.sync(this.star, this.starR, top);
     if (this.swarm) this.swarm.pts.visible = !this.works.brain;
@@ -809,13 +892,13 @@ export class SystemView implements View {
       dir.normalize();
       const body = v.mesh.position, far = tv1.copy(dir).multiplyScalar(Math.min(this.edge * 0.5, 22)).add(body);
       const a = out ? body : far, b = out ? far : body;
-      const st = shipStyle(ctx.snap, sh), c = st.trail;
-      t.seg(a, b, c, out ? 0.22 : 0, out ? 0 : 0.22);
-      if (st.beam && out) t.seg(a, b, BEAM, 0.5, 0.1);
+      const st = shipStyle(ctx.snap, sh), c = st.trail, id = shipId(sh);
+      t.seg(a, b, c, out ? 0.22 : 0, out ? 0 : 0.22, id);
+      if (st.beam && out) t.seg(a, b, BEAM, 0.5, 0.1, id);
       for (let k = 0; k < 3; k++) {
         const u = (ctx.t * 0.06 * st.speed + k / 3 + hash01(i, 3)) % 1;
         const fade = out ? 1 - u : u;
-        t.head(tv2.lerpVectors(a, b, u), tmpC.copy(k === 0 ? st.head : c).multiplyScalar(0.2 + 0.6 * fade), (0.4 + 0.7 * fade) * st.headSize);
+        t.head(tv2.lerpVectors(a, b, u), tmpC.copy(k === 0 ? st.head : c).multiplyScalar(0.2 + 0.6 * fade), (0.4 + 0.7 * fade) * st.headSize, id);
       }
       i++;
     }
@@ -823,7 +906,8 @@ export class SystemView implements View {
   }
 
   pickables(ctx: Ctx): Pickable[] {
-    return this.vis.map((v) => ({ pos: v.mesh.position.clone(), kind: 'body' as const, id: v.id, name: ctx.world.bodies[v.id].name, weight: alive(stageOf(ctx.snap, v.id)) ? 6 : v.parent < 0 ? 3 : 0 }));
+    const star: Pickable = { pos: new THREE.Vector3(), kind: 'system', id: this.builtFor, name: ctx.world.systems[this.builtFor].name, weight: 2, r: this.starR };
+    return [star, ...this.vis.map((v) => ({ pos: v.mesh.position.clone(), kind: 'body' as const, id: v.id, name: ctx.world.bodies[v.id].name, weight: alive(stageOf(ctx.snap, v.id)) ? 6 : v.parent < 0 ? 3 : 0 }))];
   }
 
   locate(ctx: Ctx, r: Ref): THREE.Vector3 | null {
@@ -878,6 +962,7 @@ export class PlanetView implements View {
   private elevSince = -1;
   private cityKey = ''; private satKey = -1; private elevKey = -1; private archKey = '';
   private arch: THREE.InstancedMesh | null = null;
+  private prings: { mesh: THREE.Mesh; body: number }[] = [];
 
   enter(ctx: Ctx): void {
     this.build(ctx);
@@ -906,14 +991,25 @@ export class PlanetView implements View {
       const ring = new THREE.Mesh(new THREE.RingGeometry(R * 1.35, R * 2.3, 160), new THREE.MeshBasicMaterial({ color: 0xd8c39a, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }));
       ring.rotation.x = -Math.PI / 2 + 0.3;
       this.pivot.add(ring);
-    }
+      this.prings = [{ mesh: ring, body: b.id }];
+    } else this.prings = [];
+    explainRings('pringp', this.group, () => this.prings);
     this.group.add(this.pivot);
-    this.group.add(makeSky(b.id));
+    const home = ctx.world.systems[b.system];
+    this.group.add(makeSky(b.id, 9000, 'skyp', () => ({ name: b.name, x: home.x, y: home.y, z: home.z, sol: home.id === 0 })));
     const sys = ctx.world.systems[b.system];
     const sun = (this.sun = glowSprite(specColor(sys.spec).getHex(), 60, 0.9, flareTex));
     this.starCol.copy(specColor(sys.spec));
     sun.position.set(400, 80, 120);
     this.group.add(sun);
+    // the star in this world's sky is its system
+    registerExplainer('sunp', {
+      obj: sun, explain: () => ({ eyebrow: '', title: '', lede: '', facts: [] }),
+      name: () => `${sys.name}, the star ${b.name} circles`,
+      locate: (_i, out) => sun.getWorldPosition(out),
+      selectAs: () => ({ kind: 'system', id: sys.id, name: sys.name }),
+    });
+    addCpuSet({ kind: 'sunp', obj: sun, prio: 3, hit: (p) => nearestPoint(1, (_i, out) => sun.getWorldPosition(out), p, () => 26) });
     mat.uniforms.uSun.value.copy(sun.position).normalize();
     // habitats and the ring world are lit by the star; the planet itself uses its own shader
     const light = new THREE.DirectionalLight(specColor(sys.spec), 2.4);
@@ -921,6 +1017,7 @@ export class PlanetView implements View {
     this.group.add(light, new THREE.AmbientLight(0x404a5a, 0.35));
     this.orbit = new THREE.Group();
     this.group.add(this.orbit);
+    explainElevators('elev', this.pivot, () => this.elevators, () => this.builtFor);
     this.cities = null; this.works.reset(); this.sats = null; this.elevators = [];
     this.cityKey = ''; this.satKey = -1; this.elevKey = -1; this.archKey = ''; this.arch = null;
   }
@@ -1003,6 +1100,7 @@ export class PlanetView implements View {
         }
         dirty(this.sats.pts);
         this.orbit.add(this.sats.pts);
+        explainSats('sat', this.sats.pts, () => this.builtFor);
       }
     }
     // space elevators once the tech exists: tether from the equator to a counterweight past synchronous orbit
@@ -1072,7 +1170,7 @@ export class PlanetView implements View {
     const out: Label[] = [];
     if (this.elevators[0]) {
       const top = (this.elevators[0].children[1] as THREE.Sprite).position.clone().applyMatrix4(this.pivot.matrixWorld);
-      out.push({ pos: top, text: this.elevators.length > 1 ? `${this.elevators.length} space elevators` : 'Space elevator', sub: `since ${Math.round(2040 + this.elevSince)}`, prio: 4 });
+      out.push({ pos: top, text: this.elevators.length > 1 ? `${this.elevators.length} space elevators` : 'Space elevator', sub: `since ${Math.round(2040 + this.elevSince)}`, prio: 4, ref: { kind: 'thing', id: 0, ex: 'elev', name: 'Space elevator' } });
     }
     out.push({ pos: new THREE.Vector3(0, 11.5, 0), text: b.name, sub: alive(st) ? `${STAGE_NAMES[st]} · ${fmtNum(popOf(ctx.snap, ctx.body))} people` : st >= 0 ? STAGE_NAMES[st] : 'never settled', strong: true, ref: { kind: 'body', id: ctx.body }, prio: 10 });
     return out;
