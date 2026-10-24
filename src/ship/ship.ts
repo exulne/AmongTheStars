@@ -39,7 +39,7 @@ function plumeMaterial(): THREE.ShaderMaterial {
         float along = vUv.y;                       // 1 at nozzle, 0 at tip
         float flick = 0.75 + 0.25 * sin(uTime * 60.0 + along * 30.0) * sin(uTime * 37.0);
         float core = pow(along, 2.2);
-        vec3 c = mix(uColor, vec3(1.0), core * 0.8) * (core * 2.4 + 0.25) * flick * uPower;
+        vec3 c = mix(uColor, vec3(1.0), core * 0.6) * (core * 1.3 + 0.18) * flick * uPower;
         gl_FragColor = vec4(c, 1.0);
       }`,
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
@@ -66,7 +66,7 @@ function tunnelMaterial(): THREE.ShaderMaterial {
         vec2 p = vec2(vUv.x * 24.0, vUv.y * 6.0 - uTime * uSpeed);
         float n = n2(p) * 0.55 + n2(p * 2.3 + 7.0) * 0.3 + n2(p * 5.1) * 0.15;
         float streak = pow(n2(vec2(vUv.x * 90.0, vUv.y * 1.5 - uTime * uSpeed * 2.0)), 6.0);
-        vec3 c = mix(uA, uB, n) * (0.15 + n * 0.6) * smoothstep(0.25, 0.75, n) + vec3(0.8, 0.9, 1.0) * streak;
+        vec3 c = mix(uA, uB, n) * (0.12 + n * 0.45) * smoothstep(0.25, 0.75, n) + vec3(0.7, 0.82, 1.0) * streak * 0.45;
         float ends = smoothstep(0.0, 0.25, vUv.y) * smoothstep(1.0, 0.75, vUv.y);
         gl_FragColor = vec4(c * uAmt * ends, 1.0);
       }`,
@@ -92,7 +92,7 @@ function bubbleMaterial(): THREE.ShaderMaterial {
         #include <logdepthbuf_fragment>
         float rim = pow(1.0 - abs(dot(normalize(vN), vV)), 2.0);
         float hex = abs(sin(vP.x * 2.0 + uTime * 3.0) * sin(vP.y * 2.0 - uTime * 2.0) * sin(vP.z * 2.0 + uTime));
-        float i = (rim * 1.2 + smoothstep(0.85, 1.0, hex) * 0.5) * uAmt;
+        float i = (rim * 0.7 + smoothstep(0.85, 1.0, hex) * 0.3) * uAmt;
         gl_FragColor = vec4(uColor * i, 1.0);
       }`,
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
@@ -140,7 +140,7 @@ export class Ship {
     for (let i = 0; i < STREAKS; i++) {
       const a = Math.random() * Math.PI * 2, r = 3 + Math.pow(Math.random(), 0.6) * 70;
       this.streakSeed.set([Math.cos(a) * r, Math.sin(a) * r, (Math.random() - 0.5) * 600], i * 3);
-      const c = new THREE.Color().setHSL(0.58 + Math.random() * 0.12, 0.6, 0.6 + Math.random() * 0.3);
+      const c = new THREE.Color().setHSL(0.58 + Math.random() * 0.12, 0.6, 0.38 + Math.random() * 0.25);
       col.set([c.r, c.g, c.b, c.r * 0.1, c.g * 0.1, c.b * 0.1], i * 6);
     }
     this.streakGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -312,17 +312,19 @@ export class Ship {
   update(dt: number, time: number): void {
     // exhaust
     this.plumeMat.uniforms.uTime.value = time;
-    this.plumeMat.uniforms.uPower.value = this.throttle * 1.1;
-    for (const p of this.plumes) { p.visible = this.throttle > 0.04; p.scale.set(1, 0.3 + this.throttle * 2.6 + this.warp * 1.2, 1); }
-    for (const g of this.nozzleGlow) { g.scale.setScalar(0.25 + this.throttle * 1.6); g.material.opacity = 0.15 + this.throttle * 0.85; }
-    this.engineLight.intensity = this.throttle * 8;
+    // seen from the chase camera the plumes point back at us: bright enough to read, never a white wall over the hull
+    this.plumeMat.uniforms.uPower.value = this.throttle * 0.7;
+    for (const p of this.plumes) { p.visible = this.throttle > 0.04; p.scale.set(1, 0.3 + this.throttle * 2.2 + this.warp * 0.5, 1); }
+    for (const g of this.nozzleGlow) { g.scale.setScalar(0.25 + this.throttle * 1.2); g.material.opacity = 0.1 + this.throttle * 0.5; }
+    this.engineLight.intensity = this.throttle * 5;
     const blink = (Math.sin(time * 4) > 0.6 ? 1 : 0.15);
     this.nav.forEach((n) => (n.material.opacity = blink));
     this.screens.forEach((s, i) => (s.opacity = 0.45 + 0.2 * Math.sin(time * (1.3 + i * 0.7) + i)));
 
     // streaks
     const show = Math.max(this.warp, this.throttle * 0.35);
-    this.streakMat.opacity = show;
+    // streaks rush past the camera: keep them a thin sparkle, not a white-out under bloom
+    this.streakMat.opacity = show * 0.45;
     if (show > 0.01) {
       const pos = this.streakGeo.attributes.position as THREE.BufferAttribute;
       const len = 2 + this.speed * 0.06;
@@ -340,7 +342,7 @@ export class Ship {
     // warp tunnel
     this.tunnel.visible = this.warp > 0.01;
     this.tunnelMat.uniforms.uTime.value = time;
-    this.tunnelMat.uniforms.uAmt.value = this.warp * 0.4;
+    this.tunnelMat.uniforms.uAmt.value = this.warp * 0.24;
 
     // chrono bubble + rings
     const on = this.chrono > 0.01;
@@ -350,7 +352,7 @@ export class Ship {
     const col = this.chronoDir > 0 ? 0x66e0ff : 0xffa040;
     this.bubbleMat.uniforms.uColor.value.set(col);
     this.ringMat.color.set(col);
-    this.ringMat.opacity = this.chrono * 0.9;
+    this.ringMat.opacity = this.chrono * 0.5;
     const ringSpeed = 25 + this.chrono * 90;
     this.rings.forEach((r, i) => {
       r.visible = on;

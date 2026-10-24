@@ -761,8 +761,8 @@ export class SystemView implements View {
     this.starR = Math.max(0.6, lumR);
     const core = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.6, lumR), 48, 24), new THREE.MeshBasicMaterial({ color: sc.clone().multiplyScalar(2.2) }));
     this.star.add(core);
-    this.star.add(glowSprite(sc.getHex(), lumR * 9, 0.9));
-    this.star.add(glowSprite(sc.getHex(), lumR * 26, 0.35, flareTex));
+    this.star.add(glowSprite(sc.getHex(), lumR * 9, 0.6));
+    this.star.add(glowSprite(sc.getHex(), lumR * 26, 0.25, flareTex));
     this.group.add(this.star);
     this.works.reset();
     this.group.add(makeSky(sys.id + 3, 9000, 'skys', () => ({ name: sys.name, x: sys.x, y: sys.y, z: sys.z, sol: sys.id === 0 })));
