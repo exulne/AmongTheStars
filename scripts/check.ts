@@ -58,6 +58,7 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
   const pending = new Map<number, SimState>();
   const targets = new Map<number, { from: number; snap: SimState }>();
   let lastLiving = new Uint8Array(world.bodies.length);
+  const everLived = new Uint8Array(world.bodies.length);
   let churn = 0;
 
   while (!e.done) {
@@ -92,7 +93,8 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
       if (stg !== STAGE.NONE) nonNone++;
       if (LIVING(stg)) {
         living++; nowLiving[b] = 1;
-        if (!lastLiving[b] && step > 0) churn++;
+        if (!lastLiving[b] && everLived[b]) churn++;
+        everLived[b] = 1;
         if (stg >= STAGE.COLONY && Number.isNaN(firstStarColony) && world.bodies[b].system !== 0) firstStarColony = YEAR0 + y;
       }
       if (stg === STAGE.SURVEY) survey++;
@@ -242,7 +244,7 @@ function report(rs: SeedResult[]): void {
   row('factions at end', rs.map((r) => r.factions));
   row('longest dark age (yr)', rs.map((r) => r.longestDark));
   row('longest war era (yr)', rs.map((r) => r.longestWar), '< ~200');
-  row('settlements (re)entering life', rs.map((r) => r.churn));
+  row('settlements re-founded', rs.map((r) => r.churn), 'few');
   row('max pop growth (/yr)', rs.map((r) => r.maxPopGrowth));
   row('runtime (ms)', rs.map((r) => r.ms), '<3000');
   console.log(`\nMars biggest colony at 2140: ${rs.filter((r) => r.marsBiggest2140).length}/${n} seeds`);

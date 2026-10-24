@@ -261,7 +261,7 @@ export class Engine {
       const b = st.settled[n], o = b * NF, stg = S[o + F.stage];
       if (b === earth || stg < STAGE.OUTPOST || stg > STAGE.MEGA) continue;
       if (stg <= STAGE.CITY) migW[this.bSys[b]] += Math.max(0, S[o + F.capacity] - S[o + F.pop]) ** 0.5;
-      if (stg >= STAGE.TOWN) migD[this.bSys[b]] += S[o + F.pop] * MIGRATE;
+      if (stg >= STAGE.COLONY) migD[this.bSys[b]] += S[o + F.pop] * MIGRATE;
     }
 
     const sysNet = new Map<number, Float64Array>(); // per-system resource pooling
@@ -302,13 +302,15 @@ export class Engine {
       // resources: self-sufficiency per resource, then stock dynamics
       const stageEff = isEarth ? 1 : 0.55 + 0.1 * Math.min(stg, 5);
       const ext = Math.sqrt(fx.extract) * stageEff;
-      const demand = [2, 0.6, 0.5, 0.01, fx.fusion ? 0.002 : 0];
+      // recycling cuts water and air make-up; even a dry rock yields some of everything
+      // (hydrated minerals, oxides), so production never falls below 20% of the richest
+      const demand = [2 / fx.lifeSupport, 0.6, 0.5 / fx.lifeSupport, 0.01, fx.fusion ? 0.002 : 0];
       let net = sysNet.get(this.bSys[b]);
       if (!net) sysNet.set(this.bSys[b], (net = new Float64Array(5 + 1)));
       let worst = 1;
       for (let k = 0; k < 5; k++) {
         const D = pop * demand[k] + (k === 1 ? S[o + F.gdp] * 1e-6 : 0);
-        const P = (D + (k === 4 ? 0.5 * pop * 0.002 : 0)) * this.bRes[b * 5 + k] * 2.2 * ext * (isEarth ? 1.4 : 1);
+        const P = (D + (k === 4 ? 0.5 * pop * 0.002 : 0)) * (0.2 + this.bRes[b * 5 + k]) * 2.2 * ext * (isEarth ? 1.4 : 1);
         const stock = S[o + F.water + k] + (P - D) * dt;
         S[o + F.water + k] = Math.max(0, stock);
         net[k] += (P - D);
@@ -332,8 +334,9 @@ export class Engine {
       const sy = this.bSys[b];
       let immig = 0;
       if (!isEarth && stg <= STAGE.CITY && migW[sy] > 0) immig = Math.min(migD[sy] * Math.max(0, cap - pop) ** 0.5 / migW[sy], Math.max(0, cap - pop) / dt);
-      if (!isEarth && stg >= STAGE.TOWN && migW[sy] > 0) immig -= pop * MIGRATE;
-      pop = Math.max(0, pop + (births - deaths + immig) * dt);
+      if (!isEarth && stg >= STAGE.COLONY && migW[sy] > 0) immig -= pop * MIGRATE;
+      // exponential step: a 10-year step at a high crowding death rate must not overshoot zero
+      pop = Math.max(0, pop * Math.exp(pop > 0 ? ((births - deaths) / pop) * dt : 0) + immig * dt);
       if (pop > cap * 1.5) pop = cap * 1.5;
       S[o + F.births] = births; S[o + F.deaths] = deaths; S[o + F.imports] = Math.max(0, immig) * 10;
 
@@ -636,7 +639,10 @@ export class Engine {
         const ts = st.S[to * NF + F.stage];
         // someone got there first (a local crew): the ship just adds people
         const joined = ts >= STAGE.OUTPOST && ts <= STAGE.MEGA;
-        if (joined) st.S[to * NF + F.pop] += colonists;
+        if (joined) {
+          st.S[to * NF + F.pop] += colonists;
+          st.S[to * NF + F.stage] = Math.max(ts, colonists > 2000 ? STAGE.COLONY : STAGE.BASE);
+        }
         else {
           this.found(st, to, colonists > 2000 ? STAGE.COLONY : STAGE.BASE, colonists, from, year);
           st.S[to * NF + F.capital] = colonists * 3e5;
