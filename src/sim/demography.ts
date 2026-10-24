@@ -324,6 +324,14 @@ export class Demography {
 
   // ---------------------------------------------------------------- identities
 
+  /** The people who travelled on ledger flow `id`: slices of source pools. */
+  flowMembers(id: number): { pool: Pool; start: number; count: number }[] {
+    const f = this.L.flows[id];
+    if (!f) return [];
+    this.allocOut(f.src, f.p);
+    return this.byFlow.get(id) ?? [];
+  }
+
   /** Birth identity of the member at `rank` of pool x. */
   origin(x: Pool, rank: number): Id {
     let pool = x, r = rank;

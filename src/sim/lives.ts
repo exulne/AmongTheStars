@@ -137,6 +137,59 @@ export class Lives {
     return `${SHIP_A[Math.floor(h(3) * SHIP_A.length)]} ${SHIP_B[Math.floor(h(4) * SHIP_B.length)]}`;
   }
 
+  // ---------------------------------------------------------------- helpers for the Chronicle
+
+  placeName(b: number): string { return this.bodyName(b); }
+  coinedWord(b: number, n: number): string { return this.coined(n, b, 0, 2); }
+  /** set by the worker once the Chronicle exists, so biographies can mention what people did */
+  deeds: ((pid: string, stays: { body: number; from: number; to: number }[]) => { year: number; text: string }[]) | null = null;
+  distanceLy(a: number, b: number): number {
+    const s1 = this.e.world.systems[this.e.world.bodies[this.home(a)].system], s2 = this.e.world.systems[this.e.world.bodies[this.home(b)].system];
+    return Math.hypot(s1.x - s2.x, s1.y - s2.y, s1.z - s2.z);
+  }
+  biggestLab(year: number): number { void year; return this.e.world.earth; }
+  voyage(seq: number) { return this.e.ledger!.ships.get(seq) ?? null; }
+  shipFlow(seq: number): number | null { return this.voyage(seq)?.flow ?? null; }
+  landingFlow(seq: number): number | null { return this.e.ledger!.outBy.get(SHIP_BODY + seq)?.[0] ?? null; }
+  crewFlow(src: number, dst: number, year: number): number | null {
+    for (const id of this.e.ledger!.outBy.get(src) ?? []) {
+      const f = this.e.ledger!.flows[id];
+      if (f.kind === FLOW.CREW && f.dst === dst && Math.abs(f.depart - year) < 1) return id;
+    }
+    return null;
+  }
+
+  /** A resident of b in that year whose age fits, chosen by hash; null if none found. */
+  pickResident(b: number, year: number, salt: number, minAge: number, maxAge: number): Id | null {
+    const p = Math.max(0, Math.min(this.D.lastPeriod, periodOf(year) - (year >= 5 ? 1 : 0)));
+    const c = this.D.census(b, p);
+    if (!c.total) return null;
+    for (let t = 0; t < 48; t++) {
+      const id = c.at(Math.floor(hash01(this.e.seed, b, salt, t) * c.total));
+      const age = year - this.D.birthYear(id);
+      if (age >= minAge && age <= maxAge) return id;
+    }
+    return null;
+  }
+
+  /** Someone who travelled on ledger flow `flow`, an adult if possible. */
+  pickTraveller(flow: number, salt: number): Id | null {
+    const ranges = this.D.flowMembers(flow);
+    const total = ranges.reduce((a, r) => a + r.count, 0);
+    if (!total) return null;
+    const year = this.e.ledger!.flows[flow].depart;
+    let fallback: Id | null = null;
+    for (let t = 0; t < 32; t++) {
+      let j = Math.floor(hash01(this.e.seed, flow, salt, t) * total);
+      const r = ranges.find((x) => (j < x.count ? true : ((j -= x.count), false)))!;
+      const id = this.D.origin(r.pool, r.start + j);
+      fallback ??= id;
+      const age = year - this.D.birthYear(id);
+      if (age >= 25 && age <= 65) return id;
+    }
+    return fallback;
+  }
+
   // ---------------------------------------------------------------- people
 
   private sexOf(id: Id): 0 | 1 { const bp = this.D.birthPool(id); return bp ? ((bp.rank % 2) as 0 | 1) : 0; }
@@ -266,6 +319,7 @@ export class Lives {
       const by = this.D.birthYear(k);
       story.push({ year: by, text: `${this.sexOf(k) === 0 ? 'A daughter' : 'A son'}, ${this.givenName(k, this.sexOf(k))}, was born.`, link: { kind: 'person', id: idStr(k) } });
     }
+    if (this.deeds) for (const d of this.deeds(idStr(id), life.map((x) => ({ body: x.body, from: x.from, to: x.to })))) story.push({ year: d.year, text: d.text });
     let died: Biography['died'] = null;
     if (dead) {
       const dAge = deathYear - born;

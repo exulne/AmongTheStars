@@ -45,6 +45,8 @@ export class Ledger {
   private carry = new Map<number, number>();
   private birthAcc = new Map<number, number>();
   closed = -1;                               // last period closed
+  /** every ship by travel id: where from and to, when, how many, and its ledger flow */
+  ships = new Map<number, { src: number; dst: number; n: number; depart: number; arrive: number; flow: number; generation: boolean }>();
 
   private arr(m: Map<number, Float64Array>, b: number): Float64Array {
     let a = m.get(b);
