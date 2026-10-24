@@ -134,7 +134,7 @@ export class Chronicle {
         break;
       }
       case EV.Speciation: {
-        const child = this.pick(ev.body, y, i, 0, 4);
+        const child = this.pick(ev.body, y, i, 0, 15);
         segs.push('The people of ', at(ev.body), ' have drifted far enough to become a new species. Among the first born who could not have a child with someone from Earth: ', who(child), '.');
         break;
       }

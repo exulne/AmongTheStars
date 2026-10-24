@@ -38,6 +38,7 @@ app.innerHTML = `
       <div class="search-slot"></div>
       <label for="seed">Future #</label><input id="seed" inputmode="numeric" value="1" size="6">
       <button id="reroll" class="link" type="button">Another future</button>
+      <button id="chronicle" class="link" type="button">Chronicle</button>
       <span class="status num" aria-live="polite"></span>
     </div>
   </header>
@@ -355,11 +356,21 @@ function select(p: Pickable | null): void {
   writeHash();
 }
 inspector.api = {
+  chronicle: (f, t, o) => sim.chronicle(f, t, o),
+  inventions: () => sim.inventions(),
   residents: (b, y, o, n) => sim.residents(b, y, o, n),
   person: (id, y) => sim.person(id, y),
   residentAt: (b, y, k) => sim.residentAt(b, y, k),
 };
 inspector.onSelect = (p) => select(p);
+inspector.onYear = (y) => timeline.set(y, true);
+app.querySelector('#chronicle')!.addEventListener('click', () => {
+  inspector.chronicleOpen = !inspector.chronicleOpen;
+  if (inspector.chronicleOpen) inspector.openPerson(null);
+  inspector.el.classList.add('open');
+  inspector.toTop();
+  refreshPanels();
+});
 inspector.onClose = () => select(null);
 // on phones the inspector is a bottom sheet: the grab bar folds it down to its title
 const grab = document.createElement('button');
