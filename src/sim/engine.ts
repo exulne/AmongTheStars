@@ -57,17 +57,23 @@ interface Fx {
 }
 const MULT_KEYS = new Set(['extract', 'habitat', 'lifeSupport', 'energy', 'launch', 'research', 'productivity', 'death', 'growth', 'war', 'secession', 'voyage', 'divergence']);
 
+const RESEARCH = 10; // calibrates knowledge output to the tech tree's milestone years
+const SHIP_MIN_HAB = 0.15;
 const MIGRATE = 0.001; // share of a town's people per year who move to younger settlements in the same system
 const REACH_OUTER = 1, REACH_RAD = 2, REACH_DEEP = 4;
 const MINOR = new Set([EV.Famine, EV['Rich deposit found'], EV['Baby boom'], EV.Revolt, EV['Habitat breach'], EV['Probe survey']]);
 const TECH_INDEX = new Map(TECHS.map((t, i) => [t.id, i]));
 const TECH_REQ: number[][] = TECHS.map((t) => t.req.map((r) => TECH_INDEX.get(r)!));
+const TECH_FLOOR = TECHS.map((t) => t.earliest - 0.25 * (t.earliest - 2040));
 
 export class Engine {
   world: World;
   seed: number;
   st: SimState;
   techCostMult: Float64Array;
+  /** per tech: 1 if this universe's physics allows it (rolled once per seed) */
+  feasible: Uint8Array;
+  wanderlust: number;
   fx!: Fx;
   logEvents = true;
   events: SimEvent[] = [];
@@ -87,6 +93,7 @@ export class Engine {
   private surveyCursor: Int32Array;
   private sysBodies: number[][];
   private migW: Float64Array; private migD: Float64Array; // per-system scratch, rebuilt every step
+  private swarmStamp: Int32Array; private sysLum: Float64Array; private tick = 0;
 
   constructor(world: World, seed: number) {
     this.world = world;
@@ -109,6 +116,7 @@ export class Engine {
     this.sysRegion = new Uint8Array(ns);
     this.sysBodies = world.systems.map((s) => s.bodies);
     this.migW = new Float64Array(ns); this.migD = new Float64Array(ns);
+    this.swarmStamp = new Int32Array(ns); this.sysLum = Float64Array.from(world.systems, (s) => s.lum);
     world.systems.forEach((s, i) => {
       this.sysX[i] = s.x; this.sysY[i] = s.y; this.sysZ[i] = s.z;
       this.sysRegion[i] = ({ sol: 0, local: 1, galaxy: 2, extra: 3 } as const)[s.region];
@@ -126,9 +134,12 @@ export class Engine {
       // log-normal luck on every tech; speculative tech has fat tails
       const u = Math.max(1e-9, next(rng)), v = next(rng);
       const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
-      const sigma = TECHS[i].era === 4 ? 1.4 : TECHS[i].era === 3 ? 0.5 : 0.35;
+      const sigma = TECHS[i].era === 4 ? 1.4 : TECHS[i].era === 3 ? 0.7 : 0.5;
       this.techCostMult[i] = Math.exp(sigma * z);
     }
+    this.feasible = Uint8Array.from(TECHS, (t) => (next(rng) < (t.feasible ?? 1) ? 1 : 0));
+    // how keen this civilization is on colony ships: the main source of spread in reach
+    this.wanderlust = Math.exp(0.6 * Math.sqrt(-2 * Math.log(Math.max(1e-9, next(rng)))) * Math.cos(2 * Math.PI * next(rng)));
     this.st = this.initialState(rng);
     this.recomputeFx();
     this.record(0);
@@ -251,6 +262,8 @@ export class Engine {
     g[G.launchCap] = 5000 * (1 / fx.launch) * E.launch * kessler * Math.pow(Math.max(S[eo + F.gdp], 1e13) / 1.6e14, 0.8) * (1 + year / 40);
 
     // ---- per settlement
+    const swarm = this.swarmPower(year);
+    this.tick++; // never repeats, even after a restore to an earlier step
     const tfp = fx.productivity * Math.pow(1 + g[G.knowledge] / 2000, 0.22);
     let research = 0;
     // migration inside a system: Earth (launch-limited) and every town or bigger send
@@ -261,7 +274,7 @@ export class Engine {
       const b = st.settled[n], o = b * NF, stg = S[o + F.stage];
       if (b === earth || stg < STAGE.OUTPOST || stg > STAGE.MEGA) continue;
       if (stg <= STAGE.CITY) migW[this.bSys[b]] += Math.max(0, S[o + F.capacity] - S[o + F.pop]) ** 0.5;
-      if (stg >= STAGE.TOWN) migD[this.bSys[b]] += S[o + F.pop] * MIGRATE;
+      if (stg >= STAGE.COLONY) migD[this.bSys[b]] += S[o + F.pop] * MIGRATE;
     }
 
     const sysNet = new Map<number, Float64Array>(); // per-system resource pooling
@@ -290,25 +303,32 @@ export class Engine {
 
       // energy (W per person)
       const flux = this.bFlux[b];
-      const dysonBoost = fx.dyson > 0 && stg >= STAGE.HUB ? 1 + fx.dyson * 4 : 1;
+      const eTech = Math.pow(fx.energy, 0.3);
       const perCap = isEarth
-        ? 2600 * Math.pow(fx.energy, 0.6) * dysonBoost
-        : 14000 * Math.max(Math.pow(Math.min(flux, 4), 0.5), fx.fission > 0 ? 1 : 0) * fx.energy * dysonBoost;
+        ? 2600 * eTech
+        : 14000 * Math.max(Math.pow(Math.min(flux, 4), 0.5), fx.fission > 0 ? 1 : 0) * eTech;
       const need = isEarth ? 2000 : 9000 * (1.5 - 0.5 * h);
       const eRatio = perCap / need;
       S[o + F.energyRatio] = eRatio;
       S[o + F.energy] = pop * perCap + stg * 1e5;
+      // the system's Dyson swarm is counted once, at its first hub, and grows with it
+      if (swarm > 0 && stg >= STAGE.HUB && this.swarmStamp[this.bSys[b]] !== this.tick) {
+        this.swarmStamp[this.bSys[b]] = this.tick;
+        S[o + F.energy] += swarm * this.sysLum[this.bSys[b]] * Math.min(1, pop / 1e9);
+      }
 
       // resources: self-sufficiency per resource, then stock dynamics
       const stageEff = isEarth ? 1 : 0.55 + 0.1 * Math.min(stg, 5);
       const ext = Math.sqrt(fx.extract) * stageEff;
-      const demand = [2, 0.6, 0.5, 0.01, fx.fusion ? 0.002 : 0];
+      // recycling cuts water and air make-up; even a dry rock yields some of everything
+      // (hydrated minerals, oxides), so production never falls below 20% of the richest
+      const demand = [2 / fx.lifeSupport, 0.6, 0.5 / fx.lifeSupport, 0.01, fx.fusion ? 0.002 : 0];
       let net = sysNet.get(this.bSys[b]);
       if (!net) sysNet.set(this.bSys[b], (net = new Float64Array(5 + 1)));
       let worst = 1;
       for (let k = 0; k < 5; k++) {
         const D = pop * demand[k] + (k === 1 ? S[o + F.gdp] * 1e-6 : 0);
-        const P = (D + (k === 4 ? 0.5 * pop * 0.002 : 0)) * this.bRes[b * 5 + k] * 2.2 * ext * (isEarth ? 1.4 : 1);
+        const P = (D + (k === 4 ? 0.5 * pop * 0.002 : 0)) * (0.2 + this.bRes[b * 5 + k]) * 2.2 * ext * (isEarth ? 1.4 : 1);
         const stock = S[o + F.water + k] + (P - D) * dt;
         S[o + F.water + k] = Math.max(0, stock);
         net[k] += (P - D);
@@ -332,8 +352,9 @@ export class Engine {
       const sy = this.bSys[b];
       let immig = 0;
       if (!isEarth && stg <= STAGE.CITY && migW[sy] > 0) immig = Math.min(migD[sy] * Math.max(0, cap - pop) ** 0.5 / migW[sy], Math.max(0, cap - pop) / dt);
-      if (!isEarth && stg >= STAGE.TOWN && migW[sy] > 0) immig -= pop * MIGRATE;
-      pop = Math.max(0, pop + (births - deaths + immig) * dt);
+      if (!isEarth && stg >= STAGE.COLONY && migW[sy] > 0) immig -= pop * MIGRATE;
+      // exponential step: a 10-year step at a high crowding death rate must not overshoot zero
+      pop = Math.max(0, pop * Math.exp(pop > 0 ? ((births - deaths) / pop) * dt : 0) + immig * dt);
       if (pop > cap * 1.5) pop = cap * 1.5;
       S[o + F.births] = births; S[o + F.deaths] = deaths; S[o + F.imports] = Math.max(0, immig) * 10;
 
@@ -347,7 +368,7 @@ export class Engine {
       S[o + F.robots] = S[o + F.capital] / 2e6 * (fx.productivity > 1.4 ? 3 : 1);
 
       // research
-      const r = Math.pow(pop / 1e9, 0.7) * Math.pow(Math.max(gdp / Math.max(pop, 1), 1) / 17400, 0.6) * 9 * fx.research * E.research + S[o + F.robots] * 1e-9 * fx.research;
+      const r = Math.pow(pop / 1e9, 0.7) * Math.pow(Math.max(gdp / Math.max(pop, 1), 1) / 17400, 0.6) * 9 * RESEARCH * fx.research * E.research + S[o + F.robots] * 1e-9 * fx.research;
       S[o + F.research] = r;
       research += r;
 
@@ -407,6 +428,16 @@ export class Engine {
     st.step++;
     g[G.year] = this.years[st.step];
     this.record(st.step);
+  }
+
+  /** Watts a Dyson swarm around a 1 L_sun star captures by now. Phase I is ~1e16 W
+   *  (bible M15); phase II then grows e-fold every 60 years to half the star. */
+  private swarmPower(year: number): number {
+    const d = this.st.techDone, t1 = d[TECH_INDEX.get('dyson1')!], t2 = d[TECH_INDEX.get('dyson2')!];
+    if (t1 < 0) return 0;
+    let cov = 2.6e-11 * Math.min(1, (year - t1) / 50 + 0.1);
+    if (t2 >= 0) cov = Math.max(cov, Math.min(this.has('starLifting') ? 0.9 : 0.5, 2.6e-7 * Math.exp((year - t2) / 60)));
+    return cov * 3.846e26;
   }
 
   private lagToCapital(b: number): number {
@@ -483,25 +514,19 @@ export class Engine {
     const frontier: number[] = [];
     let w = 0;
     for (let i = 0; i < TECHS.length; i++) {
-      if (st.techDone[i] >= 0) continue;
+      // progress < 0 marks a tech proven impossible in this universe
+      if (st.techDone[i] >= 0 || st.techProg[i] < 0) continue;
       if (TECH_REQ[i].every((j) => st.techDone[j] >= 0)) { frontier.push(i); w += 1 / TECHS[i].cost; }
     }
     if (!frontier.length) return;
     let changed = false;
     for (const i of frontier) {
       st.techProg[i] += amount * (1 / TECHS[i].cost) / w;
-      if (st.techProg[i] >= TECHS[i].cost * this.techCostMult[i] && (TECHS[i].era < 4 || this.physicsAllows(i))) {
-        st.techDone[i] = year; changed = true; this.log(EV.Technology, -1, i);
-      }
+      if (st.techProg[i] < TECHS[i].cost * this.techCostMult[i] || year + YEAR0 < TECH_FLOOR[i]) continue;
+      if (!this.feasible[i]) { st.techProg[i] = -1; continue; }
+      st.techDone[i] = year; changed = true; this.log(EV.Technology, -1, i);
     }
     if (changed) this.recomputeFx();
-  }
-
-  /** Era-4 tech is gated by whether this universe's physics permits it at all (fixed per seed). */
-  private physicsAllows(i: number): boolean {
-    const id = TECHS[i].id;
-    const odds = id === 'warp' ? 0.3 : id === 'wormholes' ? 0.35 : 0.9;
-    return this.techCostMult[i] % 0.001 < 0.001 * odds;
   }
 
   private expand(dt: number, year: number, eraLaunch: number): void {
@@ -542,9 +567,9 @@ export class Engine {
         }
       }
       // interstellar: needs a drive, a colony with money, and a stable home
-      if (fx.shipSpeed <= 0 || stg < (fx.shipSpeed >= 0.1 ? STAGE.TOWN : STAGE.CITY)) continue;
+      if (fx.shipSpeed <= 0 || stg < STAGE.CITY) continue;
       const shipCost = 4e12 / Math.sqrt(fx.productivity);
-      const pShip = dt * 0.004 * eraLaunch * Math.min(4, Math.sqrt(gdp / shipCost)) * (isEarth ? 3 : 1);
+      const pShip = dt * 0.0008 * this.wanderlust * eraLaunch * Math.min(4, Math.sqrt(gdp / shipCost)) * (isEarth ? 3 : 1);
       if (this.rand() < pShip && S[o + F.capital] > shipCost) {
         let target = -1, ftlTrip = false;
         if (fx.ftl > 0 && stg >= STAGE.HUB && this.rand() < 0.25 * fx.ftl) {
@@ -552,7 +577,7 @@ export class Engine {
         } else {
           // a home with nothing left in range stops looking for a while
           if (year < st.shipRetry[this.bSys[b]]) continue;
-          target = this.pickTarget(b, fx.shipSpeed * 400 * fx.voyage, false);
+          target = this.pickTarget(b, fx.shipSpeed * 200 * Math.sqrt(fx.voyage), false);
           if (target < 0) st.shipRetry[this.bSys[b]] = year + 50;
         }
         if (target < 0) continue;
@@ -584,7 +609,8 @@ export class Engine {
         const ts = S[t * NF + F.stage];
         if (!this.bSettle[t]) continue;
         if (survey ? ts !== STAGE.NONE : ts !== STAGE.NONE && ts !== STAGE.SURVEY && ts !== STAGE.ABANDONED) continue;
-        if (!survey && ((this.bHab[t] < 0.1 && this.fx.habHostile < 0.1) || S[t * NF + F.inbound] > 0)) continue;
+        // colony ships only go where people can live off the land; the rest of a system fills in locally
+        if (!survey && (this.bHab[t] < SHIP_MIN_HAB || S[t * NF + F.inbound] > 0)) continue;
         seen++;
         const sc = (this.bHab[t] + 0.1 * (this.bRes[t * 5] + this.bRes[t * 5 + 1]) + (ts === STAGE.SURVEY ? 0.15 : 0)) / Math.pow(d + 3, 1.3) * (0.6 + 0.8 * this.rand());
         if (sc > bestScore) { bestScore = sc; best = t; }
@@ -636,7 +662,10 @@ export class Engine {
         const ts = st.S[to * NF + F.stage];
         // someone got there first (a local crew): the ship just adds people
         const joined = ts >= STAGE.OUTPOST && ts <= STAGE.MEGA;
-        if (joined) st.S[to * NF + F.pop] += colonists;
+        if (joined) {
+          st.S[to * NF + F.pop] += colonists;
+          st.S[to * NF + F.stage] = Math.max(ts, colonists > 2000 ? STAGE.COLONY : STAGE.BASE);
+        }
         else {
           this.found(st, to, colonists > 2000 ? STAGE.COLONY : STAGE.BASE, colonists, from, year);
           st.S[to * NF + F.capital] = colonists * 3e5;
@@ -862,7 +891,7 @@ function cellId(i: number, j: number, k: number): number {
 
 // Static per-world neighbour lists (CSR, sorted by distance) for systems a ship
 // can reach in one hop. Built once per world and shared by every engine.
-const MAX_HOP = 60;
+const MAX_HOP = 50;
 interface Neighbours { start: Int32Array; sys: Int32Array; d: Float32Array }
 const NBR_CACHE = new WeakMap<World, Neighbours>();
 function neighbours(world: World): Neighbours {

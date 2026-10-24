@@ -184,6 +184,11 @@ export interface Tech {
   name: string;
   cost: number;
   req: string[];
+  /** Earliest plausible calendar year (bible §3.4); the tech cannot land before
+   *  earliest - 0.25 * (earliest - 2040), however rich the run. */
+  earliest: number;
+  /** chance this universe's physics allows it at all, rolled once per seed */
+  feasible?: number;
   era: 1 | 2 | 3 | 4;
   fx: Partial<{
     extract: number; habitat: number; lifeSupport: number; energy: number; launch: number;
@@ -197,58 +202,58 @@ export interface Tech {
 
 export const TECHS: Tech[] = [
   // Era 1: what the first Mars generation builds on
-  { id: 'isru', name: 'In-situ resource use', cost: 90, req: [], era: 1, fx: { extract: 1.5 }, blurb: 'Make fuel, air and water from local rock and ice.' },
-  { id: 'closedLoop', name: 'Closed-loop life support', cost: 135, req: [], era: 1, fx: { lifeSupport: 1.5, reliability: 0.05 }, blurb: '98% of water and air recycled.' },
-  { id: 'kilopower', name: 'Surface fission reactors', cost: 120, req: [], era: 1, fx: { fission: 1 }, blurb: 'Power that does not care how far the Sun is.' },
-  { id: 'reusable', name: 'Fully reusable heavy lift', cost: 105, req: [], era: 1, fx: { launch: 0.6 }, blurb: 'Rockets land and refly within days.' },
-  { id: 'synthBio', name: 'Synthetic biology farming', cost: 360, req: ['closedLoop'], era: 1, fx: { growth: 1.15, lifeSupport: 1.2 }, blurb: 'Engineered crops and microbes for thin light and bad soil.' },
-  { id: 'regolith', name: 'Regolith construction', cost: 330, req: ['isru'], era: 1, fx: { habitat: 1.5 }, blurb: 'Print habitats from local dirt.' },
-  { id: 'ntp', name: 'Nuclear thermal propulsion', cost: 480, req: ['kilopower'], era: 1, fx: { launch: 0.8, voyage: 1.2 }, blurb: 'Mars in 90 days, Jupiter in under two years.' },
-  { id: 'robotics', name: 'Autonomous robotics', cost: 420, req: [], era: 1, fx: { extract: 1.3, productivity: 1.15 }, blurb: 'Mines and factories that run unattended.' },
-  { id: 'radShield', name: 'Active radiation shielding', cost: 780, req: ['closedLoop'], era: 1, fx: { habHostile: 0.06, death: 0.92 }, blurb: 'Makes Jupiter\'s moons survivable.' },
-  { id: 'quantumComp', name: 'Fault-tolerant quantum computing', cost: 900, req: [], era: 1, fx: { research: 1.25 }, blurb: 'Chemistry and materials solved by simulation.' },
-  { id: 'genMed', name: 'Genetic medicine', cost: 1020, req: [], era: 1, fx: { death: 0.8 }, blurb: 'Most hereditary disease and many cancers become curable.' },
-  { id: 'asteroidMining', name: 'Asteroid mining', cost: 1260, req: ['isru', 'ntp'], era: 1, fx: { extract: 1.4 }, blurb: 'Metal-rich asteroids carved in place.' },
-  { id: 'cloudCities', name: 'Venus aerostat cities', cost: 1560, req: ['closedLoop', 'regolith'], era: 1, fx: { hab: 0.02 }, blurb: 'Breathable air is a lifting gas 55 km above Venus.' },
-  { id: 'starshot', name: 'Gram-scale starshot probes', cost: 1800, req: ['quantumComp'], era: 1, fx: { probes: 12 }, blurb: 'Laser-pushed chips survey the nearest stars at 0.2c.' },
-  { id: 'agi', name: 'Artificial general intelligence', cost: 2700, req: ['robotics', 'quantumComp'], era: 1, fx: { research: 1.9, productivity: 1.5 }, blurb: 'Machine minds do research around the clock.' },
+  { id: 'isru', name: 'In-situ resource use', cost: 90, req: [], earliest: 2045, era: 1, fx: { extract: 1.5 }, blurb: 'Make fuel, air and water from local rock and ice.' },
+  { id: 'closedLoop', name: 'Closed-loop life support', cost: 135, req: [], earliest: 2045, era: 1, fx: { lifeSupport: 1.5, reliability: 0.05 }, blurb: '98% of water and air recycled.' },
+  { id: 'kilopower', name: 'Surface fission reactors', cost: 120, req: [], earliest: 2045, era: 1, fx: { fission: 1 }, blurb: 'Power that does not care how far the Sun is.' },
+  { id: 'reusable', name: 'Fully reusable heavy lift', cost: 105, req: [], earliest: 2042, era: 1, fx: { launch: 0.6 }, blurb: 'Rockets land and refly within days.' },
+  { id: 'synthBio', name: 'Synthetic biology farming', cost: 360, req: ['closedLoop'], earliest: 2055, era: 1, fx: { growth: 1.15, lifeSupport: 1.2 }, blurb: 'Engineered crops and microbes for thin light and bad soil.' },
+  { id: 'regolith', name: 'Regolith construction', cost: 330, req: ['isru'], earliest: 2050, era: 1, fx: { habitat: 1.5 }, blurb: 'Print habitats from local dirt.' },
+  { id: 'ntp', name: 'Nuclear thermal propulsion', cost: 480, req: ['kilopower'], earliest: 2050, era: 1, fx: { launch: 0.8, voyage: 1.2 }, blurb: 'Mars in 90 days, Jupiter in under two years.' },
+  { id: 'robotics', name: 'Autonomous robotics', cost: 420, req: [], earliest: 2045, era: 1, fx: { extract: 1.3, productivity: 1.15 }, blurb: 'Mines and factories that run unattended.' },
+  { id: 'radShield', name: 'Active radiation shielding', cost: 780, req: ['closedLoop'], earliest: 2065, era: 1, fx: { habHostile: 0.06, death: 0.92 }, blurb: 'Makes Jupiter\'s moons survivable.' },
+  { id: 'quantumComp', name: 'Fault-tolerant quantum computing', cost: 900, req: [], earliest: 2045, era: 1, fx: { research: 1.25 }, blurb: 'Chemistry and materials solved by simulation.' },
+  { id: 'genMed', name: 'Genetic medicine', cost: 1020, req: [], earliest: 2060, era: 1, fx: { death: 0.8 }, blurb: 'Most hereditary disease and many cancers become curable.' },
+  { id: 'asteroidMining', name: 'Asteroid mining', cost: 1260, req: ['isru', 'ntp'], earliest: 2060, era: 1, fx: { extract: 1.4 }, blurb: 'Metal-rich asteroids carved in place.' },
+  { id: 'cloudCities', name: 'Venus aerostat cities', cost: 1560, req: ['closedLoop', 'regolith'], earliest: 2130, era: 1, fx: { hab: 0.02 }, blurb: 'Breathable air is a lifting gas 55 km above Venus.' },
+  { id: 'starshot', name: 'Gram-scale starshot probes', cost: 1800, req: ['quantumComp'], earliest: 2075, era: 1, fx: { probes: 12 }, blurb: 'Laser-pushed chips survey the nearest stars at 0.2c.' },
+  { id: 'agi', name: 'Artificial general intelligence', cost: 2700, req: ['robotics', 'quantumComp'], earliest: 2045, era: 1, fx: { research: 1.9, productivity: 1.5 }, blurb: 'Machine minds do research around the clock.' },
 
   // Era 2: the Solar System economy
-  { id: 'fusion', name: 'Fusion power', cost: 9000, req: ['kilopower', 'quantumComp'], era: 2, fx: { fusion: 1, energy: 3 }, blurb: 'Deuterium from any ice becomes power.' },
-  { id: 'subIce', name: 'Sub-ice ocean habitats', cost: 7800, req: ['radShield', 'regolith'], era: 2, fx: { habHostile: 0.06 }, blurb: 'Cities inside the oceans of Europa and Enceladus.' },
-  { id: 'carbonNano', name: 'Bulk carbon nanomaterials', cost: 10800, req: ['quantumComp'], era: 2, fx: { habitat: 1.3, productivity: 1.1 }, blurb: 'Cables a hundred times stronger than steel.' },
-  { id: 'orbitalHabitats', name: "O'Neill cylinders", cost: 19200, req: ['regolith', 'asteroidMining', 'carbonNano'], era: 2, fx: { habitat: 3, habHostile: 0.08 }, blurb: 'Spinning cities with full gravity anywhere there is metal.' },
-  { id: 'neuralLace', name: 'Brain-computer interfaces', cost: 18000, req: ['agi', 'genMed'], era: 2, fx: { research: 1.35 }, blurb: 'Thought-speed access to knowledge.' },
-  { id: 'magShield', name: 'Planetary magnetic shield', cost: 25200, req: ['fusion'], era: 2, fx: { hab: 0.05 }, blurb: 'A magnet at Mars L1 lets the atmosphere thicken.' },
-  { id: 'he3Fusion', name: 'Helium-3 aneutronic fusion', cost: 31200, req: ['fusion'], era: 2, fx: { energy: 2 }, blurb: 'Clean fusion fed from gas-giant skimmers.' },
-  { id: 'spaceElevator', name: 'Space elevators', cost: 36000, req: ['carbonNano', 'fusion'], era: 2, fx: { launch: 0.15 }, blurb: 'Orbit by elevator for the cost of electricity.' },
-  { id: 'fusionDrive', name: 'Fusion torch drive', cost: 45000, req: ['fusion'], era: 2, fx: { shipSpeed: 0.03, voyage: 1.5 }, blurb: 'Constant thrust: Saturn in weeks, stars in centuries.' },
-  { id: 'bioAdapt', name: 'Human genetic adaptation', cost: 54000, req: ['genMed', 'synthBio'], era: 2, fx: { habHostile: 0.08, divergence: 2 }, blurb: 'Children built for low gravity and thin air.' },
-  { id: 'genShip', name: 'Generation ships', cost: 66000, req: ['orbitalHabitats', 'fusionDrive', 'synthBio'], era: 2, fx: { shipSpeed: 0.02, voyage: 1 }, blurb: 'Whole towns that cross the dark over many lifetimes.' },
-  { id: 'paraterraform', name: 'Paraterraforming', cost: 72000, req: ['magShield', 'regolith'], era: 2, fx: { hab: 0.06 }, blurb: 'Roofed craters the size of countries.' },
-  { id: 'psychohistory', name: 'Predictive social science', cost: 84000, req: ['agi', 'neuralLace'], era: 2, fx: { stability: 0.05, war: 0.7 }, blurb: 'Seldon\'s dream: crises seen decades ahead.' },
-  { id: 'laserComms', name: 'Interstellar laser network', cost: 96000, req: ['starshot', 'fusion'], era: 2, fx: { secession: 0.7 }, blurb: 'News still travels at light speed, but it travels.' },
-  { id: 'cryo', name: 'Cryogenic suspension', cost: 120000, req: ['genMed', 'neuralLace'], era: 2, fx: { voyage: 2, reliability: 0.08 }, blurb: 'Sleep through the voyage.' },
-  { id: 'nanofab', name: 'Molecular nanofabrication', cost: 156000, req: ['agi', 'carbonNano'], era: 2, fx: { extract: 1.8, productivity: 1.6 }, blurb: 'Build anything atom by atom.' },
-  { id: 'lifeExt', name: 'Radical life extension', cost: 180000, req: ['genMed', 'nanofab'], era: 2, fx: { death: 0.45, growth: 0.85 }, blurb: 'People stop dying of age. They also stop having kids.' },
+  { id: 'fusion', name: 'Fusion power', cost: 9000, req: ['kilopower', 'quantumComp'], earliest: 2060, era: 2, fx: { fusion: 1, energy: 3 }, blurb: 'Deuterium from any ice becomes power.' },
+  { id: 'subIce', name: 'Sub-ice ocean habitats', cost: 23400, req: ['radShield', 'regolith'], earliest: 2120, era: 2, fx: { habHostile: 0.06 }, blurb: 'Cities inside the oceans of Europa and Enceladus.' },
+  { id: 'carbonNano', name: 'Bulk carbon nanomaterials', cost: 32400, req: ['quantumComp'], earliest: 2090, era: 2, fx: { habitat: 1.3, productivity: 1.1 }, blurb: 'Cables a hundred times stronger than steel.' },
+  { id: 'orbitalHabitats', name: "O'Neill cylinders", cost: 57600, req: ['regolith', 'asteroidMining', 'carbonNano'], earliest: 2150, era: 2, fx: { habitat: 3, habHostile: 0.08 }, blurb: 'Spinning cities with full gravity anywhere there is metal.' },
+  { id: 'neuralLace', name: 'Brain-computer interfaces', cost: 54000, req: ['agi', 'genMed'], earliest: 2080, era: 2, fx: { research: 1.35 }, blurb: 'Thought-speed access to knowledge.' },
+  { id: 'magShield', name: 'Planetary magnetic shield', cost: 75600, req: ['fusion'], earliest: 2100, era: 2, fx: { hab: 0.05 }, blurb: 'A magnet at Mars L1 lets the atmosphere thicken.' },
+  { id: 'he3Fusion', name: 'Helium-3 aneutronic fusion', cost: 93600, req: ['fusion'], earliest: 2095, era: 2, fx: { energy: 2 }, blurb: 'Clean fusion fed from gas-giant skimmers.' },
+  { id: 'spaceElevator', name: 'Space elevators', cost: 108000, req: ['carbonNano', 'fusion'], earliest: 2200, era: 2, fx: { launch: 0.15 }, blurb: 'Orbit by elevator for the cost of electricity.' },
+  { id: 'fusionDrive', name: 'Fusion torch drive', cost: 135000, req: ['fusion'], earliest: 2110, era: 2, fx: { shipSpeed: 0.03, voyage: 1.5 }, blurb: 'Constant thrust: Saturn in weeks, stars in centuries.' },
+  { id: 'bioAdapt', name: 'Human genetic adaptation', cost: 162000, req: ['genMed', 'synthBio'], earliest: 2100, era: 2, fx: { habHostile: 0.08, divergence: 2 }, blurb: 'Children built for low gravity and thin air.' },
+  { id: 'genShip', name: 'Generation ships', cost: 198000, req: ['orbitalHabitats', 'fusionDrive', 'synthBio'], earliest: 2250, era: 2, fx: { shipSpeed: 0.02, voyage: 1 }, blurb: 'Whole towns that cross the dark over many lifetimes.' },
+  { id: 'paraterraform', name: 'Paraterraforming', cost: 216000, req: ['magShield', 'regolith'], earliest: 2095, era: 2, fx: { hab: 0.06 }, blurb: 'Roofed craters the size of countries.' },
+  { id: 'psychohistory', name: 'Predictive social science', cost: 252000, req: ['agi', 'neuralLace'], earliest: 2400, era: 2, fx: { stability: 0.05, war: 0.7 }, blurb: 'Seldon\'s dream: crises seen decades ahead.' },
+  { id: 'laserComms', name: 'Interstellar laser network', cost: 288000, req: ['starshot', 'fusion'], earliest: 2150, era: 2, fx: { secession: 0.7 }, blurb: 'News still travels at light speed, but it travels.' },
+  { id: 'cryo', name: 'Cryogenic suspension', cost: 360000, req: ['genMed', 'neuralLace'], earliest: 2100, era: 2, fx: { voyage: 2, reliability: 0.08 }, blurb: 'Sleep through the voyage.' },
+  { id: 'nanofab', name: 'Molecular nanofabrication', cost: 468000, req: ['agi', 'carbonNano'], earliest: 2150, era: 2, fx: { extract: 1.8, productivity: 1.6 }, blurb: 'Build anything atom by atom.' },
+  { id: 'lifeExt', name: 'Radical life extension', cost: 540000, req: ['genMed', 'nanofab'], earliest: 2090, era: 2, fx: { death: 0.45, growth: 0.85 }, blurb: 'People stop dying of age. They also stop having kids.' },
 
   // Era 3: interstellar
-  { id: 'terraform', name: 'Planetary terraforming', cost: 720000, req: ['paraterraform', 'he3Fusion', 'nanofab'], era: 3, fx: { hab: 0.18 }, blurb: 'Whole worlds made breathable over centuries.' },
-  { id: 'dyson1', name: 'Dyson swarm, phase I', cost: 840000, req: ['orbitalHabitats', 'nanofab'], era: 3, fx: { dyson: 1, energy: 12 }, blurb: 'A million collectors around the Sun.' },
-  { id: 'seedShips', name: 'Embryo seed ships', cost: 960000, req: ['genShip', 'agi', 'bioAdapt'], era: 3, fx: { reliability: 0.1, voyage: 2 }, blurb: 'Robots carry frozen embryos and raise the first generation.' },
-  { id: 'laserSail', name: 'Beamed laser sails', cost: 1e6, req: ['dyson1', 'starshot'], era: 3, fx: { shipSpeed: 0.1 }, blurb: 'Crewed sails pushed to a tenth of light speed.' },
-  { id: 'vonNeumann', name: 'Self-replicating probes', cost: 2e6, req: ['nanofab', 'agi', 'fusionDrive'], era: 3, fx: { probes: 60 }, blurb: 'Probes that build more probes. Surveys outrun ships.' },
-  { id: 'bishopRings', name: 'Bishop rings', cost: 3e6, req: ['orbitalHabitats', 'carbonNano', 'dyson1'], era: 3, fx: { habitat: 3 }, blurb: 'Habitat rings a thousand kilometres across.' },
-  { id: 'antimatter', name: 'Antimatter catalysis', cost: 4e6, req: ['he3Fusion', 'dyson1'], era: 3, fx: { shipSpeed: 0.15 }, blurb: 'The densest fuel there is, made with sunlight.' },
-  { id: 'mindUpload', name: 'Mind uploading', cost: 6e6, req: ['neuralLace', 'nanofab'], era: 3, fx: { research: 2.5, death: 0.7, divergence: 3 }, blurb: 'Some people stop needing bodies.' },
-  { id: 'dyson2', name: 'Dyson swarm, phase II', cost: 1e7, req: ['dyson1', 'bishopRings'], era: 3, fx: { dyson: 1, energy: 25 }, blurb: 'A third of the Sun\'s light captured.' },
-  { id: 'bussard', name: 'Bussard ramjet', cost: 2e7, req: ['antimatter', 'fusionDrive'], era: 3, fx: { shipSpeed: 0.2, voyage: 3 }, blurb: 'Scoop interstellar hydrogen for fuel.' },
+  { id: 'terraform', name: 'Planetary terraforming', cost: 1.08e+06, req: ['paraterraform', 'he3Fusion', 'nanofab'], earliest: 2300, era: 3, fx: { hab: 0.18 }, blurb: 'Whole worlds made breathable over centuries.' },
+  { id: 'dyson1', name: 'Dyson swarm, phase I', cost: 1.26e+06, req: ['orbitalHabitats', 'nanofab'], earliest: 2200, era: 3, fx: { dyson: 1, energy: 12 }, blurb: 'A million collectors around the Sun.' },
+  { id: 'seedShips', name: 'Embryo seed ships', cost: 1.44e+06, req: ['genShip', 'agi', 'bioAdapt'], earliest: 2250, era: 3, fx: { reliability: 0.1, voyage: 2 }, blurb: 'Robots carry frozen embryos and raise the first generation.' },
+  { id: 'laserSail', name: 'Beamed laser sails', cost: 1.5e+06, req: ['dyson1', 'starshot'], earliest: 2500, era: 3, fx: { shipSpeed: 0.1 }, blurb: 'Crewed sails pushed to a tenth of light speed.' },
+  { id: 'vonNeumann', name: 'Self-replicating probes', cost: 3e+06, req: ['nanofab', 'agi', 'fusionDrive'], earliest: 2300, era: 3, fx: { probes: 60 }, blurb: 'Probes that build more probes. Surveys outrun ships.' },
+  { id: 'bishopRings', name: 'Bishop rings', cost: 4.5e+06, req: ['orbitalHabitats', 'carbonNano', 'dyson1'], earliest: 2400, era: 3, fx: { habitat: 3 }, blurb: 'Habitat rings a thousand kilometres across.' },
+  { id: 'antimatter', name: 'Antimatter catalysis', cost: 6e+06, req: ['he3Fusion', 'dyson1'], earliest: 2300, era: 3, fx: { shipSpeed: 0.15 }, blurb: 'The densest fuel there is, made with sunlight.' },
+  { id: 'mindUpload', name: 'Mind uploading', cost: 9e+06, req: ['neuralLace', 'nanofab'], earliest: 2500, era: 3, fx: { research: 2.5, death: 0.7, divergence: 3 }, blurb: 'Some people stop needing bodies.' },
+  { id: 'dyson2', name: 'Dyson swarm, phase II', cost: 1.5e+07, req: ['dyson1', 'bishopRings'], earliest: 2350, era: 3, fx: { dyson: 1, energy: 25 }, blurb: 'A third of the Sun\'s light captured.' },
+  { id: 'bussard', name: 'Bussard ramjet', cost: 3e+07, req: ['antimatter', 'fusionDrive'], earliest: 2800, era: 3, fx: { shipSpeed: 0.2, voyage: 3 }, blurb: 'Scoop interstellar hydrogen for fuel.' },
 
   // Era 4: speculative. Costs carry very wide random multipliers, so most futures never get here.
-  { id: 'starLifting', name: 'Star lifting', cost: 2e8, req: ['dyson2'], era: 4, fx: { extract: 3, dyson: 1 }, blurb: 'Mine the star itself.' },
-  { id: 'matrioshka', name: 'Matrioshka brains', cost: 8e8, req: ['dyson2', 'mindUpload'], era: 4, fx: { research: 6 }, blurb: 'A star\'s whole output spent on thinking.' },
-  { id: 'warp', name: 'Alcubierre metric engineering', cost: 8e9, req: ['antimatter', 'matrioshka'], era: 4, fx: { ftl: 1 }, blurb: 'Space folds in front, unfolds behind.' },
-  { id: 'wormholes', name: 'Traversable wormholes', cost: 1e11, req: ['warp', 'starLifting'], era: 4, fx: { ftl2: 1 }, blurb: 'Andromeda becomes a commute.' },
+  { id: 'starLifting', name: 'Star lifting', cost: 2e8, req: ['dyson2'], earliest: 5000, feasible: 0.9, era: 4, fx: { extract: 3, dyson: 1 }, blurb: 'Mine the star itself.' },
+  { id: 'matrioshka', name: 'Matrioshka brains', cost: 8e8, req: ['dyson2', 'mindUpload'], earliest: 4000, feasible: 0.9, era: 4, fx: { research: 6 }, blurb: 'A star\'s whole output spent on thinking.' },
+  { id: 'warp', name: 'Alcubierre metric engineering', cost: 8e9, req: ['antimatter', 'matrioshka'], earliest: 8000, feasible: 0.08, era: 4, fx: { ftl: 1 }, blurb: 'Space folds in front, unfolds behind.' },
+  { id: 'wormholes', name: 'Traversable wormholes', cost: 1e11, req: ['warp', 'starLifting'], earliest: 9000, feasible: 0.35, era: 4, fx: { ftl2: 1 }, blurb: 'Andromeda becomes a commute.' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -257,27 +262,29 @@ export const TECHS: Tech[] = [
 
 export const ERAS = ['Expansion', 'Consolidation', 'Golden Age', 'Stagnation', 'War', 'Pandemic', 'Collapse', 'Renaissance'] as const;
 
-// rows: from, cols: to. Per decade.
+// rows: from, cols: to. Per decade. The bible's §5.2 matrix with its secession
+// crisis folded into Consolidation and its AI transition into Golden Age;
+// Renaissance is ours (the way out of a long dark age).
 export const ERA_MATRIX: number[][] = [
-  /* Expansion     */[0.62, 0.14, 0.08, 0.06, 0.06, 0.03, 0.005, 0.005],
-  /* Consolidation */[0.18, 0.5, 0.12, 0.12, 0.05, 0.02, 0.005, 0.005],
-  /* Golden Age    */[0.15, 0.12, 0.6, 0.07, 0.03, 0.02, 0.005, 0.005],
-  /* Stagnation    */[0.08, 0.14, 0.03, 0.55, 0.1, 0.04, 0.05, 0.01],
-  /* War           */[0.05, 0.2, 0.01, 0.15, 0.45, 0.04, 0.09, 0.01],
-  /* Pandemic      */[0.05, 0.25, 0.01, 0.2, 0.05, 0.4, 0.04, 0.0],
-  /* Collapse      */[0.01, 0.05, 0.0, 0.2, 0.08, 0.03, 0.48, 0.15],
+  /* Expansion     */[0.55, 0.24, 0.09, 0.04, 0.05, 0.02, 0.01, 0.0],
+  /* Consolidation */[0.2, 0.5, 0.13, 0.1, 0.04, 0.02, 0.01, 0.0],
+  /* Golden Age    */[0.2, 0.17, 0.47, 0.1, 0.03, 0.02, 0.01, 0.0],
+  /* Stagnation    */[0.08, 0.23, 0.04, 0.5, 0.08, 0.03, 0.04, 0.0],
+  /* War           */[0.05, 0.32, 0.02, 0.15, 0.35, 0.04, 0.07, 0.0],
+  /* Pandemic      */[0.03, 0.33, 0.01, 0.25, 0.06, 0.25, 0.07, 0.0],
+  /* Collapse      */[0.01, 0.05, 0.0, 0.12, 0.05, 0.01, 0.7, 0.06],
   /* Renaissance   */[0.3, 0.15, 0.2, 0.05, 0.03, 0.02, 0.0, 0.25],
 ];
 
-// growth, research, launch, stability drift/yr, death, war-prob multiplier
+// growth, research, launch, stability drift/yr, death, war-prob multiplier (bible §5.1)
 export const ERA_FX: { growth: number; research: number; launch: number; stab: number; death: number; war: number }[] = [
-  { growth: 1.15, research: 1.1, launch: 1.6, stab: 0.002, death: 1, war: 1 },
-  { growth: 1.0, research: 1.05, launch: 0.9, stab: 0.006, death: 1, war: 0.6 },
-  { growth: 1.1, research: 1.6, launch: 1.2, stab: 0.008, death: 0.9, war: 0.3 },
-  { growth: 0.85, research: 0.6, launch: 0.5, stab: -0.003, death: 1.05, war: 1.2 },
-  { growth: 0.7, research: 0.8, launch: 0.6, stab: -0.012, death: 1.5, war: 6 },
-  { growth: 0.6, research: 0.7, launch: 0.3, stab: -0.008, death: 2.5, war: 0.8 },
-  { growth: 0.4, research: 0.2, launch: 0.1, stab: -0.02, death: 2, war: 2 },
+  { growth: 1.05, research: 1.1, launch: 1.5, stab: 0.002, death: 1, war: 1 },
+  { growth: 1.0, research: 1.0, launch: 0.9, stab: 0.006, death: 1, war: 0.6 },
+  { growth: 0.95, research: 1.3, launch: 1.3, stab: 0.008, death: 0.95, war: 0.3 },
+  { growth: 0.9, research: 0.7, launch: 0.5, stab: -0.003, death: 1.05, war: 1.2 },
+  { growth: 0.9, research: 0.6, launch: 0.6, stab: -0.012, death: 1.1, war: 6 },
+  { growth: 0.95, research: 0.7, launch: 0.4, stab: -0.008, death: 1.3, war: 0.8 },
+  { growth: 0.8, research: 0.1, launch: 0.05, stab: -0.02, death: 1.5, war: 2 },
   { growth: 1.05, research: 1.8, launch: 1.0, stab: 0.01, death: 0.95, war: 0.5 },
 ];
 

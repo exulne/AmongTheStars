@@ -46,7 +46,7 @@ function sameState(a: SimState, b: SimState): string | null {
 function runSeed(world: World, seed: number, det: boolean): SeedResult {
   const fails: string[] = [];
   const fail = (m: string) => { if (fails.length < 12) fails.push(m); };
-  const t0 = performance.now();
+  let simMs = 0;
   const e = new Engine(world, seed);
   const earth = world.earth, mars = world.mars;
   const nT = TECHS.length;
@@ -58,6 +58,7 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
   const pending = new Map<number, SimState>();
   const targets = new Map<number, { from: number; snap: SimState }>();
   let lastLiving = new Uint8Array(world.bodies.length);
+  const everLived = new Uint8Array(world.bodies.length);
   let churn = 0;
 
   while (!e.done) {
@@ -69,7 +70,9 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
     }
     const tg = targets.get(step);
     if (tg) pending.set(step, e.snapshot());
+    const ts = performance.now();
     e.step();
+    simMs += performance.now() - ts;
     const st = e.st, S = st.S, y = e.years[st.step - 1];
 
     // techs never un-research, and never date from the future
@@ -77,6 +80,7 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
       const d = st.techDone[i];
       if (prevTech[i] >= 0 && d !== prevTech[i]) fail(`tech ${TECHS[i].id} changed ${prevTech[i]} -> ${d} at ${y}`);
       if (d > y) fail(`tech ${TECHS[i].id} done in future ${d} > ${y}`);
+      if (d >= 0 && YEAR0 + d < TECHS[i].earliest - 0.25 * (TECHS[i].earliest - YEAR0)) fail(`tech ${TECHS[i].id} landed in ${YEAR0 + d}, before its floor`);
       if (d >= 0) for (const r of TECHS[i].req) if (st.techDone[techAt(r)] < 0 || st.techDone[techAt(r)] > d) fail(`tech ${TECHS[i].id} before prerequisite ${r}`);
       prevTech[i] = d;
     }
@@ -92,7 +96,8 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
       if (stg !== STAGE.NONE) nonNone++;
       if (LIVING(stg)) {
         living++; nowLiving[b] = 1;
-        if (!lastLiving[b] && step > 0) churn++;
+        if (!lastLiving[b] && everLived[b]) churn++;
+        everLived[b] = 1;
         if (stg >= STAGE.COLONY && Number.isNaN(firstStarColony) && world.bodies[b].system !== 0) firstStarColony = YEAR0 + y;
       }
       if (stg === STAGE.SURVEY) survey++;
@@ -143,10 +148,11 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
     }
   }
 
-  // exact replay from snapshots (what the worker relies on)
-  for (const [to, { from, snap }] of targets) {
-    const r = new Engine(world, seed);
-    r.logEvents = false;
+  // exact replay from snapshots (what the worker relies on). One replay engine is
+  // reused, latest checkpoint first, so stale scratch from a later step would show.
+  const r = new Engine(world, seed);
+  r.logEvents = false;
+  for (const [to, { from, snap }] of [...targets].sort((a, b) => b[0] - a[0])) {
     r.restore(snap);
     while (r.st.step < to) r.step();
     const want = pending.get(to)!;
@@ -191,7 +197,7 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
   const popAt: Record<number, number> = {}, offAt: Record<number, number> = {};
   for (const yr of [2100, 2140, 2200, 2540, 3040, 5040, 12040]) { popAt[yr] = col(GM.pop, stepOf(yr - YEAR0)); offAt[yr] = col(GM.offEarth, stepOf(yr - YEAR0)); }
   return {
-    seed, ms: performance.now() - t0, fails, tech,
+    seed, ms: simMs, fails, tech,
     firstStar: firstYear((s) => col(GM.interstellarPop, s) > 0), firstStarColony,
     popAt, offAt, marsAt2100, marsBiggest2140, earthMin, earthMinYear,
     reach: col(GM.reach, last), systems: col(GM.systems, last), kardashev: col(GM.kardashev, last),
@@ -242,9 +248,9 @@ function report(rs: SeedResult[]): void {
   row('factions at end', rs.map((r) => r.factions));
   row('longest dark age (yr)', rs.map((r) => r.longestDark));
   row('longest war era (yr)', rs.map((r) => r.longestWar), '< ~200');
-  row('settlements (re)entering life', rs.map((r) => r.churn));
+  row('settlements re-founded', rs.map((r) => r.churn), 'few');
   row('max pop growth (/yr)', rs.map((r) => r.maxPopGrowth));
-  row('runtime (ms)', rs.map((r) => r.ms), '<3000');
+  row('engine time (ms, contended)', rs.map((r) => r.ms), '<3000');
   console.log(`\nMars biggest colony at 2140: ${rs.filter((r) => r.marsBiggest2140).length}/${n} seeds`);
   console.log(`Earth below 4e9 at some point: ${rs.filter((r) => r.earthMin < 4e9).length}/${n} seeds`);
   console.log(`dark age >= 200 yr: ${rs.filter((r) => r.longestDark >= 200).length}/${n} seeds`);
