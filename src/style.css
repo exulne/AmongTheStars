@@ -341,3 +341,25 @@ input.tl-big:focus { outline: none; border-bottom-color: var(--accent); }
 .ex-story { font-size: 0.8125rem; line-height: 1.5; margin: 0.4rem 0; }
 .ex-key { font-size: 0.66rem; margin: 0.6rem 0 0; }
 .ex-key .ex-tag { margin: 0 0.15em 0 0; }
+
+/* the Starship's computer: docked bottom-left while aboard */
+.ship-console { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(var(--bottom-h, 200px) + 12px); width: min(23rem, 42vw); max-height: 44vh; display: flex; flex-direction: column; gap: 0.4rem; padding: 0.7rem 0.8rem; background: var(--wash); border-top: 1px solid var(--faint); z-index: 5; font-size: 0.8125rem; }
+.ship-console header { display: flex; align-items: baseline; gap: 0.8rem; flex-wrap: wrap; }
+.ship-console header b { font-weight: 400; color: var(--accent); letter-spacing: 0.02em; }
+.ship-console .views { display: flex; gap: 0.6rem; margin-left: auto; }
+.ship-console .views [aria-pressed="true"] { color: var(--accent); text-decoration-color: var(--accent); }
+.ship-log { overflow-y: auto; min-height: 3rem; display: grid; gap: 0.3rem; scrollbar-width: thin; }
+.ship-log .msg { margin: 0; line-height: 1.45; }
+.ship-log .you { color: var(--quiet); }
+.ship-log .you::before { content: '› '; }
+.ship-log .sys { color: var(--quiet); font-style: italic; font-size: 0.75rem; }
+.ship-chips { display: flex; flex-wrap: wrap; gap: 0.2rem 0.8rem; font-size: 0.75rem; }
+.ship-say { display: flex; gap: 0.6rem; align-items: baseline; border-top: 1px solid var(--faint); padding-top: 0.45rem; }
+.ship-say input { flex: 1; min-width: 0; background: transparent; border: 0; border-bottom: 1px solid var(--rule); color: var(--ink); font: inherit; padding: 0.15rem 0; }
+.ship-say input:focus { outline: none; border-bottom-color: var(--accent); }
+.ship-say .mic.on { color: var(--accent); }
+#board[aria-pressed="true"] { color: var(--accent); }
+.aboard .legend { display: none; }
+@media (max-width: 40rem) {
+  .ship-console { left: 0; right: 0; width: auto; max-height: 38vh; bottom: var(--bottom-h, 200px); }
+}

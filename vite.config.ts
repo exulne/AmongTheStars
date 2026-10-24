@@ -11,7 +11,7 @@ function stamp() {
   const git = (cmd: string) => { try { return execSync(cmd, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { return ''; } };
   const sha = git('git rev-parse --short HEAD') || 'unknown';
   const dirty = git('git status --porcelain --untracked-files=no -- src') !== '';
-  const RULES = ['catalog', 'engine', 'world', 'rng', 'metrics', 'demography', 'ledger', 'invent'].map((f) => `src/sim/${f}.ts`);
+  const RULES = ['catalog', 'engine', 'world', 'rng', 'metrics', 'demography', 'ledger', 'invent', 'ages', 'civ', 'polity'].map((f) => `src/sim/${f}.ts`);
   const h = createHash('sha256');
   for (const f of RULES) { try { h.update(readFileSync(f)); } catch { h.update(f); } }
   let trainedAt = '';
@@ -20,7 +20,6 @@ function stamp() {
 }
 
 // Single-file build: the deploy target is one self-contained HTML page.
-// ENTRY=ship builds the starship game (ship.html) instead of the sim (index.html).
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const key = env.ELEVENLABS_API_KEY;
@@ -31,9 +30,6 @@ export default defineConfig(({ mode }) => {
     build: {
       target: 'es2022',
       chunkSizeWarningLimit: 4000,
-      // the game builds next to the sim, not over it
-      outDir: process.env.ENTRY === 'ship' ? 'dist-ship' : 'dist',
-      rollupOptions: { input: process.env.ENTRY === 'ship' ? 'ship.html' : 'index.html' },
     },
     server: {
       // ElevenLabs goes through the dev server so the API key stays out of the page

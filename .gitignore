@@ -1,6 +1,5 @@
 node_modules
 dist
-dist-ship
 .DS_Store
 .claude/worktrees
 ml/.venv

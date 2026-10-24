@@ -22,6 +22,8 @@ import { Timeline } from './ui/timeline.ts';
 import { LocalCalendar } from './ui/calendar.ts';
 import { EraBanner, eraRun, eraTitle } from './ui/eraBanner.ts';
 import { EraMood } from './view/eraMood.ts';
+import { ShipConsole } from './ship/console.ts';
+import { Voyage } from './ship/voyage.ts';
 import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionCss, stageLegend, type ColorMode } from './view/colorModes.ts';
 import { StreetView } from './view/street.ts';
 import { Picker } from './explain/picker.ts';
@@ -50,7 +52,7 @@ app.innerHTML = `
       <button id="reroll" class="link" type="button">Another future</button>
       <button id="chronicle" class="link" type="button">Chronicle</button>
       <button id="data" class="link" type="button" aria-pressed="false">Data</button>
-      <a id="starship" class="link" href="ship.html" title="Fly there yourself in the Starship, in this year">Fly the Starship</a>
+      <button id="board" class="link" type="button" aria-pressed="false" title="Fly this future yourself: tell the ship where and when">Board the Starship</button>
       <span class="status num" aria-live="polite"></span>
     </div>
   </header>
@@ -108,6 +110,9 @@ controls.zoomSpeed = 1.3;
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
+// the Starship rides in its own layer over the sim (before bloom, so its engines glow)
+const voyage = new Voyage(renderer);
+composer.addPass(voyage.pass);
 const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.7, 0.5, 0.55);
 composer.addPass(bloom);
 // the era tints the whole picture: grey and stuttering in a collapse, warm in a golden age
@@ -786,24 +791,7 @@ function refreshForecast(): void {
 timeline.onToggle = (playing) => { if (!playing) refreshForecast(); };
 charts.setFan((key) => (fcOn && fc ? fanFor(fc, key) : null));
 
-/** The Starship link carries the selected real world (the ship knows the Solar System and the real
- *  nearby stars) and the current year, as a spoken-style order in the hash. */
-const shipLink = app.querySelector<HTMLAnchorElement>('#starship');
-function updateShipLink(): void {
-  if (!shipLink) return;
-  const sel = ctx.selected;
-  let place = '';
-  if (sel?.kind === 'body') {
-    const b = world.bodies[sel.id], sys = world.systems[b.system];
-    place = sys.id === 0 ? b.name : sys.real ? sys.name : '';
-  } else if (sel?.kind === 'system' && world.systems[sel.id].real) place = world.systems[sel.id].name;
-  const yearCal = Math.round(2040 + ctx.year);
-  const order = place ? `take me to ${place} in the year ${yearCal}` : `go to the year ${yearCal}`;
-  shipLink.href = `ship.html#${order.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
-}
-
 function refreshPanels(): void {
-  updateShipLink();
   const step = Math.max(0, sim.stepAt(ctx.year));
   const row = (col: number) => sim.series[step * NGM + col];
   inspector.render({
@@ -1059,6 +1047,81 @@ search.onPick = (h) => {
   }
 };
 
+// ------------------------------------------------------------------ the Starship
+
+/** A run of the timeline to a target year: the chrono bubble follows how fast the year moves. */
+let chronoTrip: { from: number; to: number; t: number; dur: number; done: (y: number) => void } | null = null;
+
+function placeLine(): string {
+  const yr = Math.round(2040 + ctx.year), era = ctx.snap?.globals.era ?? '';
+  const sel = ctx.selected;
+  const where = level === 'street' ? `in ${world.bodies[ctx.body].name} settlement ${ctx.city}`
+    : level === 'planet' ? `over ${world.bodies[ctx.body].name}`
+    : sel?.kind === 'body' ? `near ${world.bodies[sel.id].name}`
+    : level === 'system' ? `in the ${world.systems[ctx.system].name} system`
+    : level === 'local' ? 'among the stars around the Sun' : level === 'galaxy' ? 'above the Milky Way' : 'out in the Local Group';
+  const b = level === 'planet' || level === 'street' ? ctx.body : sel?.kind === 'body' ? sel.id : -1;
+  const people = b >= 0 && alive(stageOf(ctx.snap, b)) ? ` ${fmtNum(popOf(ctx.snap, b))} people live there.` : '';
+  return `We're ${where}, in ${yr}${era ? `, during ${/^[AEIOU]/.test(era) ? 'an' : 'a'} ${era.toLowerCase()}` : ''}.${people}`;
+}
+
+const shipConsole = new ShipConsole({
+  first: 2040, last: 2040 + 10000,
+  year: () => Math.round(2040 + ctx.year),
+  lookup: (name) => find(name).find((x) => x.kind !== 'note' && x.kind !== 'tech')?.name ?? null,
+  goto(name) {
+    const h = find(name).find((x) => x.kind !== 'note' && x.kind !== 'tech');
+    if (!h) return null;
+    search.onPick(h);
+    return h.name;
+  },
+  random({ habitable, kind }) {
+    const kinds: Record<string, string[]> = { ocean: ['ocean'], ice: ['ice', 'dwarf'], lava: ['lava'], gas: ['gas', 'icegiant'] };
+    const pool = (ctx.snap ? [...ctx.snap.settled] : []).filter((b) => {
+      const body = world.bodies[b];
+      if (kind && !kinds[kind]?.includes(body.kind)) return false;
+      if (habitable && body.hab < 0.3) return false;
+      return kind === 'gas' || alive(stageOf(ctx.snap, b));
+    });
+    if (kind === 'gas' && !pool.length) world.bodies.forEach((b) => { if (b.kind === 'gas' || b.kind === 'icegiant') pool.push(b.id); });
+    if (!pool.length) return null;
+    const b = pool[Math.floor(Math.random() * pool.length)];
+    search.onPick({ kind: 'body', id: b, name: world.bodies[b].name, sub: '' });
+    return `${world.bodies[b].name}, ${world.systems[world.bodies[b].system].name}`;
+  },
+  timeTravel(cal) {
+    const to = Math.max(0, Math.min(cal - 2040, sim.done ? 10000 : sim.years[sim.frontier]));
+    return new Promise((done) => {
+      const d = Math.abs(to - ctx.year);
+      chronoTrip = { from: ctx.year, to, t: 0, dur: reducedMotion ? 0.01 : 1.8 + 1.1 * Math.log10(1 + d), done: (y) => done(Math.round(2040 + y)) };
+    });
+  },
+  status: placeLine,
+  setView: (v) => voyage.setView(v),
+  leave: () => board(false),
+});
+app.append(shipConsole.el);
+const boardBtn = app.querySelector<HTMLButtonElement>('#board')!;
+function board(on: boolean): void {
+  voyage.board(on);
+  boardBtn.textContent = on ? 'Leave the Starship' : 'Board the Starship';
+  boardBtn.setAttribute('aria-pressed', String(on));
+  document.body.classList.toggle('aboard', on);
+  if (on) shipConsole.open(); else shipConsole.close();
+}
+boardBtn.addEventListener('click', () => board(!voyage.boarded));
+
+/** Light the hull from the star of the system or planet we're at, as the sim's camera sees it. */
+const lightDir = new THREE.Vector3();
+function shipLight(): void {
+  if (level === 'system' || level === 'planet' || level === 'street') {
+    lightDir.set(0, 0, 0).sub(camera.position);
+    if (level === 'planet') lightDir.set(400, 80, 120).sub(camera.position);
+    lightDir.applyQuaternion(camera.quaternion.clone().invert());
+    voyage.lightFrom(lightDir.set(-lightDir.x, lightDir.y, -lightDir.z));
+  } else voyage.lightFrom(lightDir.set(0.4, 0.8, 0.5));
+}
+
 // ------------------------------------------------------------------ go
 
 const fromHash = readHash();
@@ -1073,10 +1136,17 @@ if (fromHash.sel) {
 setLevel(fromHash.level ?? 'system', null, undefined, false);
 pendingYear = fromHash.year;
 
-let last = performance.now(), frame = 0;
+let last = performance.now(), frame = 0, lastYear = 0;
 function loop(now: number): void {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  if (chronoTrip) {
+    const c = chronoTrip;
+    c.t += dt;
+    const k = Math.min(1, c.t / c.dur), e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+    timeline.set(c.from + (c.to - c.from) * e, true);
+    if (k >= 1) { chronoTrip = null; c.done(ctx.year); }
+  }
   govern(dt);
   ctx.t += dt;
   motion += ((hovering ? 0 : 1) - motion) * (1 - Math.exp(-dt * 5));
@@ -1091,6 +1161,12 @@ function loop(now: number): void {
   }
   views[level].frame(ctx, dt);
   sky.position.copy(camera.position);
+  if (voyage.boarded) {
+    shipLight();
+    const fx = voyage.frame(dt, ctx.t, { camera, orbit: controls.target, jumping: busy || !!flight, yearRate: dt > 0 ? (ctx.year - lastYear) / dt : 0 });
+    shipConsole.engine.update(fx.throttle, fx.warp, fx.chrono, fx.chronoDir, chronoTrip ? Math.min(1, chronoTrip.t / chronoTrip.dur) : 0);
+  }
+  lastYear = ctx.year;
   eraMood.frame(dt, ctx.t, camera.aspect);
   composer.render();
   hover(now);
