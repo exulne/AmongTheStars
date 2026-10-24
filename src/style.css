@@ -264,3 +264,4 @@ input.tl-big:focus { outline: none; border-bottom-color: var(--accent); }
 .chron-tools { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; font-size: 0.8rem; margin: 0.4rem 0 0.6rem; }
 .chron-tools input[type=search] { flex: 1 1 10rem; min-width: 0; background: transparent; border: 0; border-bottom: 1px solid var(--rule); font: inherit; color: var(--ink); padding: 0.1rem 0; }
 .techs .blurb .link { font-size: inherit; }
+.society-portrait { font-size: 0.875rem; line-height: 1.55; margin: 0 0 0.6rem; }

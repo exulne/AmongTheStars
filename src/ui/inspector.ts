@@ -12,6 +12,7 @@ import type { Biography, PersonBrief } from '../sim/lives.ts';
 import { biographyHtml, residentsHtml } from './peoplePanel.ts';
 
 type Residents = { total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] };
+type SocietyView = { government: string; governmentWhy: string; language: string; faith: string | null; art: string; architecture: { name: string; materials: string }; daily: Record<string, string>; mood: string; sentences: string[] };
 type Seg = string | { t: string; kind: 'person' | 'body'; id: string | number };
 type Entry = { year: number; type: number; segs: Seg[]; weight: number };
 export function segsHtml(segs: Seg[]): string {
@@ -22,6 +23,7 @@ export function segsHtml(segs: Seg[]): string {
 export interface PeopleApi {
   chronicle(from: number, to: number, opts: { body?: number; query?: string; limit?: number; minWeight?: number }): Promise<{ entries: Entry[]; pending?: boolean }>;
   inventions(): Promise<{ list: { tech: number; year: number; entry: Entry | null }[]; pending?: boolean }>;
+  society(body: number, year: number): Promise<{ society: SocietyView | null; pending?: boolean }>;
   residents(body: number, year: number, offset: number, count: number): Promise<Residents & { pending?: boolean }>;
   person(id: string, year: number): Promise<{ bio: Biography | null; pending?: boolean }>;
   residentAt(body: number, year: number, k: number): Promise<{ person: string | null; pending?: boolean }>;
@@ -62,12 +64,25 @@ export class Inspector {
   private lastBio: Biography | null = null;
   private inflight = new Set<string>();
   /** drop everything cached for the previous future */
-  resetPeople(): void { this.residentsCache.clear(); this.bioCache.clear(); this.chronCache.clear(); this.inv = null; this.lastBio = null; this.personId = null; }
+  resetPeople(): void { this.socCache.clear(); this.residentsCache.clear(); this.bioCache.clear(); this.chronCache.clear(); this.inv = null; this.lastBio = null; this.personId = null; }
   chronicleOpen = false;
   private chronQuery = '';
   private chronBig = true;
   private chronCache = new Map<string, Entry[]>();
   private inv: Map<number, Entry | null> | null = null;
+  private socCache = new Map<string, SocietyView | null>();
+
+  private society(c: InspectorCtx, body: number): string {
+    const key = `${body}:${Math.floor(c.year / 4)}`;
+    const soc = this.socCache.get(key);
+    if (soc === undefined) this.fetch(key, () => this.api!.society(body, c.year), (v: { society: SocietyView | null }) => {
+      if (this.socCache.size > 100) this.socCache.clear();
+      this.socCache.set(key, v.society);
+    });
+    if (!soc) return '<p class="muted">Asking around…</p>';
+    return `<p class="society-portrait">${soc.sentences.map(esc).join(' ')}</p>
+      <dl class="kv"><dt>Government</dt><dd>${esc(soc.government)}</dd><dt>Language</dt><dd>${esc(soc.language)}</dd>${soc.faith ? `<dt>Faith</dt><dd>${esc(soc.faith)}</dd>` : ''}<dt>Art</dt><dd>${esc(soc.art)}</dd><dt>Buildings</dt><dd>${esc(soc.architecture.materials)}</dd><dt>Mood</dt><dd>${esc(soc.mood)}</dd></dl>`;
+  }
   onYear: (y: number) => void = () => {};
 
   private inventions(): Map<number, Entry | null> | null {
@@ -336,6 +351,7 @@ export class Inspector {
     return `${header}${fly}
       ${this.kv([...(city === undefined ? [] : [['People in this settlement', fmtNum(cityPop)] as [string, string]]), [city === undefined ? 'Population' : 'Whole world', fmtNum(pop)], ['Allegiance', esc(faction)], ['Faith', `#${v('culture')}`]])}
       ${this.historyChart(c)}
+      <h3>Society in ${fmtYear(c.year)}</h3>${this.society(c, id)}
       <h3>Residents</h3>${this.people(c, id, cityPop, offset)}
       <h3>All metrics</h3>${this.kv(metrics)}
       <h3>World</h3>${phys}
