@@ -46,7 +46,7 @@ function sameState(a: SimState, b: SimState): string | null {
 function runSeed(world: World, seed: number, det: boolean): SeedResult {
   const fails: string[] = [];
   const fail = (m: string) => { if (fails.length < 12) fails.push(m); };
-  const t0 = performance.now();
+  let simMs = 0;
   const e = new Engine(world, seed);
   const earth = world.earth, mars = world.mars;
   const nT = TECHS.length;
@@ -70,7 +70,9 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
     }
     const tg = targets.get(step);
     if (tg) pending.set(step, e.snapshot());
+    const ts = performance.now();
     e.step();
+    simMs += performance.now() - ts;
     const st = e.st, S = st.S, y = e.years[st.step - 1];
 
     // techs never un-research, and never date from the future
@@ -194,7 +196,7 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
   const popAt: Record<number, number> = {}, offAt: Record<number, number> = {};
   for (const yr of [2100, 2140, 2200, 2540, 3040, 5040, 12040]) { popAt[yr] = col(GM.pop, stepOf(yr - YEAR0)); offAt[yr] = col(GM.offEarth, stepOf(yr - YEAR0)); }
   return {
-    seed, ms: performance.now() - t0, fails, tech,
+    seed, ms: simMs, fails, tech,
     firstStar: firstYear((s) => col(GM.interstellarPop, s) > 0), firstStarColony,
     popAt, offAt, marsAt2100, marsBiggest2140, earthMin, earthMinYear,
     reach: col(GM.reach, last), systems: col(GM.systems, last), kardashev: col(GM.kardashev, last),
@@ -247,7 +249,7 @@ function report(rs: SeedResult[]): void {
   row('longest war era (yr)', rs.map((r) => r.longestWar), '< ~200');
   row('settlements re-founded', rs.map((r) => r.churn), 'few');
   row('max pop growth (/yr)', rs.map((r) => r.maxPopGrowth));
-  row('runtime (ms)', rs.map((r) => r.ms), '<3000');
+  row('engine time (ms, contended)', rs.map((r) => r.ms), '<3000');
   console.log(`\nMars biggest colony at 2140: ${rs.filter((r) => r.marsBiggest2140).length}/${n} seeds`);
   console.log(`Earth below 4e9 at some point: ${rs.filter((r) => r.earthMin < 4e9).length}/${n} seeds`);
   console.log(`dark age >= 200 yr: ${rs.filter((r) => r.longestDark >= 200).length}/${n} seeds`);

@@ -57,7 +57,8 @@ interface Fx {
 }
 const MULT_KEYS = new Set(['extract', 'habitat', 'lifeSupport', 'energy', 'launch', 'research', 'productivity', 'death', 'growth', 'war', 'secession', 'voyage', 'divergence']);
 
-const RESEARCH = 6; // calibrates knowledge output to the tech tree's milestone years
+const RESEARCH = 10; // calibrates knowledge output to the tech tree's milestone years
+const SHIP_MIN_HAB = 0.15;
 const MIGRATE = 0.001; // share of a town's people per year who move to younger settlements in the same system
 const REACH_OUTER = 1, REACH_RAD = 2, REACH_DEEP = 4;
 const MINOR = new Set([EV.Famine, EV['Rich deposit found'], EV['Baby boom'], EV.Revolt, EV['Habitat breach'], EV['Probe survey']]);
@@ -130,7 +131,7 @@ export class Engine {
       // log-normal luck on every tech; speculative tech has fat tails
       const u = Math.max(1e-9, next(rng)), v = next(rng);
       const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
-      const sigma = TECHS[i].era === 4 ? 1.4 : TECHS[i].era === 3 ? 0.5 : 0.35;
+      const sigma = TECHS[i].era === 4 ? 1.4 : TECHS[i].era === 3 ? 0.7 : 0.5;
       this.techCostMult[i] = Math.exp(sigma * z);
     }
     this.feasible = Uint8Array.from(TECHS, (t) => (next(rng) < (t.feasible ?? 1) ? 1 : 0));
@@ -544,7 +545,7 @@ export class Engine {
         }
       }
       // interstellar: needs a drive, a colony with money, and a stable home
-      if (fx.shipSpeed <= 0 || stg < (fx.shipSpeed >= 0.1 ? STAGE.TOWN : STAGE.CITY)) continue;
+      if (fx.shipSpeed <= 0 || stg < STAGE.CITY) continue;
       const shipCost = 4e12 / Math.sqrt(fx.productivity);
       const pShip = dt * 0.004 * eraLaunch * Math.min(4, Math.sqrt(gdp / shipCost)) * (isEarth ? 3 : 1);
       if (this.rand() < pShip && S[o + F.capital] > shipCost) {
@@ -586,7 +587,8 @@ export class Engine {
         const ts = S[t * NF + F.stage];
         if (!this.bSettle[t]) continue;
         if (survey ? ts !== STAGE.NONE : ts !== STAGE.NONE && ts !== STAGE.SURVEY && ts !== STAGE.ABANDONED) continue;
-        if (!survey && ((this.bHab[t] < 0.1 && this.fx.habHostile < 0.1) || S[t * NF + F.inbound] > 0)) continue;
+        // colony ships only go where people can live off the land; the rest of a system fills in locally
+        if (!survey && (this.bHab[t] < SHIP_MIN_HAB || S[t * NF + F.inbound] > 0)) continue;
         seen++;
         const sc = (this.bHab[t] + 0.1 * (this.bRes[t * 5] + this.bRes[t * 5 + 1]) + (ts === STAGE.SURVEY ? 0.15 : 0)) / Math.pow(d + 3, 1.3) * (0.6 + 0.8 * this.rand());
         if (sc > bestScore) { bestScore = sc; best = t; }
