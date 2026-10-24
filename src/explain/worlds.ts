@@ -8,8 +8,8 @@ import * as THREE from 'three';
 import { STAGE, STAGE_NAMES, TECHS } from '../sim/catalog.ts';
 import type { Body, World } from '../sim/world.ts';
 import { fmtNum } from '../ui/format.ts';
-import { AU_M, G_SI, L_SUN_W, fmtKm, fmtW, mainSequence, sig, specNum } from './astro.ts';
-import { addCpuSet, addGpuSet, nearestPoint, segDist, type Probe } from './picker.ts';
+import { an, AU_M, G_SI, L_SUN_W, fmtKm, fmtW, mainSequence, sig, specNum } from './astro.ts';
+import { addCpuSet, addGpuSet, segDist, type Probe } from './picker.ts';
 import { h01, pick, pointWorld, registerExplainer, type ExCtx, type Explanation, type Fact } from './registry.ts';
 import { fieldAt, isAlive, popAt, stageAt } from './simInfo.ts';
 
@@ -117,7 +117,7 @@ function asteroidCard(pts: THREE.Points, b: BeltInfo, i: number, c: ExCtx): Expl
   return {
     eyebrow: `Asteroid in the ${b.label}`,
     title: a.name,
-    lede: `A ${a.D < 1 ? 'small' : a.D > 20 ? 'large' : ''} ${K.name.split(',')[0]} ${a.cls === 'K' ? '' : 'asteroid '}${a.au.toFixed(1)} AU from ${w.systems[b.sys].name === 'Sol' ? 'the Sun' : w.systems[b.sys].name}.`.replace(/\s+/g, ' '),
+    lede: `${an(`${a.D < 1 ? 'small' : a.D > 20 ? 'large' : ''} ${K.name.split(',')[0]}`.trim()).replace(/^a/, 'A')} ${a.cls === 'K' ? '' : 'asteroid '}${a.au.toFixed(1)} AU from ${w.systems[b.sys].name === 'Sol' ? 'the Sun' : w.systems[b.sys].name}.`.replace(/\s+/g, ' '),
     facts, why,
     links: mine.by >= 0 ? [{ label: w.bodies[mine.by].name, act: 'body', id: mine.by }] : undefined,
   };
@@ -145,7 +145,7 @@ function collectorCard(pts: THREE.Points, sys: number, i: number, c: ExCtx): Exp
   const au = (0.3 + 0.4 * (R - 4.2) / 1.4) * Math.sqrt(s.lum);
   const mstar = mainSequence(specNum(s.spec)).mass;
   let energy = 0, ops: number[] = [];
-  for (const b of s.bodies) if (isAlive(stageAt(c.snap, b))) { energy += fieldAt(c.snap, b, 'energy'); if (stageAt(c.snap, b) === STAGE.MEGA) ops.push(b); }
+  for (const b of s.bodies) if (isAlive(stageAt(c.snap, b))) { energy += fieldAt(c.snap, b, 'energy'); if (stageAt(c.snap, b) >= STAGE.MEGA) ops.push(b); }
   ops = ops.sort((p, q) => popAt(c.snap, q) - popAt(c.snap, p));
   const star = s.lum * L_SUN_W;
   const total = Math.min(star, Math.max(energy, star * 1e-6));
@@ -166,7 +166,7 @@ function collectorCard(pts: THREE.Points, sys: number, i: number, c: ExCtx): Exp
       { k: 'Orbit', v: `${au.toFixed(2)} AU, ${(365.25 * Math.pow(au, 1.5) / Math.sqrt(mstar)).toFixed(0)} days round, tilted ${incl.toFixed(0)}°`, t: 'P' },
       { k: 'Sunlight there', v: `${sig(flux / 1361)}× Earth's`, t: 'E' },
       { k: 'Running temperature', v: `${Math.round(temp)} K`, t: 'E' },
-      { k: 'Operated by', v: ops.length ? ops.map((b) => w.bodies[b].name).join(', ') : 'nobody: abandoned', t: 'P' },
+      { k: 'Operated by', v: ops.length ? ops.slice(0, 4).map((b) => w.bodies[b].name).join(', ') + (ops.length > 4 ? ` and ${ops.length - 4} more worlds` : '') : 'nobody: abandoned', t: 'P' },
     ],
     why: 'A Kardashev Type II step: power on this scale runs whole planets of computers, sails between stars and the terraforming of worlds.',
     links: ops.slice(0, 3).map((b) => ({ label: w.bodies[b].name, act: 'body' as const, id: b })),
@@ -273,7 +273,6 @@ function stageFor(i: number, count: (st: number) => number): number {
   return STAGE.MEGA;
 }
 export const satCount = (st: number) => Math.min(900, 30 + st * st * 22);
-export const habCount = (st: number) => (st >= STAGE.CITY ? Math.min(400, Math.floor(Math.pow(st - 4, 2) * 18)) : 0);
 
 const SAT_JOBS = [
   ['communications relay', 'weather and surface watch', 'traffic control beacon', 'mapping'],
@@ -304,71 +303,16 @@ function satCard(pts: THREE.Points, id: number, i: number, c: ExCtx): Explanatio
   return {
     eyebrow: `Satellite of ${b.name}`,
     title: `${b.name.slice(0, 3).toUpperCase()}-${(i + 1).toString().padStart(3, '0')}`,
-    lede: `A ${job} satellite in ${shell === 0 ? 'low' : shell === 1 ? 'middle' : 'high'} orbit, operated from ${b.name}.`,
+    lede: `${an(job).replace(/^a/, 'A')} satellite in ${shell === 0 ? 'low' : shell === 1 ? 'middle' : 'high'} orbit, operated from ${b.name}.`,
     facts: [
       { k: 'Job', v: job, t: 'P' },
       { k: 'Height', v: fmtKm(alt), t: 'P' },
       { k: 'Goes round in', v: period > 120 ? `${(period / 60).toFixed(1)} hours` : `${Math.round(period)} minutes`, t: 'E' },
       { k: 'Tilt to the equator', v: `${Math.round(incl)}°`, t: 'P' },
-      { k: 'Launched', v: `once ${b.name} grew to a ${STAGE_NAMES[since].toLowerCase()}`, t: 'P' },
+      { k: 'Launched', v: `once ${b.name} grew to ${an(STAGE_NAMES[since].toLowerCase())}`, t: 'P' },
       { k: 'Satellites here now', v: fmtNum(satCount(stageAt(c.snap, id))), t: 'P' },
     ],
     why: 'Nothing on a new world works without them: no maps, no clocks, no talking past the horizon.',
-    links: [{ label: b.name, act: 'body', id }],
-  };
-}
-
-const HAB_NAMES = ['Island', 'Haven', 'Meridian', 'Concord', 'Halcyon', 'Arbor', 'Lantern', 'Cradle', 'Bastion', 'Orchard', 'Vesper', 'Kepler', 'Tsiolkovsky', 'O\'Neill', 'Bernal', 'Stanford', 'Ceres Gate', 'New Hope', 'Arcadia', 'Solace'];
-export function explainHabitats(kind: string, obj: THREE.Object3D, list: () => { meshes: THREE.InstancedMesh[]; nTor: number }, body: () => number): void {
-  const m4 = new THREE.Matrix4(), v = new THREE.Vector3();
-  const at = (i: number, out: THREE.Vector3) => {
-    const { meshes, nTor } = list();
-    const [cyl, tor] = meshes;
-    if (!cyl) return null;
-    const mesh = i < nTor ? tor : cyl, k = i < nTor ? i : i - nTor;
-    if (k >= mesh.count) return null;
-    mesh.getMatrixAt(k, m4);
-    return out.setFromMatrixPosition(m4).applyMatrix4(mesh.matrixWorld);
-  };
-  registerExplainer(kind, {
-    obj,
-    explain: (i, c) => habCard(i, body(), list().nTor, c),
-    name: (i) => habName(body(), i, list().nTor),
-    locate: at,
-  });
-  addCpuSet({
-    kind, obj, prio: 2,
-    hit: (p) => { const { meshes } = list(); const n = meshes.reduce((s, m) => s + m.count, 0); return nearestPoint(n, (i, out) => at(i, out), p); },
-  });
-  void v;
-}
-function habName(b: number, i: number, nTor: number): string {
-  return `${HAB_NAMES[Math.floor(h01(b, i, 3) * HAB_NAMES.length)]} ${['', 'II', 'III', 'IV', 'V', 'VI'][Math.floor(h01(b, i, 4) * 6)]}`.trim() + (i < nTor ? ' (torus)' : ' (cylinder)');
-}
-
-function habCard(i: number, id: number, nTor: number, c: ExCtx): Explanation {
-  const b = c.world.bodies[id];
-  const st = stageAt(c.snap, id), pop = popAt(c.snap, id);
-  const torus = i < nTor;
-  const n = habCount(st);
-  // people living in orbit: a few percent of a city's, a third of a megastructure civilisation's
-  const share = st >= STAGE.MEGA ? 0.3 : st >= STAGE.HUB ? 0.1 : 0.03;
-  const wSum = nTor * 1 + (n - nTor) * 40;
-  const cap = torus ? 140000 : 10_000_000;
-  const people = Math.min(cap, Math.round(pop * share * (torus ? 1 : 40) / Math.max(1, wSum)));
-  return {
-    eyebrow: `Orbital habitat of ${b.name}`,
-    title: habName(id, i, nTor).replace(/ \((torus|cylinder)\)$/, ''),
-    lede: torus ? 'A Stanford torus: a wheel of air and farmland spinning once a minute so the rim has Earth gravity.' : 'An O\'Neill cylinder: two counter-rotating cylinders with land strips inside and mirrors to let the sunlight in.',
-    facts: [
-      { k: 'Design', v: torus ? 'Stanford torus, 1.8 km across' : 'O\'Neill cylinder, 8 km wide, 32 km long', t: 'R' },
-      { k: 'Spin gravity', v: '1 g at the rim', t: 'R' },
-      { k: 'People', v: `${fmtNum(people)} (counted in ${b.name}'s total)`, t: 'E' },
-      { k: 'Built to hold', v: fmtNum(cap), t: 'R' },
-      { k: 'Habitats round here', v: `${n} (${nTor} tori, ${n - nTor} cylinders)`, t: 'P' },
-      { k: 'Built', v: `after ${b.name} grew to a ${STAGE_NAMES[stageFor(i, habCount)].toLowerCase()}`, t: 'P' },
-    ],
-    why: 'Habitats make their own gravity and climate, so a civilisation that builds them no longer needs good planets: this is how a few worlds become trillions of people.',
     links: [{ label: b.name, act: 'body', id }],
   };
 }
@@ -405,9 +349,17 @@ export function explainElevators(kind: string, obj: THREE.Object3D, list: () => 
 function elevatorCard(i: number, id: number, n: number, c: ExCtx): Explanation {
   const b = c.world.bodies[id];
   const M = bodyMassKg(b), R = b.radius * 1000;
-  const T = (SPIN_H[b.name] ?? 10 + 30 * h01(id, 77)) * 3600;
+  // moons, and planets hugging a red or orange dwarf, are tidally locked: a day as long as their orbit
+  const sys = c.world.systems[b.system];
+  const locked = !SPIN_H[b.name] && (b.parent >= 0 || (b.a < 0.12 && specNum(sys.spec) >= 50));
+  const T = (SPIN_H[b.name] ?? (locked ? b.period * (b.parent >= 0 ? 24 : 8766) : 10 + 30 * h01(id, 77))) * 3600;
   let rSync = Math.cbrt((G_SI * M * T * T) / (4 * Math.PI * Math.PI));
   let anchor = 'synchronous orbit';
+  if (locked && b.parent < 0) {
+    // a locked world's synchronous orbit is far out; the ribbon hangs toward its star through the L1 point instead
+    const rL1 = b.a * AU_M * Math.cbrt(M / (3 * starMass(c.world, b.system) * 1.989e30));
+    if (rL1 < rSync) { rSync = rL1; anchor = `the L1 point toward ${sys.name}`; }
+  }
   if (b.parent >= 0) {
     // a slow-turning moon: the ribbon hangs toward its planet through the L1 point instead
     const P = c.world.bodies[b.parent];
@@ -421,66 +373,17 @@ function elevatorCard(i: number, id: number, n: number, c: ExCtx): Explanation {
   return {
     eyebrow: `Space elevator on ${b.name}`,
     title: `${b.name} elevator ${names[i] ?? i + 1}`,
-    lede: `A ribbon from the equator to a counterweight beyond ${anchor}, held taut by ${b.name}'s spin. Climbers ride it to orbit on electricity instead of rockets.`,
+    lede: `${anchor.startsWith('the L1') ? `A ribbon from the surface out through ${anchor}, held taut by the pull of what it points at.` : `A ribbon from the equator to a counterweight beyond ${anchor}, held taut by ${b.name}'s spin.`} Climbers ride it to orbit on electricity instead of rockets.`,
     facts: [
       { k: 'Length', v: fmtKm(len), t: 'E' },
       { k: 'Anchor point', v: `${anchor}, ${fmtKm(rSync / 1000 - b.radius)} up`, t: 'E' },
-      { k: `${b.name} turns once in`, v: SPIN_H[b.name] ? `${SPIN_H[b.name]} hours` : `${(T / 3600).toFixed(1)} hours`, t: SPIN_H[b.name] ? 'R' : 'P' },
+      { k: `${b.name} turns once in`, v: SPIN_H[b.name] ? `${SPIN_H[b.name]} hours` : T > 72 * 3600 ? `${(T / 86400).toFixed(1)} days${locked ? ', locked to its orbit' : ''}` : `${(T / 3600).toFixed(1)} hours`, t: SPIN_H[b.name] ? 'R' : locked ? 'E' : 'P' },
       { k: 'Ribbon', v: 'carbon nanotube or graphene composite', t: 'E' },
       { k: 'Climb to the top', v: climb > 48 ? `${(climb / 24).toFixed(0)} days at 200 km/h` : `${climb.toFixed(0)} hours at 200 km/h`, t: 'E' },
       { k: 'Technology since', v: built >= 0 ? yr(built) : '—', t: 'P' },
       { k: 'Elevators here', v: `${n}${n > 1 ? `; the second and third added once ${b.name} became a hub` : ''}`, t: 'P' },
     ],
     why: 'Lifting a kilogram to orbit drops from thousands of dollars by rocket to a few dollars of electricity: the whole economy of the world above changes.',
-    links: [{ label: b.name, act: 'body', id }],
-  };
-}
-
-export function explainRingWorld(kind: string, mesh: () => THREE.Mesh | null, obj: THREE.Object3D, body: () => number): void {
-  const A = new THREE.Vector3(), B = new THREE.Vector3();
-  registerExplainer(kind, {
-    obj,
-    explain: (_i, c) => ringWorldCard(body(), c),
-    name: (_i, c) => `${c.world.bodies[body()].name} orbital ring`,
-    locate: (_i, out) => { const m = mesh(); return m ? m.getWorldPosition(out) : null; },
-  });
-  addCpuSet({
-    kind, obj, prio: 0,
-    hit: (p) => {
-      const m = mesh();
-      if (!m) return null;
-      const R = (m.geometry as THREE.TorusGeometry).parameters.radius;
-      let d = Infinity;
-      for (let k = 0; k < 96; k++) {
-        const t0 = (k / 96) * Math.PI * 2, t1 = ((k + 1) / 96) * Math.PI * 2;
-        A.set(Math.cos(t0) * R, Math.sin(t0) * R, 0).applyMatrix4(m.matrixWorld);
-        B.set(Math.cos(t1) * R, Math.sin(t1) * R, 0).applyMatrix4(m.matrixWorld);
-        d = Math.min(d, segDist(A, B, p));
-      }
-      return d < 7 ? { i: 0, d } : null;
-    },
-  });
-}
-
-function ringWorldCard(id: number, c: ExCtx): Explanation {
-  const b = c.world.bodies[id];
-  const r = b.radius * 1.7;
-  const width = Math.max(50, b.radius * 0.01);
-  const area = 2 * Math.PI * r * width;
-  const pop = popAt(c.snap, id);
-  return {
-    eyebrow: `Megastructure at ${b.name}`,
-    title: `${b.name} orbital ring`,
-    lede: `A continuous band of habitat circling ${b.name}, built once the world became a megastructure civilisation. It carries cities, docks and the tethers of every elevator.`,
-    facts: [
-      { k: 'Radius', v: fmtKm(r), t: 'P' },
-      { k: 'Circumference', v: fmtKm(2 * Math.PI * r), t: 'P' },
-      { k: 'Width', v: fmtKm(width), t: 'P' },
-      { k: 'Living area', v: `${sig(area)} km², ${sig(area / 510e6)}× Earth's surface`, t: 'E' },
-      { k: 'People on it', v: `≈${fmtNum(pop * 0.2)} (part of ${b.name}'s total)`, t: 'E' },
-      { k: 'Stage', v: STAGE_NAMES[stageAt(c.snap, id)] ?? '—', t: 'P' },
-    ],
-    why: 'Once a world is ringed, launching from it costs almost nothing: the ring is a harbour as much as a home.',
     links: [{ label: b.name, act: 'body', id }],
   };
 }

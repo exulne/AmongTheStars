@@ -1,13 +1,13 @@
 // Small read-only questions explainers ask of the simulation state.
 
-import { STAGE, STAGE_NAMES } from '../sim/catalog.ts';
+import { STAGE, STAGE_NAMES, isAlive } from '../sim/catalog.ts';
 import type { StateMsg } from '../sim/client.ts';
 import { F, NF } from '../sim/metrics.ts';
 import type { World } from '../sim/world.ts';
 import { fmtNum } from '../ui/format.ts';
 import type { ExCtx, Fact } from './registry.ts';
 
-export const isAlive = (st: number) => st >= STAGE.OUTPOST && st <= STAGE.MEGA;
+export { isAlive };
 export const stageAt = (snap: StateMsg | null, b: number) => (snap ? snap.S[b * NF + F.stage] : -1);
 export const popAt = (snap: StateMsg | null, b: number) => (snap ? snap.S[b * NF + F.pop] : 0);
 export const fieldAt = (snap: StateMsg | null, b: number, f: keyof typeof F) => (snap ? snap.S[b * NF + F[f]] : 0);
@@ -64,12 +64,12 @@ export function nearestSettled(world: World, snap: StateMsg | null, x: number, y
 export function humansFact(c: ExCtx, x: number, y: number, z: number, here = 'not reached'): Fact {
   const n = nearestSettled(c.world, c.snap, x, y, z);
   if (!n) return { k: 'Humans', v: here, t: 'P' };
-  const d = n.d < 100 ? n.d.toFixed(1) : fmtNum(Math.round(n.d));
+  const d = n.d < 100 ? n.d.toFixed(1) : Math.round(n.d).toLocaleString('en-US');
   return { k: 'Humans', v: `${here}; nearest people ${d} ly away, at ${c.world.systems[n.sys].name}`, t: 'P' };
 }
 
 /** Year in plain calendar words, e.g. "29,160 BCE". */
 export function calYear(y: number): string {
   const r = Math.round(y);
-  return r < 1 ? `${(1 - r).toLocaleString('en-US')} BCE` : r.toLocaleString('en-US').replace(/,/g, r < 10000 ? '' : ',');
+  return r < 1 ? `${(1 - r).toLocaleString('en-US')} BCE` : `${r.toLocaleString('en-US').replace(/,/g, r < 10000 ? '' : ',')} CE`;
 }

@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import { hash01 } from '../sim/rng.ts';
-import { fmtLy, galToEq, jName, sig, fmtYears } from './astro.ts';
+import { an, fmtLy, galToEq, jName, sig, fmtYears } from './astro.ts';
 import { addCpuSet, nearestPoint, pxPerUnit } from './picker.ts';
 import { h01, registerExplainer, type ExCtx, type Explanation, type Fact } from './registry.ts';
 
@@ -84,14 +84,16 @@ export function explainBackground(group: THREE.Object3D, sprites: THREE.Sprite[]
 function bgType(seed: number, i: number): { short: string; long: string; elliptical: boolean } {
   const elliptical = hash01(seed, 9) < 0.35, arms = 2 + Math.floor(hash01(seed, 8) * 2);
   if (elliptical) { const e = Math.floor(h01(i, 70) * 8); return { short: `E${e} elliptical`, long: `E${e} elliptical galaxy`, elliptical }; }
-  return arms === 2 ? { short: 'Sc spiral', long: 'grand-design spiral (Sc), two arms', elliptical } : { short: 'Sb spiral', long: 'many-armed spiral (Sb), three arms', elliptical };
+  return arms === 2 ? { short: 'Sc spiral', long: 'two-armed grand-design spiral (Sc)', elliptical } : { short: 'Sb spiral', long: 'three-armed spiral (Sb)', elliptical };
 }
 
 function bgName(sp: THREE.Sprite, i: number): string {
   const p = sp.position;
   const e = galToEq(p.x, -p.z, p.y);
   if (h01(i, 71) < 0.18) return `${GAL_WORDS[Math.floor(h01(i, 72) * GAL_WORDS.length)]} Galaxy`;
-  return `2SG ${jName(e.ra, e.dec).slice(0, 10)}`;
+  // short IAU-style form, hhmm±ddmm, as galaxy catalogues use
+  const j = jName(e.ra, e.dec);
+  return `2SG ${j.slice(0, 5)}${j.slice(j.search(/[+−]/), j.search(/[+−]/) + 5)}`;
 }
 
 function bgCard(sp: THREE.Sprite, seed: number, i: number, c: ExCtx): Explanation {
@@ -118,7 +120,7 @@ function bgCard(sp: THREE.Sprite, seed: number, i: number, c: ExCtx): Explanatio
   return {
     eyebrow: 'Galaxy beyond the Local Group',
     title: name,
-    lede: `A ${t.long} ${fmtLy(dLy)} away, one of the galaxies strung along the filaments of the cosmic web around us. Its speed is mostly the expansion of space (Hubble's law, 70 km/s per megaparsec).`,
+    lede: `${an(t.long).replace(/^a/, 'A')} ${fmtLy(dLy)} away, one of the galaxies strung along the filaments of the cosmic web around us. Its speed is mostly the expansion of space (Hubble's law, 70 km/s per megaparsec).`,
     facts,
     why: t.elliptical ? 'Ellipticals have stopped making stars; their old red suns would make for long-lived but metal-rich, quiet systems. No one in this future will ever know.' : `A signal sent there in ${2040 + Math.round(c.year)} arrives ${fmtLy(dLy).replace(' ly', '')} years later. For everyone in this future, it can only be looked at.`,
   };

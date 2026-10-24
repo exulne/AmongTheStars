@@ -268,7 +268,7 @@ export class StreetView implements View {
     this.hemi = new THREE.HemisphereLight(st.open ? 0x7a96b8 : 0x5a6a88, 0x101014, 1.1);
     this.star = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: specColor(sys.spec), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.8 }));
     this.star.scale.setScalar(R * 1.6);
-    this.group.add(this.sun, this.hemi, this.star, makeSky(pl.body + 11));
+    this.group.add(this.sun, this.hemi, this.star, makeSky(pl.body + 11, 9000, 'skyst', () => ({ name: this.cityName, x: sys.x, y: sys.y, z: sys.z, sol: sys.id === 0 })));
 
     const ground = new THREE.Mesh(new THREE.CircleGeometry(R * 6, 96), new THREE.MeshStandardMaterial({ color: gnd.ground, roughness: gnd.water ? 0.25 : 0.95, metalness: gnd.water ? 0.4 : 0 }));
     ground.rotation.x = -Math.PI / 2;

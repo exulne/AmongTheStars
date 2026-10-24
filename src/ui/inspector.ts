@@ -10,7 +10,7 @@ import { fmtNum, fmtUnit, fmtYear, parseCount } from './format.ts';
 import { periodOf } from '../sim/ledger.ts';
 import type { Biography, PersonBrief } from '../sim/lives.ts';
 import { biographyHtml, residentsHtml } from './peoplePanel.ts';
-import { explainHtml, galaxyFactsHtml } from '../explain/card.ts';
+import { explainHtml, galaxyFactsHtml, starFactsHtml } from '../explain/card.ts';
 import { explain } from '../explain/registry.ts';
 
 type Residents = { total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] };
@@ -304,8 +304,9 @@ export class Inspector {
       <h2>${esc(sys.name)}</h2>
       <p class="lede">${sys.spec}-type star, ${sys.dist < 0.01 ? 'home' : `${sys.dist.toFixed(1)} light years from the Sun`}. ${sys.real ? 'Real star.' : 'Procedural star.'}</p>
       <p class="act"><button class="link" data-act="dive-system" data-id="${id}" type="button">Enter system</button></p>
-      ${this.kv([['People', fmtNum(sum.pop)], ['Settlements', String(sum.n)], ...this.systemTotals(c, id), ['Luminosity', `${sys.lum.toPrecision(2)} L☉`], ['Light delay to Earth', sys.dist < 0.01 ? 'minutes' : `${sys.dist.toFixed(1)} yr`]])}
-      <div class="tbl-wrap"><table class="bodies"><tbody>${rows}</tbody></table></div>`;
+      ${this.kv([...(alive(sum.stage) ? [['Most developed', STAGE_NAMES[sum.stage]] as [string, string]] : []), ['People', fmtNum(sum.pop)], ['Settlements', String(sum.n)], ...this.systemTotals(c, id), ['Luminosity', `${sys.lum.toPrecision(2)} L☉`], ['Light delay to Earth', sys.dist < 0.01 ? 'minutes' : `${sys.dist.toFixed(1)} yr`]])}
+      <div class="tbl-wrap"><table class="bodies"><tbody>${rows}</tbody></table></div>
+      ${starFactsHtml(c.world, id)}`;
   }
 
   /** Whole-system sums at this year; averages are weighted by head-count. */

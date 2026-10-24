@@ -79,7 +79,7 @@ export function shipCard(id: number, c: ExCtx): Explanation {
     { k: 'People aboard at launch', v: fmtNum(i?.n ?? s.colonists), t: 'P' },
     { k: 'Departed', v: yr(s.depart), t: 'P' },
     { k: 'Due to arrive', v: yr(s.arrive), t: 'P' },
-    { k: 'Distance', v: `${dist < 10 ? dist.toFixed(2) : fmtNum(Math.round(dist))} ly`, t: 'P' },
+    { k: 'Distance', v: `${dist < 10 ? dist.toFixed(2) : Math.round(dist).toLocaleString('en-US')} ly`, t: 'P' },
     { k: 'Drive', v: ftl ? 'warp: Alcubierre metric engineering' : v > 0.1 ? 'antimatter or beamed sail' : 'fusion', t: 'E' },
     { k: ftl ? 'Effective speed' : 'Cruise speed', v: ftl ? `${fmtNum(Math.round(v))}× light` : `${(v * 100).toFixed(v < 0.1 ? 1 : 0)}% of light`, t: 'P' },
     { k: 'Voyage so far', v: c.year >= s.arrive ? 'over' : `${Math.round(f * 100)}%, ${Math.max(0, Math.round(s.arrive - c.year))} years to go`, t: 'P' },
@@ -88,7 +88,7 @@ export function shipCard(id: number, c: ExCtx): Explanation {
   return {
     eyebrow: ftl ? 'Warp ship in transit' : gen ? 'Generation ship in transit' : 'Colony ship in transit',
     title: i ? `The ${i.name}` : ftl ? 'Warp ship' : 'Colony ship',
-    lede: `Carrying ${fmtNum(i?.n ?? s.colonists)} people from ${A.name} to ${B.name}, ${dist < 10 ? dist.toFixed(1) : fmtNum(Math.round(dist))} light years, launched in ${yr(s.depart)}.`,
+    lede: `Carrying ${fmtNum(i?.n ?? s.colonists)} people from ${A.name} to ${B.name}, ${dist < 10 ? dist.toFixed(1) : Math.round(dist).toLocaleString('en-US')} light years, launched in ${yr(s.depart)}.`,
     facts,
     why: gen ? `A voyage of ${Math.round(years)} years: the people who step off at ${B.name} will be the grandchildren of those who boarded.` : ftl ? 'Folded space makes the galaxy a few years wide; ships like this are how a warp-capable future fills it.' : 'Every settlement beyond its home world began as a ship like this one.',
     story: i?.launch?.segs,

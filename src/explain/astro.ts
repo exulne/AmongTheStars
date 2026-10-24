@@ -144,6 +144,15 @@ export function fmtKm(km: number): string {
   if (km >= 1) return `${km.toFixed(1)} km`;
   return `${Math.round(km * 1000)} m`;
 }
+/** A whole number with thousands separators: 5,770 K, not 5.77K K. */
+export function num(x: number): string { return Math.round(x).toLocaleString('en-US'); }
+/** "a" or "an" before a word or designation: an M0 star, an S-type asteroid, an outpost, a K9 star. */
+export function an(w: string): string {
+  const t = w.trim();
+  const vowel = /^[aeio]/i.test(t) || /^u(?!ni|se|sa|ro)/i.test(t);
+  const letter = /^[AEFHILMNORSX](?=[^a-z]|$)/.test(t);
+  return `${vowel || letter ? 'an' : 'a'} ${t}`;
+}
 export const L_SUN_W = 3.828e26;
 export const G_SI = 6.674e-11;
 export const AU_M = 1.496e11;
