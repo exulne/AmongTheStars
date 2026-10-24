@@ -1,3 +1,4 @@
+import { clearSocietyLooks, setSocietyLook } from './view/societyLook.ts';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -196,6 +197,7 @@ const sky = makeSky(1, 7000, 'sky', () => (level === 'local' ? { name: 'the Sun'
 scene.add(sky);
 for (const v of Object.values(views)) { v.group.visible = false; scene.add(v.group); }
 let level: Level = 'system';
+let lookAsked = ''; // body:step of the last society look asked for
 
 function enterLevel(next: Level): void {
   views[level].group.visible = false;
@@ -211,6 +213,7 @@ function enterLevel(next: Level): void {
   renderLegend();
   writeHash();
   streetMood();
+  if (ctx.snap) refreshLook(ctx.snap.step);
   // on a phone the street needs the screen: keep the sheet folded until someone is tapped
   if (level === 'street' && matchMedia('(max-width: 40rem)').matches) inspector.el.classList.remove('open');
 }
@@ -734,6 +737,18 @@ function drawRing(): void {
 
 // ------------------------------------------------------------------ sim wiring
 
+/** The viewed world's society shapes how it looks from orbit; fetch it and redraw if its look has changed. */
+function refreshLook(step: number): void {
+  if (level !== 'planet' && level !== 'street') return;
+  const b = ctx.body, key = `${b}:${step}`, g = runGen;
+  if (key === lookAsked) return;
+  lookAsked = key;
+  sim.society(b, step).then((r) => {
+    if (g !== runGen || !r.society) { if (r.pending) lookAsked = ''; return; }
+    if (setSocietyLook(b, sim.years[step], r.society.architecture) && ctx.body === b) views[level].sync(ctx);
+  });
+}
+
 // runGen tags every request so replies from a previous future are dropped
 let inFlight = false, wanted = -1, lastStep = -1, runGen = 0;
 function requestState(year: number): void {
@@ -755,6 +770,7 @@ function requestState(year: number): void {
     renderHere();
     refreshPanels();
     renderLegend();
+    refreshLook(m.step);
     if (wanted !== ask) requestState(sim.years[wanted]);
     else refreshEvents();
   });
@@ -923,6 +939,7 @@ function readHash(): { seed: number; year: number | null; sel: Pickable | null; 
 
 function startRun(seed: number): void {
   runGen++;
+  clearSocietyLooks();
   inspector.resetPeople();
   resetShips();
   ctx.snap = null; lastStep = -1; wanted = -1; inFlight = false; events = []; history = null; fc = null;
