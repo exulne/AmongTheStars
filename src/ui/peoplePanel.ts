@@ -87,6 +87,6 @@ export function biographyHtml(b: Biography | null, year: number, loading: boolea
     <h3>Ancestry</h3>${anc}
     <h3>Bloodline</h3>${blood}
     <h3>Body and character</h3>
-    <dl class="kv"><dt>Height</dt><dd class="num">${b.height} cm</dd><dt>Born</dt><dd>${yr(b.born)}, ${esc(b.bornAtName)}</dd><dt>Generations on ${esc(b.bornAtName)}</dt><dd class="num">${b.generationsHere}</dd></dl>
+    <dl class="kv">${b.body ? `<dt>Body</dt><dd>${esc(b.body)}</dd>` : ''}<dt>Height</dt><dd class="num">${b.height} cm</dd><dt>Born</dt><dd>${yr(b.born)}, ${esc(b.bornAtName)}</dd><dt>Generations on ${esc(b.bornAtName)}</dt><dd class="num">${b.generationsHere}</dd></dl>
     <div class="bars">${b.personality.map((v, k) => `<div class="bar"><span>${traits[k]}</span><i style="--v:${v}"></i></div>`).join('')}</div>`;
 }

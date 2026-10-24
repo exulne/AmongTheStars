@@ -314,3 +314,4 @@ input.tl-big:focus { outline: none; border-bottom-color: var(--accent); }
 @media (max-width: 40rem) {
   .data { width: 100vw; padding-right: 16px; }
 }
+.society-portrait { font-size: 0.875rem; line-height: 1.55; margin: 0 0 0.6rem; }
