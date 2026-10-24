@@ -1,3 +1,4 @@
+import { Ensemble } from './ui/ensemble.ts';
 import { clearSocietyLooks, setSocietyLook } from './view/societyLook.ts';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -824,6 +825,11 @@ function refreshForecast(): void {
 }
 timeline.onToggle = (playing) => { if (!playing) refreshForecast(); };
 charts.setFan((key) => (fcOn && fc ? fanFor(fc, key) : null));
+// other futures behind every chart, played in the background once this one is done
+const ensemble = new Ensemble();
+let ensembleFor = -1;
+ensemble.onUpdate = () => charts.draw();
+charts.setBand((k, n) => ensemble.band(k, n), (k, i, v) => ensemble.rank(k, i, v));
 
 function refreshPanels(): void {
   const step = Math.max(0, sim.stepAt(ctx.year));
@@ -895,7 +901,7 @@ sim.onProgress = () => {
   statusEl.textContent = sim.done ? `simulated in ${(sim.ms / 1000).toFixed(1)}s` : `simulating… year ${Math.round(sim.years[sim.frontier]).toLocaleString('en-US')}`;
   charts.draw();
   if (!ctx.snap) requestState(ctx.year);
-  if (sim.done) { refreshForecast(); inspector.annals(); }
+  if (sim.done) { refreshForecast(); inspector.annals(); if (ensembleFor !== sim.seed) { ensembleFor = sim.seed; ensemble.start(sim.seed); } }
   // a reseed drops the place history; ask again as the new run fills in
   if (!history && (sim.done || sim.frontier % 40 === 0)) fetchHistory();
   // a year from the URL waits until the run has reached it
@@ -947,6 +953,7 @@ function startRun(seed: number): void {
   ctx.snap = null; lastStep = -1; wanted = -1; inFlight = false; events = []; history = null; fc = null;
   ticker.clear(); tickFrom = 0;
   eraBanner.reset(); calendar.reset(); naming.load(sim); timeline.setAges([]);
+  ensemble.stop(); ensembleFor = -1;
   sim.run(seed);
   timeline.set(0);
   ctx.year = 0;

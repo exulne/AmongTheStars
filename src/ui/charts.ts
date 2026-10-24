@@ -49,6 +49,11 @@ export class ChartStrip {
   private charts: { wrap: HTMLElement; canvas: HTMLCanvasElement; select: HTMLSelectElement; value: HTMLElement; key: string; fill: () => void }[] = [];
   private getSeries: (key: string) => Series | null = () => null;
   private getFan: (key: string) => { years: number[]; lo: number[]; mid: number[]; hi: number[] } | null = () => null;
+  /** the middle 80% of other futures, per step (same step grid as the series) */
+  private getBand: (key: string, n: number) => { lo: ArrayLike<number>; mid: ArrayLike<number>; hi: ArrayLike<number> } | null = () => null;
+  /** share of other futures below value v at step i */
+  private getRank: (key: string, i: number, v: number) => number | null = () => null;
+  setBand(band: ChartStrip['getBand'], rank: ChartStrip['getRank']): void { this.getBand = band; this.getRank = rank; this.draw(); }
   private year = 0;
   private hoverPos: number | null = null;
   onHoverYear: (y: number | null) => void = () => {};
@@ -197,6 +202,13 @@ export class ChartStrip {
       const t = tf(v);
       if (t < lo) lo = t; if (t > hi) hi = t;
     }
+    const band = isEra ? null : this.getBand(c.key, s.n);
+    if (band) for (const arr of [band.lo, band.hi]) for (let i = 0; i < s.n; i++) {
+      const v = arr[i];
+      if (log && v <= 0) continue;
+      const t = tf(v);
+      if (t < lo) lo = t; if (t > hi) hi = t;
+    }
     if (!isFinite(lo)) { lo = 0; hi = 1; }
     if (hi - lo < 1e-9) { hi = lo + 1; }
     if (!log && lo > 0 && lo < hi * 0.5) lo = 0;
@@ -215,6 +227,21 @@ export class ChartStrip {
         g.fillRect(r.x0, top + 6, Math.max(1, r.x1 - r.x0), bottom - top - 12);
       }
     } else {
+      if (band) {
+        // other futures: the middle 80% as a faint band, their median as a hairline
+        const ok = (v: number) => !log || v > 0;
+        g.beginPath();
+        for (let i = 0; i < s.n; i++) if (ok(band.hi[i])) g.lineTo(X(s.years[i]), Y(band.hi[i]));
+        for (let i = s.n - 1; i >= 0; i--) if (ok(band.lo[i])) g.lineTo(X(s.years[i]), Y(band.lo[i]));
+        g.closePath();
+        g.fillStyle = 'rgba(242,242,242,0.14)';
+        g.fill();
+        g.beginPath();
+        for (let i = 0; i < s.n; i++) if (ok(band.mid[i])) g.lineTo(X(s.years[i]), Y(band.mid[i]));
+        g.strokeStyle = 'rgba(242,242,242,0.4)';
+        g.lineWidth = 0.8;
+        g.stroke();
+      }
       const grad = g.createLinearGradient(0, top, 0, bottom);
       grad.addColorStop(0, 'rgba(242,242,242,0.16)');
       grad.addColorStop(1, 'rgba(242,242,242,0)');
@@ -283,7 +310,9 @@ export class ChartStrip {
       g.beginPath(); g.moveTo(hx + 0.5, top); g.lineTo(hx + 0.5, bottom); g.stroke();
     }
     const v = s.values(shownIdx);
+    const rk = isEra || !band ? null : this.getRank(c.key, shownIdx, v);
     c.value.textContent = `${isEra ? ERAS[v] : fmtUnit(v, s.def.unit)} · ${fmtYear(shownYear)}`;
+    c.value.title = rk === null ? '' : `Higher than ${Math.round(rk * 100)}% of other futures in ${fmtYear(shownYear)}. The faint band is the middle 80% of them, the hairline their median.`;
   }
 }
 
