@@ -173,7 +173,7 @@ export const STAGE = {
 
 export const STAGE_NAMES = ['Survey', 'Outpost', 'Base', 'Colony', 'Town', 'City', 'Hub', 'Megastructure', 'Abandoned', 'Dead'];
 /** Base population capacity per stage before habitability and tech. */
-export const STAGE_CAP = [0, 60, 2_000, 150_000, 3_000_000, 80_000_000, 2_000_000_000, 40_000_000_000, 0, 0];
+export const STAGE_CAP = [0, 60, 2_000, 150_000, 3_000_000, 80_000_000, 1_000_000_000, 10_000_000_000, 0, 0];
 
 // ---------------------------------------------------------------------------
 // Technologies. cost = knowledge points. Effects compose multiplicatively

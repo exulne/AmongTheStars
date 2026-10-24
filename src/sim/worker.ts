@@ -2,11 +2,14 @@
 // runs, keeps full snapshots every SNAP_EVERY steps, and answers "what did the
 // universe look like at year Y" by replaying from the nearest snapshot.
 
+import { EV } from './catalog.ts';
 import { Engine, type SimState } from './engine.ts';
 import { HIST_FIELDS, NGM } from './metrics.ts';
 import { buildWorld } from './world.ts';
 
 const SNAP_EVERY = 20;
+// event types whose `a` is a second body (source, opponent, old capital); elsewhere it is a stage, tech or era index
+const A_IS_BODY = new Set([EV['Colony founded'], EV.War, EV.Independence, EV['Mutiny in transit'], EV['Ship lost']]);
 
 export type ToWorker =
   | { type: 'run'; seed: number }
@@ -43,8 +46,8 @@ function run(seed: number): void {
       main.step();
       if (main.st.step % SNAP_EVERY === 0) snaps.push(main.snapshot());
     }
-    // rows are complete up to the current step only once the run is done
-    const complete = main.done ? main.st.step + 1 : main.st.step;
+    // row k is written when the engine reaches step k, so rows 0..step are complete
+    const complete = main.st.step + 1;
     const series = main.series.slice(sent * NGM, complete * NGM);
     post({ type: 'progress', seed, step: complete - 1, years: main.years, series, done: main.done, ms: performance.now() - t0 }, [series.buffer]);
     sent = complete;
@@ -90,7 +93,7 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
     for (let i = main.events.length - 1; i >= 0 && out.length < limit; i--) {
       const e = main.events[i];
       if (e.year > m.toYear || e.year < m.fromYear) continue;
-      if (m.body !== undefined && e.body !== m.body && e.a !== m.body) continue;
+      if (m.body !== undefined && e.body !== m.body && !(e.a === m.body && A_IS_BODY.has(e.type))) continue;
       out.push(e);
     }
     post({ type: 'events', id: m.id, events: out });
