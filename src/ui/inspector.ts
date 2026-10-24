@@ -7,7 +7,17 @@ import type { World } from '../sim/world.ts';
 import { STAGE_CSS } from '../view/textures.ts';
 import { alive, cityCount, citySplit, systemSummary, type Pickable } from '../view/views.ts';
 import { fmtNum, fmtUnit, fmtYear, parseCount } from './format.ts';
-import { personAt } from './people.ts';
+import { periodOf } from '../sim/ledger.ts';
+import type { Biography, PersonBrief } from '../sim/lives.ts';
+import { biographyHtml, residentsHtml } from './peoplePanel.ts';
+
+type Residents = { total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] };
+export interface PeopleApi {
+  residents(body: number, year: number, offset: number, count: number): Promise<Residents & { pending?: boolean }>;
+  person(id: string, year: number): Promise<{ bio: Biography | null; pending?: boolean }>;
+  residentAt(body: number, year: number, k: number): Promise<{ person: string | null; pending?: boolean }>;
+}
+const PER_PAGE = 12;
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
@@ -28,12 +38,40 @@ export class Inspector {
   private body: HTMLElement;
   private peoplePage = 0;
   private peopleBody = -1;
-  private openPerson = -1;
+
   onSelect: (p: Pickable) => void = () => {};
   onDive: (p: Pickable) => void = () => {};
   onClose: () => void = () => {};
   private last: InspectorCtx | null = null;
   private revealPerson = false;
+  api: PeopleApi | null = null;
+  /** the open person, if any: they stay open as the year changes */
+  personId: string | null = null;
+  onPerson: (id: string | null) => void = () => {};
+  private residentsCache = new Map<string, Residents>();
+  private bioCache = new Map<string, Biography | null>();
+  private lastBio: Biography | null = null;
+  private inflight = new Set<string>();
+  /** drop everything cached for the previous future */
+  resetPeople(): void { this.residentsCache.clear(); this.bioCache.clear(); this.lastBio = null; this.personId = null; }
+
+  private fetch<T>(key: string, get: () => Promise<T & { pending?: boolean }>, put: (v: T) => void): void {
+    if (this.inflight.has(key) || !this.api) return;
+    this.inflight.add(key);
+    get().then((v) => {
+      this.inflight.delete(key);
+      if (v.pending) { setTimeout(() => this.last && this.render(this.last), 600); return; }
+      put(v);
+      if (this.last) this.render(this.last);
+    });
+  }
+
+  openPerson(id: string | null): void {
+    this.personId = id;
+    this.onPerson(id);
+    this.toTop();
+    if (this.last) this.render(this.last);
+  }
 
   constructor() {
     this.el = document.createElement('aside');
@@ -52,16 +90,20 @@ export class Inspector {
       if (act === 'body') this.onSelect({ kind: 'body', id, name: this.last.world.bodies[id].name, pos: null! });
       if (act === 'dive-body') this.onDive({ kind: 'body', id, name: this.last.world.bodies[id].name, pos: null! });
       if (act === 'dive-system') this.onDive({ kind: 'system', id, name: this.last.world.systems[id].name, pos: null! });
-      if (act === 'page') { this.peoplePage = Math.max(0, this.peoplePage + id); this.openPerson = -1; this.render(this.last); }
-      if (act === 'person') { this.openPerson = this.openPerson === id ? -1 : id; this.render(this.last); }
+      if (act === 'page') { this.peoplePage = Math.max(0, this.peoplePage + id); this.render(this.last); }
+      if (act === 'open-person') this.openPerson(t.dataset.pid!);
+      if (act === 'close-person') this.openPerson(null);
+      if (act === 'goto-body') { this.openPerson(null); this.onSelect({ kind: 'body', id, name: this.last.world.bodies[id].name, pos: null! }); }
     });
     this.el.addEventListener('change', (e) => {
       const t = e.target as HTMLInputElement;
-      if (t.id === 'person-jump' && this.last) {
+      if (t.id === 'person-jump' && this.last && this.api) {
         const n = Math.max(1, parseCount(t.value) || 1);
-        this.peoplePage = Math.floor((n - 1) / 12);
-        this.openPerson = n - 1;
-        this.render(this.last);
+        const raw = t.value.trim();
+        this.api.residentAt(this.peopleBody, this.last.year, n - 1).then((r) => {
+          if (r.person) this.openPerson(r.person);
+          else t.setCustomValidity(r.pending ? 'Still simulating; try again in a moment.' : `There is no resident #${raw} here.`), t.reportValidity();
+        });
       }
     });
   }
@@ -69,9 +111,8 @@ export class Inspector {
   /** Open resident #n (1-based) of a settlement on the next render. */
   showResident(body: number, n: number): void {
     this.peopleBody = body;
-    this.peoplePage = Math.floor((n - 1) / 12);
-    this.openPerson = n - 1;
-    this.revealPerson = true;
+    this.peoplePage = Math.floor((n - 1) / PER_PAGE);
+    this.api?.residentAt(body, this.last?.year ?? 0, n - 1).then((r) => { if (r.person) this.openPerson(r.person); });
   }
 
   toTop(): void { this.el.scrollTop = 0; }
@@ -86,12 +127,13 @@ export class Inspector {
     this.last = c;
     const s = c.selected;
     let html = '';
-    if (!s || s.kind === 'humanspace') html = this.global(c);
+    if (this.personId) html = `<button class="insp-close" type="button" data-act="close-person" aria-label="Close this person">×</button>${this.person(c, this.personId)}`;
+    else if (!s || s.kind === 'humanspace') html = this.global(c);
     else if (s.kind === 'galaxy') html = this.galaxy(c, s);
     else if (s.kind === 'system') html = this.system(c, s.id);
     else if (s.kind === 'body') html = this.bodyView(c, s.id);
     else if (s.kind === 'city') html = this.bodyView(c, c.body, s.id);
-    if (s) html = `<button class="insp-close" type="button" data-act="close" aria-label="Close and show all of humanity">×</button>${html}`;
+    if (s && !this.personId) html = `<button class="insp-close" type="button" data-act="close" aria-label="Close and show all of humanity">×</button>${html}`;
     const scroll = this.el.scrollTop;
     this.body.innerHTML = html;
     this.el.scrollTop = scroll;
@@ -263,28 +305,28 @@ export class Inspector {
   }
 
   private people(c: InspectorCtx, body: number, count: number, offset: number): string {
-    if (this.peopleBody !== body) { this.peopleBody = body; this.peoplePage = 0; this.openPerson = -1; }
+    if (this.peopleBody !== body) { this.peopleBody = body; this.peoplePage = 0; }
     if (count < 1) return '<p class="muted">Robots only.</p>';
-    const S = c.snap!.S;
-    const ctx = { founded: S[body * NF + F.founded], gravity: c.world.bodies[body].g, divergence: S[body * NF + F.divergence], culture: S[body * NF + F.culture], medianAge: S[body * NF + F.medianAge] || 30 };
-    const per = 12;
-    if (this.revealPerson && this.openPerson >= count) { this.openPerson = count - 1; this.peoplePage = Math.floor(this.openPerson / per); }
-    const pages = Math.ceil(count / per);
+    const pages = Math.max(1, Math.ceil(count / PER_PAGE));
     const page = Math.min(this.peoplePage, pages - 1);
-    const items: string[] = [];
-    for (let i = page * per; i < Math.min(count, page * per + per); i++) {
-      const p = personAt(body, offset + i, c.year, ctx);
-      const open = this.openPerson === i;
-      items.push(`<li><button class="person${open ? ' open' : ''}" data-act="person" data-id="${i}" type="button" aria-expanded="${open}">
-        <span class="num muted">#${(i + 1).toLocaleString('en-US')}</span> ${esc(p.name)} <span class="muted">${p.age}, ${esc(p.job)}</span></button>
-        ${open ? `<div class="bio">${this.kv([['Born', `${p.born}`], ['Generation here', String(p.generation)], ['Height', `${p.height} cm`], ['Health', `${p.health}/100`], ['Years of school', String(p.education)], ['Divergence from Earth genome', `${p.divergence}%`], ['Faith', `#${p.faith}`], ['Mood', p.mood]])}</div>` : ''}
-      </li>`);
-    }
-    return `<p class="muted">${fmtNum(count)} people. Each is generated from the seed when you look.</p>
-      <ol class="people">${items.join('')}</ol>
-      <div class="pager"><button class="link" data-act="page" data-id="-1" type="button" ${page === 0 ? 'disabled' : ''}>Previous</button>
-      <span class="num muted">page ${(page + 1).toLocaleString('en-US')} of ${pages.toLocaleString('en-US')}</span>
-      <button class="link" data-act="page" data-id="1" type="button" ${page >= pages - 1 ? 'disabled' : ''}>Next</button></div>
-      <label class="jump">Find resident # <input id="person-jump" inputmode="numeric" placeholder="${fmtNum(Math.floor(count / 2))}"></label>`;
+    const key = `${body}:${periodOf(c.year)}:${offset + page * PER_PAGE}`;
+    const r = this.residentsCache.get(key) ?? null;
+    if (!r) this.fetch(key, () => this.api!.residents(body, c.year, offset + page * PER_PAGE, Math.min(PER_PAGE, count - page * PER_PAGE)), (v) => {
+      if (this.residentsCache.size > 200) this.residentsCache.clear();
+      this.residentsCache.set(key, v);
+    });
+    return residentsHtml(r, page, pages, c.year);
+  }
+
+  private person(c: InspectorCtx, id: string): string {
+    const key = `${id}@${Math.floor(c.year)}`;
+    const b = this.bioCache.get(key);
+    if (b === undefined) this.fetch(key, () => this.api!.person(id, c.year).then((m) => ({ ...m, v: m.bio })), (m: { v: Biography | null }) => {
+      if (this.bioCache.size > 300) this.bioCache.clear();
+      this.bioCache.set(key, m.v);
+      this.lastBio = m.v;
+    });
+    const show = b === undefined ? (this.lastBio?.id === id ? this.lastBio : null) : b;
+    return biographyHtml(show, c.year, b === undefined);
   }
 }

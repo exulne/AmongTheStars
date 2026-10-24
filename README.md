@@ -27,7 +27,7 @@ Same **seed**, same future. Change the seed and you get a different future: mayb
 | **Charts** | Lines over time for 39 measures: population, energy, wealth, knowledge, settlements, stability, wars, resources and more. Pick any one from each chart's menu, and click a chart to jump to that year. |
 | **Future #** (top) | Each number is a different roll of the dice, so a different future. "Another future" picks one at random. |
 | **Inspector** (right side) | Click anything and you get every number about it, at the year you're on. |
-| **People** | Every settlement has its real head-count, and you can browse individual residents. People are generated on the fly from the seed, so the sim can "contain" billions without storing billions. |
+| **People** | Every settlement lists its residents, all of them real and persistent. Open anyone to read their life: where they were born, who their parents were, their partner, their children, where they moved, the plague they lived through, how they died. Click their mother, then her mother, and so on back to the generation ship and the world it left. |
 
 ## How it works under the hood (still plain English)
 
@@ -46,6 +46,19 @@ Same **seed**, same future. Change the seed and you get a different future: mayb
 - **Expansion:** rich, stable settlements send ships to nearby worlds. Interstellar trips take decades to centuries, and some ships never arrive.
 - **Politics:** humanity as a whole moves between moods such as expansion, golden age, stagnation, war, pandemic and collapse, and each mood changes the dice. Far-off colonies with long light-delay to Earth tend to declare independence.
 - **Events:** solar storms, habitat breaches, asteroid strikes, breakthroughs, plagues, mutinies, new religions, and humans slowly drifting genetically on low-gravity worlds.
+
+## The people (how billions of real individuals fit in a browser)
+
+The sim can't store a trillion people, so it does what a good accountant does instead.
+
+- **A ledger.** For every settlement and every few years, the engine writes down how many babies were born, how many people moved where (and on which ship), and how many are alive at the end. Whoever isn't accounted for died. This always adds up exactly to the population on screen.
+- **A seat number.** Every person has an identity: *where* they were born, *when*, and *which baby* they were (say, the 524,129th born on Mars in the 2230s). Think of a giant stadium. Each person has a seat, and the seats are shuffled by a code that can be run both forwards and backwards. When people die or emigrate, they leave from the back rows. So from your seat number we can work out exactly when you left and why, and from "who is still sitting here in 2340" we can work out exactly who you are.
+- **Families from the same trick.** Each baby is assigned to a mother by seat, and couples sit next to each other. You can go from a child to their parents, or from a parent to their children, and both ways always agree. Couples move together and grow old together, and when one dies the other is widowed.
+- **Generation ships.** A voyage longer than 25 years is a place of its own. People are born, age and die aboard, and the ones who step off at the other end are the grandchildren of the ones who left.
+- **Names drift.** Early colonists have Earth names. The further from Earth and the longer since the Landing, the more names drift into new languages, one per star system. Surnames pass down family lines.
+- **Deaths have causes.** If someone died on Titan the year the plague hit Titan, the plague probably killed them.
+
+Nothing about a person is stored; everything is worked out when you look. That's why the same person is still there, older, when you drag the slider forward, and why Earth's 9 billion cost no more than Mars's first dozen.
 
 ## The AI part: a "psychohistory engine"
 
@@ -92,9 +105,9 @@ npm run sim -- 42     # run future #42 in the terminal and print a summary
 
 | Folder | What's in it |
 |---|---|
-| `src/sim/` | The simulation: world catalog, rules, background worker |
+| `src/sim/` | The simulation: world catalog, rules, background worker, and the people (`ledger.ts`, `demography.ts`, `lives.ts`) |
 | `src/view/` | 3D: galaxies, stars, planets, the five zoom levels |
-| `src/ui/` | Time slider, charts, inspector, the people generator |
+| `src/ui/` | Time slider, charts, inspector, the residents and biography panels |
 | `src/ml/` | The transformer and the forecaster |
 | `ml/` | Scripts that make training data and train the network |
-| `research/` | Notes and the simulation bible |
+| `research/` | Notes, the simulation bible, the invention-model research and the build plan (`ambition-plan.md`) |

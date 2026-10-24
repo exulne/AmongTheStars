@@ -377,21 +377,33 @@ export class Demography {
     return stays;
   }
 
-  mother(id: Id): Id | null { return this.parent(id, 0); }
-  father(id: Id): Id | null { return this.parent(id, 1); }
+  mother(id: Id): Id | null { const m = this.motherSlot(id); return m && this.origin(m.pool, m.rank); }
 
-  private parent(id: Id, sex: 0 | 1): Id | null {
+  /** Couples: a woman of rank 2k and the man of rank 2k+1 in the same pool share a life,
+   *  migrate together (adjacent ranks leave together) and are widowed when one rank falls away.
+   *  A child's father is the mother's partner if he was alive and present at the birth. */
+  father(id: Id): Id | null {
+    const m = this.motherSlot(id);
+    if (!m) return null;
+    const k = id.q - m.pool.p0;
+    const aliveEnd = m.pool.aStart[k] - m.pool.em[k] - m.pool.dd[k];
+    return m.rank + 1 < aliveEnd ? this.origin(m.pool, m.rank + 1) : null;
+  }
+
+  private motherSlot(id: Id): { pool: Pool; rank: number } | null {
     if (id.q < 0) return null;
     const t = this.ensure(id.b, id.q);
     const born = t.nativeByPeriod.get(id.q);
     if (!born) return null;
-    const blocks = this.parentBlocks(t, id.q, sex);
-    const slot = this.childPerm(id.b, id.q, born.n, sex).fwd(id.i);
+    const blocks = this.parentBlocks(t, id.q, 0);
+    const slot = this.childPerm(id.b, id.q, born.n, 0).fwd(id.i);
     const bl = blocks.find((x) => slot >= x.start && slot < x.start + x.count);
     if (!bl) return null;
-    const k = (slot - bl.start) % bl.F;
-    return this.origin(bl.pool, 2 * k + sex);
+    return { pool: bl.pool, rank: 2 * ((slot - bl.start) % bl.F) };
   }
+
+  /** The partner rank of this person in their pool (alive or not). */
+  partnerRank(rank: number): number { return rank % 2 === 0 ? rank + 1 : rank - 1; }
 
   children(id: Id, upto = this.L.closed): Id[] {
     const stays = this.life(id, upto);
@@ -400,17 +412,18 @@ export class Demography {
     const out: Id[] = [];
     for (const s of stays) {
       if (s.end === 'lost') continue;
-      const sex = (s.rank % 2) as 0 | 1;
+      const male = s.rank % 2 === 1;
       const t = this.town(s.body);
       for (let p = s.from; p <= s.to; p++) {
-        // present and alive at the end of p (a woman who died or left in p has no child then)
+        // present and alive at the end of p (someone who died or left in p has no child then)
         if (p === s.to && s.end !== 'alive') continue;
-        const blocks = this.parentBlocks(t, p, sex);
+        const blocks = this.parentBlocks(t, p, 0);
         const bl = blocks.find((x) => x.pool === s.pool);
         if (!bl) continue;
-        const k = (s.rank - sex) / 2;
+        // a father's children are his partner's, born while both were alive here
+        const k = (male ? s.rank - 1 : s.rank) / 2;
         const born = t.nativeByPeriod.get(p)!;
-        const perm = this.childPerm(s.body, p, born.n, sex);
+        const perm = this.childPerm(s.body, p, born.n, 0);
         for (let o = k; o < bl.count; o += bl.F) out.push({ b: s.body, q: p, i: perm.inv(bl.start + o) });
       }
     }

@@ -32,7 +32,9 @@ export function fanFor(f: Forecast, key: string): Fan | null {
   const fan: Fan = { years: [], lo: [], mid: [], hi: [] };
   f.years.forEach((y, t) => {
     const vals = f.samples.map((s) => featureToMetric(key, s[t * NF_ML + k]));
-    fan.years.push(y); fan.lo.push(quantile(vals, 0.1)); fan.mid.push(quantile(vals, 0.5)); fan.hi.push(quantile(vals, 0.9));
+    // counts, distances and amounts can't go below zero
+    const floor = (v: number) => (key === 'stability' || key === 'happiness' ? v : Math.max(0, v));
+    fan.years.push(y); fan.lo.push(floor(quantile(vals, 0.1))); fan.mid.push(floor(quantile(vals, 0.5))); fan.hi.push(floor(quantile(vals, 0.9)));
   });
   return fan;
 }
@@ -60,15 +62,15 @@ export function oddsHtml(f: Forecast, now: (key: string) => number): string {
   const likely = lastEra.indexOf(Math.max(...lastEra));
   const pct = (x: number) => `${Math.round(x * 100)}%`;
   return `
-    <p class="lede">A ${(f.meta.params / 1000).toFixed(0)}k-parameter transformer read the last 640 years of this future and imagined ${f.samples.length} ways the next ${f.years.length * 10} could go. It learned from 360 other futures and has never seen this one's dice. Tested on 40 futures it never saw, it cut the error of a "nothing changes" guess by 71% for population 400 years out and 96% for energy, but it is no better than that guess at predicting stability.</p>
+    <p class="lede">A ${(f.meta.params / 1000).toFixed(0)}k-parameter transformer read ${f.fromYear >= 640 ? 'the last 640 years' : `all ${f.fromYear} years so far`} of this future and imagined ${f.samples.length} ways the next ${f.years.length * 10} could go. It learned from 360 other futures and has never seen this one's dice. Tested on 40 futures it never saw, it cut the error of a "nothing changes" guess by 71% for population 400 years out and 96% for energy, but it is no better than that guess at predicting stability.</p>
     <dl class="odds">
-      <dt>War breaks out within 100 years</dt><dd class="num">${pct(eraWithin(f, 4, 10))}</dd>
-      <dt>Collapse within 300 years</dt><dd class="num">${pct(eraWithin(f, 6, 30))}</dd>
-      <dt>Golden age within 100 years</dt><dd class="num">${pct(eraWithin(f, 2, 10))}</dd>
+      ${end >= 9 ? `<dt>War within 100 years</dt><dd class="num">${pct(eraWithin(f, 4, 10))}</dd>` : ''}
+      ${end >= 29 ? `<dt>Collapse within 300 years</dt><dd class="num">${pct(eraWithin(f, 6, 30))}</dd>` : ''}
+      ${end >= 9 ? `<dt>Golden age within 100 years</dt><dd class="num">${pct(eraWithin(f, 2, 10))}</dd>` : ''}
       <dt>Most likely era in ${fmtYear(f.years[end])}</dt><dd>${ERAS[likely]}</dd>
       <dt>More people in ${fmtYear(f.years[end])} than now</dt><dd class="num">${growth('pop')}% of futures</dd>
       <dt>More star systems settled</dt><dd class="num">${growth('systems')}% of futures</dd>
-      ${line('pop', Math.min(9, end))}
+      ${end > 9 ? line('pop', 9) : ''}
       ${line('pop', end)}
       ${line('energy', end)}
       ${line('reach', end)}

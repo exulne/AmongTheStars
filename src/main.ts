@@ -343,6 +343,11 @@ function select(p: Pickable | null): void {
   if (changed) inspector.el.classList.toggle('open', !!p);
   writeHash();
 }
+inspector.api = {
+  residents: (b, y, o, n) => sim.residents(b, y, o, n),
+  person: (id, y) => sim.person(id, y),
+  residentAt: (b, y, k) => sim.residentAt(b, y, k),
+};
 inspector.onSelect = (p) => select(p);
 inspector.onClose = () => select(null);
 // on phones the inspector is a bottom sheet: the grab bar folds it down to its title
@@ -698,6 +703,7 @@ function readHash(): { seed: number; year: number | null; sel: Pickable | null; 
 
 function startRun(seed: number): void {
   runGen++;
+  inspector.resetPeople();
   ctx.snap = null; lastStep = -1; wanted = -1; inFlight = false; events = []; history = null; fc = null;
   ticker.clear(); tickFrom = 0;
   sim.run(seed);
