@@ -148,10 +148,11 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
     }
   }
 
-  // exact replay from snapshots (what the worker relies on)
-  for (const [to, { from, snap }] of targets) {
-    const r = new Engine(world, seed);
-    r.logEvents = false;
+  // exact replay from snapshots (what the worker relies on). One replay engine is
+  // reused, latest checkpoint first, so stale scratch from a later step would show.
+  const r = new Engine(world, seed);
+  r.logEvents = false;
+  for (const [to, { from, snap }] of [...targets].sort((a, b) => b[0] - a[0])) {
     r.restore(snap);
     while (r.st.step < to) r.step();
     const want = pending.get(to)!;

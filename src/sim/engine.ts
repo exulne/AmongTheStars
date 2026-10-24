@@ -92,6 +92,7 @@ export class Engine {
   private surveyCursor: Int32Array;
   private sysBodies: number[][];
   private migW: Float64Array; private migD: Float64Array; // per-system scratch, rebuilt every step
+  private swarmStamp: Int32Array; private sysLum: Float64Array; private tick = 0;
 
   constructor(world: World, seed: number) {
     this.world = world;
@@ -114,6 +115,7 @@ export class Engine {
     this.sysRegion = new Uint8Array(ns);
     this.sysBodies = world.systems.map((s) => s.bodies);
     this.migW = new Float64Array(ns); this.migD = new Float64Array(ns);
+    this.swarmStamp = new Int32Array(ns); this.sysLum = Float64Array.from(world.systems, (s) => s.lum);
     world.systems.forEach((s, i) => {
       this.sysX[i] = s.x; this.sysY[i] = s.y; this.sysZ[i] = s.z;
       this.sysRegion[i] = ({ sol: 0, local: 1, galaxy: 2, extra: 3 } as const)[s.region];
@@ -257,6 +259,8 @@ export class Engine {
     g[G.launchCap] = 5000 * (1 / fx.launch) * E.launch * kessler * Math.pow(Math.max(S[eo + F.gdp], 1e13) / 1.6e14, 0.8) * (1 + year / 40);
 
     // ---- per settlement
+    const swarm = this.swarmPower(year);
+    this.tick++; // never repeats, even after a restore to an earlier step
     const tfp = fx.productivity * Math.pow(1 + g[G.knowledge] / 2000, 0.22);
     let research = 0;
     // migration inside a system: Earth (launch-limited) and every town or bigger send
@@ -296,14 +300,19 @@ export class Engine {
 
       // energy (W per person)
       const flux = this.bFlux[b];
-      const dysonBoost = fx.dyson > 0 && stg >= STAGE.HUB ? 1 + fx.dyson * 4 : 1;
+      const eTech = Math.pow(fx.energy, 0.3);
       const perCap = isEarth
-        ? 2600 * Math.pow(fx.energy, 0.6) * dysonBoost
-        : 14000 * Math.max(Math.pow(Math.min(flux, 4), 0.5), fx.fission > 0 ? 1 : 0) * fx.energy * dysonBoost;
+        ? 2600 * eTech
+        : 14000 * Math.max(Math.pow(Math.min(flux, 4), 0.5), fx.fission > 0 ? 1 : 0) * eTech;
       const need = isEarth ? 2000 : 9000 * (1.5 - 0.5 * h);
       const eRatio = perCap / need;
       S[o + F.energyRatio] = eRatio;
       S[o + F.energy] = pop * perCap + stg * 1e5;
+      // the system's Dyson swarm is counted once, at its first hub, and grows with it
+      if (swarm > 0 && stg >= STAGE.HUB && this.swarmStamp[this.bSys[b]] !== this.tick) {
+        this.swarmStamp[this.bSys[b]] = this.tick;
+        S[o + F.energy] += swarm * this.sysLum[this.bSys[b]] * Math.min(1, pop / 1e9);
+      }
 
       // resources: self-sufficiency per resource, then stock dynamics
       const stageEff = isEarth ? 1 : 0.55 + 0.1 * Math.min(stg, 5);
@@ -416,6 +425,16 @@ export class Engine {
     st.step++;
     g[G.year] = this.years[st.step];
     this.record(st.step);
+  }
+
+  /** Watts a Dyson swarm around a 1 L_sun star captures by now. Phase I is ~1e16 W
+   *  (bible M15); phase II then grows e-fold every 60 years to half the star. */
+  private swarmPower(year: number): number {
+    const d = this.st.techDone, t1 = d[TECH_INDEX.get('dyson1')!], t2 = d[TECH_INDEX.get('dyson2')!];
+    if (t1 < 0) return 0;
+    let cov = 2.6e-11 * Math.min(1, (year - t1) / 50 + 0.1);
+    if (t2 >= 0) cov = Math.max(cov, Math.min(this.has('starLifting') ? 0.9 : 0.5, 2.6e-7 * Math.exp((year - t2) / 60)));
+    return cov * 3.846e26;
   }
 
   private lagToCapital(b: number): number {
