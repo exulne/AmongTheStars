@@ -14,7 +14,7 @@ import { GALAXIES, buildWorld } from './sim/world.ts';
 import { ChartStrip, globalSeries, type Series } from './ui/charts.ts';
 import { fmtNum, fmtYear, parseCount } from './ui/format.ts';
 import { Inspector } from './ui/inspector.ts';
-import { DataPanel } from './ui/dataPanel.ts';
+import { installDataDesk } from './ui/dataDesk.ts';
 import { Search, type Hit } from './ui/search.ts';
 import { NOTABLE, Ticker, describe } from './ui/ticker.ts';
 import { Timeline } from './ui/timeline.ts';
@@ -150,15 +150,11 @@ const sim = new SimClient();
 const ctx: Ctx = { world, snap: null, year: 0, camera, controls, system: 0, body: world.mars, selected: null, t: 0, tm: 0, colorBy: 'stage', city: 0 };
 let events: SimEvent[] = [];
 let history: HistoryMsg | null = null;
-const dataPanel = new DataPanel({
-  world, sim, year: () => ctx.year,
+const dataPanel = installDataDesk({
+  app, scene: canvas, world, sim, ctx, view: () => views[level],
   selectBody: (b) => select(asPick({ kind: 'body', id: b })),
-  selectedBody: () => (ctx.selected?.kind === 'body' ? ctx.selected.id : -1),
+  showSeries: (key) => { if (charts.el.hidden) chartsToggle.click(); charts.show(key); },
 });
-app.append(dataPanel.el);
-const dataBtn = app.querySelector<HTMLButtonElement>('#data')!;
-dataBtn.addEventListener('click', () => { dataPanel.toggle(); dataBtn.setAttribute('aria-pressed', String(dataPanel.open)); });
-dataPanel.onClose = () => dataBtn.setAttribute('aria-pressed', 'false');
 
 const views: Record<Level, View> = {
   universe: new UniverseView(),

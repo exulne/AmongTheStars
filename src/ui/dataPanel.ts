@@ -1,9 +1,11 @@
-// The Data tab: every number of every living settlement at the current year,
-// as a sortable table you can copy out. Clicking a row selects the place.
+// The data desk: a sheet of tabs over the 3D view. "Places" is every number
+// of every living settlement at the current year, filterable with the query
+// language, sortable, and copyable. Clicking a row selects the place.
 
 import { EVENT_NAMES, STAGE_NAMES } from '../sim/catalog.ts';
 import type { SimClient, TableMsg } from '../sim/client.ts';
 import { F, GLOBAL_METRICS, NF, NGM, SETTLEMENT_FIELDS, SETTLEMENT_LABELS, type SField } from '../sim/metrics.ts';
+import { PLACE_EXTRAS, placeBinder, tryCompile, type PlaceRow } from '../sim/query.ts';
 import type { World } from '../sim/world.ts';
 import { copyText, toCsv, toJson } from './exporter.ts';
 import { fmtNum, fmtYear } from './format.ts';
@@ -14,9 +16,16 @@ export interface DataHost {
   year(): number;
   selectBody(b: number): void;
   selectedBody(): number;
+  /** mark these bodies in the 3D view (null: none) */
+  setHighlight(ids: Iterable<number> | null): void;
+  /** show a series key in the bottom charts */
+  showSeries(key: string): void;
 }
 
-const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+/** One tab of the desk. `refresh` runs when the year, run or selection changes while it shows. */
+export interface DataTab { id: string; label: string; el: HTMLElement; refresh(): void; hide?(): void }
+
+export const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 /** Compact cell text: 3 significant figures, words for big numbers. */
 export function cell(v: number): string {
@@ -29,27 +38,37 @@ export function cell(v: number): string {
   return a >= 1 ? v.toFixed(2) : v.toPrecision(2);
 }
 
-interface Col { key: string; head: string; title: string; text: boolean; value(b: number, r: number): number | string; show(b: number, r: number): string }
+/** The field reference shown under every query box. */
+export function queryHelp(): string {
+  const fields = SETTLEMENT_FIELDS.map((f) => `<code title="${esc(SETTLEMENT_LABELS[f]?.join(' ') ?? f)}">${f}</code>`).join(' ');
+  const extra = PLACE_EXTRAS.map(([k, d]) => `<code title="${esc(d)}">${k}</code>`).join(' ');
+  return `<details class="q-help"><summary>How to write a query</summary>
+    <p>Compare fields with <code>&lt; &lt;= &gt; &gt;= == !=</code>, combine with <code>&amp;&amp; || !</code> (or <code>and or not</code>), do arithmetic with <code>+ - * / ^</code>. Numbers can be <code>1e6</code>, <code>2.5M</code>, <code>3B</code>. Text compares with <code>==</code> or <code>~</code> (contains): <code>system ~ "ceti"</code>. Functions: <code>abs sqrt log ln exp min max floor ceil round pow if(c,a,b)</code>.</p>
+    <p>Examples: <code>stability &lt; 0.3 &amp;&amp; pop &gt; 1M</code> · <code>dist &gt; 10 and stage &gt;= 5</code> · <code>gdp / pop &gt; 1e5</code> · <code>capital == "Mars"</code></p>
+    <p>Fields: ${fields}</p><p>Also: ${extra}</p></details>`;
+}
+
+/** Show a parse error under its query, with a caret at the spot. */
+export function showError(el: HTMLElement, src: string, e: { message: string; pos: number } | null): void {
+  el.hidden = !e;
+  if (e) el.textContent = `${src}\n${' '.repeat(e.pos)}^ ${e.message}`;
+}
 
 export class DataPanel {
   el: HTMLElement;
   private host: DataHost;
-  private table: TableMsg | null = null;
-  private tableKey = '';
-  private cols: Col[];
-  private sortKey = 'pop';
-  private sortDir = -1;
-  private limit = 200;
+  private tabs: DataTab[] = [];
+  private active: DataTab | null = null;
   private timer = 0;
-  private inflight = false;
-  private status: HTMLElement;
+  private nav: HTMLElement;
   private sub: HTMLElement;
-  private tbl: HTMLElement;
-  private more: HTMLElement;
+  onClose: () => void = () => {};
+  get hostApi(): DataHost { return this.host; }
+  /** the shared filter: Places and Over time start from it */
+  query = '';
 
   constructor(host: DataHost) {
     this.host = host;
-    this.cols = this.columns();
     this.el = document.createElement('section');
     this.el.className = 'data';
     this.el.hidden = true;
@@ -57,56 +76,156 @@ export class DataPanel {
     this.el.innerHTML = `
       <header class="data-head">
         <h2>Data</h2><span class="data-sub muted num"></span>
+        <nav class="data-tabs" role="tablist" aria-label="Data views"></nav>
         <span class="grow"></span>
-        <button class="link" type="button" data-act="fold" aria-expanded="true">Fold</button>
+        <button class="link" type="button" data-act="fold" aria-expanded="true" title="Fold the sheet to its first lines, to see the map">Fold</button>
         <button class="link" type="button" data-act="close">Close</button>
       </header>
-      <div class="data-pane">
-        <div class="data-actions">
-          <button class="link" type="button" data-act="csv">Copy CSV</button>
-          <button class="link" type="button" data-act="json">Copy JSON</button>
-          <button class="link" type="button" data-act="series">Copy global series (year × all metrics)</button>
-          <span class="copy-status muted" aria-live="polite"></span>
-        </div>
-        <div class="tbl-scroll"><table class="dtable"></table></div>
-        <p class="data-more"></p>
-      </div>`;
-    this.status = this.el.querySelector('.copy-status')!;
+      <footer class="data-foot muted"></footer>`;
+    this.nav = this.el.querySelector('.data-tabs')!;
     this.sub = this.el.querySelector('.data-sub')!;
-    this.tbl = this.el.querySelector('.dtable')!;
-    this.more = this.el.querySelector('.data-more')!;
-    this.el.addEventListener('click', (e) => this.onClick(e));
+    this.el.addEventListener('click', (e) => {
+      const t = e.target as HTMLElement;
+      const tab = t.closest<HTMLElement>('[data-tab]')?.dataset.tab;
+      if (tab) { this.show(tab); return; }
+      const act = t.closest<HTMLElement>('.data-head [data-act]')?.dataset.act;
+      if (act === 'close') this.toggle(false);
+      else if (act === 'fold') {
+        const f = this.el.classList.toggle('folded');
+        t.textContent = f ? 'Unfold' : 'Fold';
+        t.setAttribute('aria-expanded', String(!f));
+      }
+    });
+    this.add(new PlacesTab(host, this));
+  }
+
+  add(tab: DataTab): void {
+    this.tabs.push(tab);
+    tab.el.classList.add('data-pane');
+    tab.el.hidden = true;
+    this.el.querySelector('.data-foot')!.before(tab.el);
+    this.nav.insertAdjacentHTML('beforeend', `<button class="link" type="button" role="tab" data-tab="${tab.id}" aria-selected="false">${esc(tab.label)}</button>`);
+    if (!this.active) this.show(tab.id);
+  }
+
+  show(id: string): void {
+    const t = this.tabs.find((x) => x.id === id);
+    if (!t) return;
+    if (this.active && this.active !== t) this.active.hide?.();
+    this.active = t;
+    for (const x of this.tabs) x.el.hidden = x !== t;
+    for (const b of this.nav.querySelectorAll<HTMLElement>('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === id));
+    this.refresh(true);
   }
 
   get open(): boolean { return !this.el.hidden; }
-  onClose: () => void = () => {};
   toggle(on = !this.open): void {
     this.el.hidden = !on;
-    if (!on) this.onClose();
     this.el.classList.remove('folded');
+    if (!on) { this.active?.hide?.(); this.onClose(); }
     if (on) this.refresh(true);
   }
 
-  /** The year, the run or the selection changed. Cheap; fetches at most every 200ms. */
+  /** The year, the run or the selection changed. Cheap: the active tab updates at most every 200ms. */
   refresh(now = false): void {
     if (!this.open) return;
     clearTimeout(this.timer);
-    this.timer = window.setTimeout(() => this.fetch(), now ? 0 : 200);
+    this.timer = window.setTimeout(() => {
+      const sim = this.host.sim;
+      this.sub.textContent = sim.years.length ? `${fmtYear(this.host.year())} · future #${sim.seed}` : '';
+      this.active?.refresh();
+    }, now ? 0 : 200);
   }
 
-  private fetch(): void {
+  footer(html: string): void { this.el.querySelector('.data-foot')!.innerHTML = html; }
+}
+
+interface Col { key: string; head: string; title: string; text: boolean; value(b: number, r: number): number | string; show(b: number, r: number): string }
+
+/** Every living settlement at the current year. */
+class PlacesTab implements DataTab {
+  id = 'places';
+  label = 'Places';
+  el: HTMLElement;
+  private host: DataHost;
+  private desk: DataPanel;
+  private table: TableMsg | null = null;
+  private tableKey = '';
+  private cols: Col[];
+  private sortKey = 'pop';
+  private sortDir = -1;
+  private limit = 200;
+  private inflight = false;
+  private status: HTMLElement;
+  private tbl: HTMLElement;
+  private more: HTMLElement;
+  private count: HTMLElement;
+  private err: HTMLElement;
+  private input: HTMLInputElement;
+  private hl: HTMLInputElement;
+  private match: ((r: PlaceRow) => boolean) | null = null;
+  private qTimer = 0;
+
+  constructor(host: DataHost, desk: DataPanel) {
+    this.host = host;
+    this.desk = desk;
+    this.cols = this.columns();
+    this.el = document.createElement('div');
+    this.el.innerHTML = `
+      <div class="data-tools">
+        <label class="q">Filter <input type="search" spellcheck="false" autocomplete="off" placeholder="e.g. stability < 0.3 && pop > 1M" aria-label="Filter places with a query"></label>
+        <span class="q-count num" aria-live="polite"></span>
+        <label><input type="checkbox" checked> mark matches on the map</label>
+      </div>
+      <p class="q-err" hidden></p>
+      ${queryHelp()}
+      <div class="data-actions">
+        <button class="link" type="button" data-act="csv">Copy CSV</button>
+        <button class="link" type="button" data-act="json">Copy JSON</button>
+        <button class="link" type="button" data-act="series">Copy global series (year × all metrics)</button>
+        <span class="copy-status muted" aria-live="polite"></span>
+      </div>
+      <div class="tbl-scroll"><table class="dtable"></table></div>
+      <p class="data-more"></p>`;
+    this.status = this.el.querySelector('.copy-status')!;
+    this.tbl = this.el.querySelector('.dtable')!;
+    this.more = this.el.querySelector('.data-more')!;
+    this.count = this.el.querySelector('.q-count')!;
+    this.err = this.el.querySelector('.q-err')!;
+    this.input = this.el.querySelector('input[type=search]')!;
+    this.hl = this.el.querySelector('input[type=checkbox]')!;
+    this.el.addEventListener('click', (e) => this.onClick(e));
+    this.input.addEventListener('input', () => { clearTimeout(this.qTimer); this.qTimer = window.setTimeout(() => this.setQuery(this.input.value), 180); });
+    this.hl.addEventListener('change', () => this.render());
+  }
+
+  hide(): void { this.host.setHighlight(null); }
+
+  private setQuery(q: string): void {
+    this.desk.query = q;
+    this.match = null;
+    const r = q.trim() ? tryCompile<PlaceRow>(q, placeBinder(this.host.world)) : null;
+    showError(this.err, q, r instanceof Error ? r : null);
+    if (r && !(r instanceof Error)) this.match = r.test;
+    this.limit = 200;
+    this.render();
+  }
+
+  refresh(): void {
+    if (this.input.value !== this.desk.query) { this.input.value = this.desk.query; this.setQuery(this.desk.query); }
     const sim = this.host.sim;
     if (!sim.years.length) return;
     const step = sim.stepAt(this.host.year());
     const key = `${sim.seed}:${step}`;
     if (key === this.tableKey && this.table) { this.render(); return; }
-    if (this.inflight) { this.refresh(); return; }
+    if (this.inflight) { this.desk.refresh(); return; }
     this.inflight = true;
+    const seed = sim.seed;
     sim.table(step).then((t) => {
       this.inflight = false;
-      if (sim.seed !== this.host.sim.seed) return;
+      if (seed !== this.host.sim.seed) return;
       this.table = t;
-      this.tableKey = `${sim.seed}:${t.step}`;
+      this.tableKey = `${seed}:${t.step}`;
       this.render();
     });
   }
@@ -135,15 +254,20 @@ export class DataPanel {
     return cols;
   }
 
-  /** Row indices in display order. */
+  /** Row indices that pass the filter, in display order. */
   private order(): number[] {
     const t = this.table!;
     const col = this.cols.find((c) => c.key === this.sortKey) ?? this.cols[0];
-    const idx = Array.from(t.bodies, (_, i) => i);
-    const vals = idx.map((i) => col.value(t.bodies[i], i));
+    let idx = Array.from(t.bodies, (_, i) => i);
+    const m = this.match;
+    if (m) {
+      const row: PlaceRow = { S: t.rows, b: 0, o: 0, year: t.year };
+      idx = idx.filter((i) => { row.b = t.bodies[i]; row.o = i * NF; return m(row); });
+    }
+    const vals = new Map(idx.map((i) => [i, col.value(t.bodies[i], i)]));
     const d = this.sortDir;
     return idx.sort((a, b) => {
-      const x = vals[a], y = vals[b];
+      const x = vals.get(a)!, y = vals.get(b)!;
       return (typeof x === 'string' ? x.localeCompare(String(y)) : (x as number) - (y as number)) * d || a - b;
     });
   }
@@ -152,12 +276,14 @@ export class DataPanel {
     const t = this.table;
     if (!t) return;
     const rows = this.order();
-    this.sub.textContent = `${fmtYear(t.year)} · ${rows.length.toLocaleString('en-US')} living places · future #${this.host.sim.seed}`;
+    const total = t.bodies.length;
+    this.count.textContent = this.match ? `${rows.length.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} places match in ${fmtYear(t.year)}` : `${total.toLocaleString('en-US')} living places in ${fmtYear(t.year)}`;
+    if (!this.el.hidden) this.host.setHighlight(this.match && this.hl.checked ? rows.map((r) => t.bodies[r]) : null);
     const sel = this.host.selectedBody();
     const head = `<thead><tr>${this.cols.map((c) => `<th scope="col" title="${esc(c.title)}" class="${c.text ? 'txt' : ''}"><button type="button" data-sort="${c.key}" class="${c.key === this.sortKey ? 'on' : ''}">${esc(c.head)}${c.key === this.sortKey ? (this.sortDir < 0 ? ' ↓' : ' ↑') : ''}</button></th>`).join('')}</tr></thead>`;
     const body = rows.slice(0, this.limit).map((r) => {
       const b = t.bodies[r];
-      return `<tr data-b="${b}"${b === sel ? ' class="sel"' : ''}>${this.cols.map((c, k) => (k === 0 ? `<th scope="row"><button class="link" type="button" data-body="${b}">${c.show(b, r)}</button></th>` : `<td class="${c.text ? 'txt' : 'num'}">${c.show(b, r)}</td>`)).join('')}</tr>`;
+      return `<tr data-b="${b}"${b === sel ? ' class="sel"' : ''}>${this.cols.map((c, k) => (k === 0 ? `<th scope="row"><button class="link" type="button">${c.show(b, r)}</button></th>` : `<td class="${c.text ? 'txt' : 'num'}">${c.show(b, r)}</td>`)).join('')}</tr>`;
     }).join('');
     this.tbl.innerHTML = head + `<tbody>${body}</tbody>`;
     this.more.innerHTML = rows.length > this.limit ? `Showing ${this.limit} of ${rows.length.toLocaleString('en-US')}. <button class="link" type="button" data-act="more">Show all</button>` : '';
@@ -174,19 +300,14 @@ export class DataPanel {
       return;
     }
     const row = t.closest<HTMLElement>('tr[data-b]');
-    if (row && !t.closest('[data-act]')) {
+    if (row) {
       this.host.selectBody(Number(row.dataset.b));
       for (const r of this.tbl.querySelectorAll('tr.sel')) r.classList.remove('sel');
       row.classList.add('sel');
       return;
     }
     const act = t.closest<HTMLElement>('[data-act]')?.dataset.act;
-    if (act === 'close') this.toggle(false);
-    else if (act === 'fold') {
-      const f = this.el.classList.toggle('folded');
-      t.textContent = f ? 'Unfold' : 'Fold';
-      t.setAttribute('aria-expanded', String(!f));
-    } else if (act === 'more') { this.limit = Infinity; this.render(); }
+    if (act === 'more') { this.limit = Infinity; this.render(); }
     else if (act === 'csv') this.copyTable('csv');
     else if (act === 'json') this.copyTable('json');
     else if (act === 'series') this.copySeries();
@@ -208,9 +329,9 @@ export class DataPanel {
   private copyTable(kind: 'csv' | 'json'): void {
     if (!this.table) return;
     const { columns, rows } = this.exportRows();
-    const title = `Every living settlement in ${fmtYear(this.table.year)} (${rows.length} rows)`;
-    const text = kind === 'csv' ? toCsv(columns, rows, title)
-      : toJson({ year: fmtYear(this.table.year), columns, rows }, title);
+    const what = this.match ? `Settlements matching ${this.desk.query}` : 'Every living settlement';
+    const title = `${what} in ${fmtYear(this.table.year)} (${rows.length} rows)`;
+    const text = kind === 'csv' ? toCsv(columns, rows, title) : toJson({ year: fmtYear(this.table.year), query: this.match ? this.desk.query : null, columns, rows }, title);
     void copyText(text, kind === 'csv' ? 'Table as CSV' : 'Table as JSON', this.status);
   }
 
