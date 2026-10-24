@@ -435,7 +435,7 @@ function dive(p: Ref): void {
   else if (p.kind === 'humanspace') setLevel('local', p);
   else if (p.kind === 'system') setLevel('system', p, () => { ctx.system = p.id; });
   else if (p.kind === 'body') setLevel('planet', p, () => { ctx.body = p.id; ctx.system = world.bodies[p.id].system; });
-  else if (p.kind === 'city' && level === 'planet') setLevel('street', p, () => { ctx.city = p.id; });
+  else if (p.kind === 'city' && !(level === 'street' && ctx.city === p.id)) setLevel('street', p, () => { ctx.city = p.id; ctx.system = world.bodies[ctx.body].system; });
 }
 
 function fetchHistory(): void {
