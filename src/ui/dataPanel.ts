@@ -9,6 +9,7 @@ import { PLACE_EXTRAS, placeBinder, tryCompile, type PlaceRow } from '../sim/que
 import type { World } from '../sim/world.ts';
 import { copyText, toCsv, toJson } from './exporter.ts';
 import { fmtNum, fmtYear } from './format.ts';
+import { names } from './names.ts';
 
 export interface DataHost {
   world: World;
@@ -250,7 +251,7 @@ class PlacesTab implements DataTab {
       { key: 'system', head: 'system', title: 'Star system', text: true, value: (b) => Sy[B[b].system].name, show: (b) => esc(Sy[B[b].system].name) },
       { key: 'dist', head: 'dist', title: 'Light years from the Sun', text: false, value: (b) => Sy[B[b].system].dist, show: (b) => Sy[B[b].system].dist.toFixed(1) },
       { key: 'capital', head: 'faction', title: 'Faction, named for its capital', text: true, value: (_b, r) => name(v(r, 'faction')), show: (_b, r) => esc(name(v(r, 'faction'))) },
-      { key: 'faith', head: 'faith', title: 'Faith (culture) number', text: false, value: (_b, r) => v(r, 'culture'), show: (_b, r) => `#${v(r, 'culture')}` },
+      { key: 'faith', head: 'faith', title: 'Faith (culture) number', text: false, value: (_b, r) => v(r, 'culture'), show: (_b, r) => esc(names.faith(v(r, 'culture'))) },
     ];
     for (const f of SETTLEMENT_FIELDS) {
       if (f === 'faction' || f === 'culture') continue;

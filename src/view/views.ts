@@ -10,7 +10,7 @@ import { F, NF } from '../sim/metrics.ts';
 import { Rng, hash01 } from '../sim/rng.ts';
 import { GALACTIC_CENTRE, GALAXIES, galToXYZ, type Body, type World } from '../sim/world.ts';
 import { fmtNum } from '../ui/format.ts';
-import { ageColor, factionColor, heatColor, type ColorMode } from './colorModes.ts';
+import { ageColor, factionColor, faithColor, heatColor, type ColorMode } from './colorModes.ts';
 import { styleOf } from './epoch.ts';
 import { makeGalaxy } from './galaxyPoints.ts';
 import { atmosphereMaterial, planetMaterial } from './planetShader.ts';
@@ -111,11 +111,11 @@ export function citySplit(pop: number, n: number, i: number): { count: number; o
   return i === 0 ? { count: cap, offset: 0 } : { count: Math.floor(cap + rest * i) - Math.floor(cap + rest * (i - 1)), offset: Math.floor(cap + rest * (i - 1)) };
 }
 
-export interface SystemSum { stage: number; pop: number; n: number; faction: number; founded: number }
+export interface SystemSum { stage: number; pop: number; n: number; faction: number; founded: number; culture: number }
 
-/** Stage is the most developed settlement; faction that of the most populous; founded the earliest. */
+/** Stage is the most developed settlement; faction and faith (culture) those of the most populous; founded the earliest. */
 export function systemSummary(world: World, snap: StateMsg | null, sys: number): SystemSum {
-  let stage = -1, pop = 0, n = 0, faction = -1, founded = Infinity, top = -1;
+  let stage = -1, pop = 0, n = 0, faction = -1, founded = Infinity, top = -1, culture = 0;
   for (const b of world.systems[sys].bodies) {
     const s = stageOf(snap, b);
     if (s < 0) continue;
@@ -123,18 +123,19 @@ export function systemSummary(world: World, snap: StateMsg | null, sys: number):
       n++;
       const p = popOf(snap, b);
       pop += p; stage = Math.max(stage, s);
-      if (p > top) { top = p; faction = snap!.S[b * NF + F.faction]; }
+      if (p > top) { top = p; faction = snap!.S[b * NF + F.faction]; culture = snap!.S[b * NF + F.culture]; }
       founded = Math.min(founded, snap!.S[b * NF + F.founded]);
     }
     else if (stage < 0) stage = s === STAGE.SURVEY ? STAGE.SURVEY : s;
     else if (s === STAGE.SURVEY && stage >= STAGE.ABANDONED) stage = STAGE.SURVEY;
   }
-  return { stage, pop, n, faction, founded };
+  return { stage, pop, n, faction, founded, culture };
 }
 
 /** Colour of a living system under the current colour mode. */
 export function modeColor(ctx: Ctx, s: SystemSum, out: THREE.Color): THREE.Color {
   if (ctx.colorBy === 'faction') return factionColor(s.faction, ctx.world.earth, out);
+  if (ctx.colorBy === 'faith') return faithColor(s.culture, out);
   if (ctx.colorBy === 'heat') return heatColor(s.pop, out);
   if (ctx.colorBy === 'founded') return ageColor(s.founded, ctx.year, out);
   return out.set(STAGE_COLORS[s.stage]);

@@ -8,6 +8,7 @@ import { STAGE_CSS } from '../view/textures.ts';
 import { alive, cityCount, citySplit, systemSummary, type Pickable } from '../view/views.ts';
 import { fmtNum, fmtUnit, fmtYear, parseCount } from './format.ts';
 import { periodOf } from '../sim/ledger.ts';
+import { names } from './names.ts';
 import type { Biography, PersonBrief } from '../sim/lives.ts';
 import { biographyHtml, residentsHtml } from './peoplePanel.ts';
 import { explainHtml, galaxyFactsHtml, starFactsHtml } from '../explain/card.ts';
@@ -338,7 +339,8 @@ export class Inspector {
     const st = S ? v('stage') : -1;
     const pop = v('pop');
     const fly = `<p class="act"><button class="link" data-act="dive-body" data-id="${id}" type="button">Fly to ${esc(b.name)}</button></p>`;
-    const header = `<h2>${esc(city === undefined ? b.name : city === 0 ? `${b.name} capital` : `${b.name} settlement ${city}`)}</h2>
+    const own = names.local(id), shown = own ?? b.name; // a world by its own name, the catalogue's underneath
+    const header = `<h2>${esc(city === undefined ? shown : city === 0 ? `${shown} capital` : `${shown} settlement ${city}`)}</h2>${own ? `<p class="muted catalogue-id">${esc(b.name)} in the catalogue</p>` : ''}
       <p class="lede">${st >= 0 ? `<span class="pill" style="--c:${STAGE_CSS[st]}">${STAGE_NAMES[st]}</span> ` : ''}${b.kind} world in ${esc(sys.name)}${st >= 0 && v('founded') >= 0 && st !== STAGE.SURVEY ? `, settled ${fmtYear(v('founded'))}` : ''}${v('parent') >= 0 && st > STAGE.SURVEY ? ` from ${esc(c.world.bodies[v('parent')]?.name ?? '')}` : ''}.</p>`;
     const phys = this.kv([
       ['Gravity', `${b.g.toFixed(2)} g`], ['Temperature', `${Math.round(b.temp)} K`], ['Radius', `${fmtNum(b.radius)} km`],
@@ -349,7 +351,7 @@ export class Inspector {
       return `${header}${fly}<h3>History</h3>${this.chronicle(c, id)}<h3>World</h3>${phys}<h3>Resources</h3>${res}<h3>Events here</h3>${this.eventsList(c, 8)}`;
     }
     const factionId = v('faction');
-    const faction = factionId === id ? 'Independent' : `Loyal to ${c.world.bodies[factionId]?.name ?? '?'}`;
+    const faction = factionId === id ? 'Independent' : `Loyal to ${c.world.bodies[factionId] ? names.place(c.world, factionId) : '?'}`;
     const metrics = (Object.keys(SETTLEMENT_LABELS) as SField[]).map((f) => {
       const [label, unit] = SETTLEMENT_LABELS[f]!;
       return [label, fmtUnit(v(f), unit)] as [string, string];
@@ -357,7 +359,7 @@ export class Inspector {
     const split = city === undefined ? { count: Math.floor(pop), offset: 0 } : citySplit(pop, cityCount(st, pop), city);
     const cityPop = split.count, offset = split.offset;
     return `${header}${fly}
-      ${this.kv([...(city === undefined ? [] : [['People in this settlement', fmtNum(cityPop)] as [string, string]]), [city === undefined ? 'Population' : 'Whole world', fmtNum(pop)], ['Allegiance', esc(faction)], ['Faith', `#${v('culture')}`]])}
+      ${this.kv([...(city === undefined ? [] : [['People in this settlement', fmtNum(cityPop)] as [string, string]]), [city === undefined ? 'Population' : 'Whole world', fmtNum(pop)], ['Allegiance', esc(faction)], ['Faith', esc(names.faith(v('culture')))]])}
       ${this.historyChart(c)}
       <h3>Society in ${fmtYear(c.year)}</h3>${this.society(c, id)}
       <h3>Residents</h3>${this.people(c, id, cityPop, offset)}

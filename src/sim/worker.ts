@@ -27,6 +27,7 @@ export type ToWorker =
   | { type: 'chronicle'; id: number; from: number; to: number; body?: number; query?: string; limit?: number; minWeight?: number }
   | { type: 'inventions'; id: number }
   | { type: 'society'; id: number; body: number; step: number }
+  | { type: 'placeNames'; id: number }
   | DataReq
   | { type: 'ship'; id: number; from: number; to: number; depart: number };
 
@@ -41,6 +42,8 @@ export type FromWorker =
   | { type: 'chronicle'; id: number; pending?: boolean; entries: Entry[] }
   | { type: 'inventions'; id: number; pending?: boolean; list: { tech: number; year: number; entry: Entry | null }[] }
   | { type: 'society'; id: number; pending?: boolean; society: Society | null }
+  /** places whose people call them something other than the catalogue name: [body, name] */
+  | { type: 'placeNames'; id: number; pending?: boolean; names: [number, string][] }
   | DataRes
   | { type: 'ship'; id: number; pending?: boolean; ship: ShipInfo | null };
 
@@ -155,6 +158,10 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
       const e = stateAt(m.step);
       post({ type: 'society', id: m.id, society: society!.at(m.body, e.years[e.st.step], e.st.S, e.st.techDone, e.st.g[1], e.st.hx) });
     }
+  } else if (m.type === 'placeNames') {
+    const L = people(), names: [number, string][] = [];
+    if (L) world.bodies.forEach((b, i) => { const n = L.placeName(i); if (n && n !== b.name) names.push([i, n]); });
+    post({ type: 'placeNames', id: m.id, pending: !L, names });
   } else if (m.type === 'ship') {
     const L = people();
     post({ type: 'ship', id: m.id, pending: !L, ship: L ? shipInfo(L, m.from, m.to, m.depart) : null });
