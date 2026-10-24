@@ -53,7 +53,7 @@ interface Fx {
   extract: number; habitat: number; lifeSupport: number; energy: number; launch: number; research: number;
   productivity: number; death: number; growth: number; stability: number; hab: number; habHostile: number;
   reliability: number; war: number; secession: number; shipSpeed: number; voyage: number; fission: number;
-  fusion: number; dyson: number; ftl: number; ftl2: number; probes: number; divergence: number;
+  fusion: number; dyson: number; ftl: number; ftl2: number; probes: number; divergence: number; orbital: number;
 }
 const MULT_KEYS = new Set(['extract', 'habitat', 'lifeSupport', 'energy', 'launch', 'research', 'productivity', 'death', 'growth', 'war', 'secession', 'voyage', 'divergence']);
 
@@ -80,7 +80,7 @@ export class Engine {
 
   // static per-body lookups
   private bSys: Int32Array; private bHab: Float64Array; private bFlux: Float64Array; private bG: Float64Array;
-  private bRes: Float64Array; private bSettle: Uint8Array; private bReach: Uint8Array; private sysX: Float64Array; private sysY: Float64Array;
+  private bRes: Float64Array; private bSettle: Uint8Array; private bReach: Uint8Array; private bArea: Float64Array; private sysX: Float64Array; private sysY: Float64Array;
   private sysZ: Float64Array; private sysRegion: Uint8Array; private nbr: Neighbours;
   /** per system: neighbours before this index have nothing left to survey (a cache, rebuilt after restore) */
   private surveyCursor: Int32Array;
@@ -92,10 +92,11 @@ export class Engine {
     const nb = world.bodies.length, ns = world.systems.length;
     this.bSys = new Int32Array(nb); this.bHab = new Float64Array(nb); this.bFlux = new Float64Array(nb);
     this.bG = new Float64Array(nb); this.bRes = new Float64Array(nb * 5); this.bSettle = new Uint8Array(nb);
-    this.bReach = new Uint8Array(nb);
+    this.bReach = new Uint8Array(nb); this.bArea = new Float64Array(nb);
     world.bodies.forEach((b, i) => {
       this.bSys[i] = b.system; this.bHab[i] = b.hab; this.bFlux[i] = b.flux; this.bG[i] = b.g;
       this.bSettle[i] = b.settle ? 1 : 0;
+      this.bArea[i] = Math.min(4, (b.radius / 3390) ** 2); // surface area, Mars = 1
       // crewed reach: the belt and beyond need nuclear propulsion, the Kuiper belt a fusion
       // drive, and Jupiter's radiation belts shielding
       this.bReach[i] = (b.flux < 0.3 ? REACH_OUTER : 0) | (b.flux < 1e-3 ? REACH_DEEP : 0) |
@@ -183,7 +184,7 @@ export class Engine {
     const fx: Fx = {
       extract: 1, habitat: 1, lifeSupport: 1, energy: 1, launch: 1, research: 1, productivity: 1, death: 1, growth: 1,
       stability: 0, hab: 0, habHostile: 0, reliability: 0, war: 1, secession: 1, shipSpeed: 0, voyage: 1, fission: 0,
-      fusion: 0, dyson: 0, ftl: 0, ftl2: 0, probes: 0, divergence: 1,
+      fusion: 0, dyson: 0, ftl: 0, ftl2: 0, probes: 0, divergence: 1, orbital: 0,
     };
     TECHS.forEach((t: Tech, i) => {
       if (this.st.techDone[i] < 0) return;
@@ -193,6 +194,7 @@ export class Engine {
         else fx[k] += v;
       }
     });
+    fx.orbital = this.has('orbitalHabitats') ? 1 : 0;
     this.fx = fx;
   }
 
@@ -270,9 +272,13 @@ export class Engine {
       const h = Math.min(1, hab0 + fx.hab * planetLike + fx.habHostile * (hab0 < 0.3 ? 1 : 0.4) + S[o + F.terraform]);
 
       // capacity
-      const cap = isEarth
-        ? 1.15e10 * (1 + 0.25 * Math.log(fx.habitat))
-        : STAGE_CAP[stg] * (0.15 + 0.85 * h) * fx.habitat * Math.sqrt(fx.lifeSupport);
+      // capacity: the stage sets what is built; land (radius^2) and, once O'Neill
+      // cylinders exist, orbital habitats built from local metal set the room for it
+      // cylinders exist, orbital habitats built from local metal (at most ~100 Island Threes)
+      const dense = 1 + 0.25 * Math.log(fx.habitat);
+      const hf = (0.15 + 0.85 * h) * dense;
+      const room = 1e10 * this.bArea[b] * hf + (fx.orbital ? Math.min(1e9, STAGE_CAP[stg] * (0.1 + 0.2 * this.bRes[b * 5 + 1])) : 0);
+      const cap = isEarth ? 1.15e10 * dense : Math.min(STAGE_CAP[stg] * hf * Math.pow(fx.lifeSupport, 0.25), room);
       S[o + F.capacity] = cap;
 
       // energy (W per person)
@@ -415,7 +421,7 @@ export class Engine {
       }
       return;
     }
-    if (stg >= STAGE.MEGA || pop < cap * 0.65) return;
+    if (stg >= STAGE.MEGA || pop < cap * 0.65 || pop < STAGE_CAP[stg] * 0.2) return;
     const gate =
       stg === STAGE.OUTPOST ? has('closedLoop') :
       stg === STAGE.BASE ? has('isru') :
