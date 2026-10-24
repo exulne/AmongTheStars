@@ -3,7 +3,8 @@
 // time" replays the run from its first snapshot on a private engine, in
 // slices, so the worker keeps answering while it scans.
 
-import { EV, isAlive } from './catalog.ts';
+import { isAlive } from './catalog.ts';
+import { FC, HG, NFC } from './civ.ts';
 import { Engine, type SimState } from './engine.ts';
 import { F, NF } from './metrics.ts';
 import { compile, placeBinder, QueryError, type PlaceRow } from './query.ts';
@@ -37,8 +38,8 @@ export interface DataEnv {
   snaps: () => SimState[];
   stateAt: (step: number) => Engine;
   post: (m: DataRes, transfer?: Transferable[]) => void;
-  /** a faith's name from its founding place and number, once the people of the run exist (else null) */
-  faithName?: (b: number, n: number) => string | null;
+  /** faith f's name (row f of the faith table), once the people of the run exist (else null) */
+  faithName?: (f: number) => string | null;
 }
 
 const DATA_TYPES = new Set(['table', 'scan', 'runinfo', 'groups', 'faiths']);
@@ -105,15 +106,16 @@ export function handleData(m: DataReq, env: DataEnv): void {
     env.post({ type: 'runinfo', id: m.id, seed: e.seed, done: e.done, feasible: Array.from(e.feasible), costMult: Array.from(e.techCostMult), wanderlust: e.wanderlust, techDone: Array.from(e.st.techDone) });
   } else if (m.type === 'groups') groups(m, env);
   else if (m.type === 'faiths') {
+    // a place's culture is its biggest faith: 0 for Earth's old faiths, else 1 + its row in the faith table
     const e = env.main();
-    const out: { n: number; name: string; body: number; year: number }[] = [{ n: 0, name: 'the faiths of Earth', body: -1, year: 0 }];
+    const out: { n: number; name: string; body: number; year: number }[] = [{ n: 0, name: "Earth's old faiths", body: -1, year: 0 }];
     let pending = !e || !e.done || !env.faithName;
     if (e && !pending) {
-      for (const ev of e.events) {
-        if (ev.type !== EV['New faith']) continue;
-        const name = env.faithName!(ev.body, ev.a);
+      const T = e.st.hx.faith, nF = e.st.hx.hg[HG.nFaith];
+      for (let f = 0; f < nF; f++) {
+        const name = env.faithName!(f);
         if (name === null) { pending = true; break; }
-        out.push({ n: ev.a, name, body: ev.body, year: ev.year });
+        out.push({ n: f + 1, name, body: T[f * NFC + FC.home], year: T[f * NFC + FC.year] });
       }
     }
     env.post({ type: 'faiths', id: m.id, pending, faiths: pending ? [] : out });

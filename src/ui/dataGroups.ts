@@ -14,7 +14,7 @@ import { fmtNum, fmtYear } from './format.ts';
 import { PALETTE, drawLines, drawStacked } from './miniChart.ts';
 
 type GroupsMsg = Extract<DataRes, { type: 'groups' }>;
-const BY_LABEL: Record<GroupBy, [string, string]> = { faction: ['faction', 'factions'], culture: ['faith', 'faiths'], system: ['star system', 'star systems'], stage: ['stage', 'stages'] };
+const BY_LABEL: Record<GroupBy, [string, string]> = { faction: ['faction', 'factions'], culture: ['majority faith', 'faiths'], system: ['star system', 'star systems'], stage: ['stage', 'stages'] };
 const OTHER = 'rgba(154, 157, 163, 0.45)';
 
 /** One group at the current year. */
