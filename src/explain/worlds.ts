@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { STAGE, STAGE_NAMES, TECHS } from '../sim/catalog.ts';
 import type { Body, World } from '../sim/world.ts';
 import { fmtNum } from '../ui/format.ts';
-import { AU_M, G_SI, L_SUN_W, fmtKm, fmtW, mainSequence, sig, specNum } from './astro.ts';
+import { an, AU_M, G_SI, L_SUN_W, fmtKm, fmtW, mainSequence, sig, specNum } from './astro.ts';
 import { addCpuSet, addGpuSet, nearestPoint, segDist, type Probe } from './picker.ts';
 import { h01, pick, pointWorld, registerExplainer, type ExCtx, type Explanation, type Fact } from './registry.ts';
 import { fieldAt, isAlive, popAt, stageAt } from './simInfo.ts';
@@ -117,7 +117,7 @@ function asteroidCard(pts: THREE.Points, b: BeltInfo, i: number, c: ExCtx): Expl
   return {
     eyebrow: `Asteroid in the ${b.label}`,
     title: a.name,
-    lede: `A ${a.D < 1 ? 'small' : a.D > 20 ? 'large' : ''} ${K.name.split(',')[0]} ${a.cls === 'K' ? '' : 'asteroid '}${a.au.toFixed(1)} AU from ${w.systems[b.sys].name === 'Sol' ? 'the Sun' : w.systems[b.sys].name}.`.replace(/\s+/g, ' '),
+    lede: `${an(`${a.D < 1 ? 'small' : a.D > 20 ? 'large' : ''} ${K.name.split(',')[0]}`.trim()).replace(/^a/, 'A')} ${a.cls === 'K' ? '' : 'asteroid '}${a.au.toFixed(1)} AU from ${w.systems[b.sys].name === 'Sol' ? 'the Sun' : w.systems[b.sys].name}.`.replace(/\s+/g, ' '),
     facts, why,
     links: mine.by >= 0 ? [{ label: w.bodies[mine.by].name, act: 'body', id: mine.by }] : undefined,
   };
@@ -166,7 +166,7 @@ function collectorCard(pts: THREE.Points, sys: number, i: number, c: ExCtx): Exp
       { k: 'Orbit', v: `${au.toFixed(2)} AU, ${(365.25 * Math.pow(au, 1.5) / Math.sqrt(mstar)).toFixed(0)} days round, tilted ${incl.toFixed(0)}°`, t: 'P' },
       { k: 'Sunlight there', v: `${sig(flux / 1361)}× Earth's`, t: 'E' },
       { k: 'Running temperature', v: `${Math.round(temp)} K`, t: 'E' },
-      { k: 'Operated by', v: ops.length ? ops.map((b) => w.bodies[b].name).join(', ') : 'nobody: abandoned', t: 'P' },
+      { k: 'Operated by', v: ops.length ? ops.slice(0, 4).map((b) => w.bodies[b].name).join(', ') + (ops.length > 4 ? ` and ${ops.length - 4} more worlds` : '') : 'nobody: abandoned', t: 'P' },
     ],
     why: 'A Kardashev Type II step: power on this scale runs whole planets of computers, sails between stars and the terraforming of worlds.',
     links: ops.slice(0, 3).map((b) => ({ label: w.bodies[b].name, act: 'body' as const, id: b })),
@@ -304,13 +304,13 @@ function satCard(pts: THREE.Points, id: number, i: number, c: ExCtx): Explanatio
   return {
     eyebrow: `Satellite of ${b.name}`,
     title: `${b.name.slice(0, 3).toUpperCase()}-${(i + 1).toString().padStart(3, '0')}`,
-    lede: `A ${job} satellite in ${shell === 0 ? 'low' : shell === 1 ? 'middle' : 'high'} orbit, operated from ${b.name}.`,
+    lede: `${an(job).replace(/^a/, 'A')} satellite in ${shell === 0 ? 'low' : shell === 1 ? 'middle' : 'high'} orbit, operated from ${b.name}.`,
     facts: [
       { k: 'Job', v: job, t: 'P' },
       { k: 'Height', v: fmtKm(alt), t: 'P' },
       { k: 'Goes round in', v: period > 120 ? `${(period / 60).toFixed(1)} hours` : `${Math.round(period)} minutes`, t: 'E' },
       { k: 'Tilt to the equator', v: `${Math.round(incl)}°`, t: 'P' },
-      { k: 'Launched', v: `once ${b.name} grew to a ${STAGE_NAMES[since].toLowerCase()}`, t: 'P' },
+      { k: 'Launched', v: `once ${b.name} grew to ${an(STAGE_NAMES[since].toLowerCase())}`, t: 'P' },
       { k: 'Satellites here now', v: fmtNum(satCount(stageAt(c.snap, id))), t: 'P' },
     ],
     why: 'Nothing on a new world works without them: no maps, no clocks, no talking past the horizon.',
@@ -343,8 +343,12 @@ export function explainHabitats(kind: string, obj: THREE.Object3D, list: () => {
   void v;
 }
 function habName(b: number, i: number, nTor: number): string {
-  return `${HAB_NAMES[Math.floor(h01(b, i, 3) * HAB_NAMES.length)]} ${['', 'II', 'III', 'IV', 'V', 'VI'][Math.floor(h01(b, i, 4) * 6)]}`.trim() + (i < nTor ? ' (torus)' : ' (cylinder)');
+  // every habitat round one world has its own name: a stem per index, a numeral for each further round of building
+  const off = Math.floor(h01(b, 3) * HAB_NAMES.length), stem = HAB_NAMES[(i * 7 + off) % HAB_NAMES.length];
+  const round = Math.floor(i / HAB_NAMES.length);
+  return `${stem}${round ? ` ${ROMAN[round] ?? round + 1}` : ''}` + (i < nTor ? ' (torus)' : ' (cylinder)');
 }
+const ROMAN = ['', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX', 'XXI'];
 
 function habCard(i: number, id: number, nTor: number, c: ExCtx): Explanation {
   const b = c.world.bodies[id];
@@ -355,7 +359,7 @@ function habCard(i: number, id: number, nTor: number, c: ExCtx): Explanation {
   const share = st >= STAGE.MEGA ? 0.3 : st >= STAGE.HUB ? 0.1 : 0.03;
   const wSum = nTor * 1 + (n - nTor) * 40;
   const cap = torus ? 140000 : 10_000_000;
-  const people = Math.min(cap, Math.round(pop * share * (torus ? 1 : 40) / Math.max(1, wSum)));
+  const people = Math.min(cap * (0.55 + 0.4 * h01(id, i, 6)), Math.round(pop * share * (torus ? 1 : 40) / Math.max(1, wSum) * (0.7 + 0.6 * h01(id, i, 7))));
   return {
     eyebrow: `Orbital habitat of ${b.name}`,
     title: habName(id, i, nTor).replace(/ \((torus|cylinder)\)$/, ''),
@@ -366,7 +370,7 @@ function habCard(i: number, id: number, nTor: number, c: ExCtx): Explanation {
       { k: 'People', v: `${fmtNum(people)} (counted in ${b.name}'s total)`, t: 'E' },
       { k: 'Built to hold', v: fmtNum(cap), t: 'R' },
       { k: 'Habitats round here', v: `${n} (${nTor} tori, ${n - nTor} cylinders)`, t: 'P' },
-      { k: 'Built', v: `after ${b.name} grew to a ${STAGE_NAMES[stageFor(i, habCount)].toLowerCase()}`, t: 'P' },
+      { k: 'Built', v: `after ${b.name} grew to ${an(STAGE_NAMES[stageFor(i, habCount)].toLowerCase())}`, t: 'P' },
     ],
     why: 'Habitats make their own gravity and climate, so a civilisation that builds them no longer needs good planets: this is how a few worlds become trillions of people.',
     links: [{ label: b.name, act: 'body', id }],

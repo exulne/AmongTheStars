@@ -6,10 +6,9 @@
 
 import * as THREE from 'three';
 import { GALAXIES, type World } from '../sim/world.ts';
-import { fmtNum } from '../ui/format.ts';
 import { META, metaArm, metaComp, metaPal, type GalaxyData } from '../view/galaxyPoints.ts';
 import { specColor } from '../view/textures.ts';
-import { LUM_WORD, colourWord, fmtLy, fmtYears, galLB, galToEq, gName, habZone, jName, lifetime, mainSequence, sig, specName, specNum, type LumClass } from './astro.ts';
+import { an, num, LUM_WORD, colourWord, fmtLy, fmtYears, galLB, galToEq, gName, habZone, jName, lifetime, mainSequence, sig, specName, specNum, type LumClass } from './astro.ts';
 import { addCpuSet, addGpuSet, nearestPoint, pxPerUnit, toScreen, type Probe } from './picker.ts';
 import { coin, h01, hGauss, hPoisson, pointWorld, registerExplainer, type ExCtx, type Explanation, type Fact } from './registry.ts';
 import { calYear, humansFact, statusText, sysStatus } from './simInfo.ts';
@@ -138,7 +137,8 @@ function linkSystems(world: World, f: GalaxyFrame): void {
 // ---------------------------------------------------------------- stars
 
 // spectral range [from, to) each palette colour stands for
-const PAL_SPEC: [number, number][] = [[42, 50], [50, 55], [55, 64], [12, 20], [20, 30], [5, 12], [32, 42], [38, 52]];
+// (matched to specColor: in linear light CORE ffe2b0 is an early K, ffc488 a late K, ffb070 an M, ARM a8c4ff/d4e2ff/8fb0ff are B/A/O, fff2e0 and the halo's ffe8cc lie just warm of G)
+const PAL_SPEC: [number, number][] = [[50, 55], [55, 62], [60, 66], [12, 20], [20, 30], [5, 12], [40, 48], [45, 52]];
 // brightness range makeGalaxy draws for core, arm and halo particles
 const BRI: Record<number, [number, number]> = { 0: [0.35, 0.8], 1: [0.35, 1.1], 2: [0.25, 0.55] };
 
@@ -218,7 +218,7 @@ function placeFacts(f: GalaxyFrame, w: { x: number; y: number; z: number; rGal: 
   if (f.name === 'Milky Way') {
     out.push({ k: 'From the Sun', v: fmtLy(lb.d), t: 'P' });
     out.push({ k: 'From the galactic centre', v: fmtLy(w.rGal), t: 'P' });
-    out.push({ k: 'Above the plane', v: `${w.h >= 0 ? '' : '−'}${fmtLy(Math.abs(w.h))}`, t: 'P' });
+    out.push({ k: 'Above the plane', v: Math.abs(w.h) < 1 ? 'in the plane' : `${w.h >= 0 ? '' : '−'}${fmtLy(Math.abs(w.h))}`, t: 'P' });
     out.push({ k: 'Galactic l, b', v: `${lb.l.toFixed(2)}°, ${lb.b >= 0 ? '+' : '−'}${Math.abs(lb.b).toFixed(2)}°`, t: 'P' });
   } else {
     out.push({ k: 'From the Sun', v: fmtLy(lb.d), t: 'E' });
@@ -241,7 +241,7 @@ function starCard(f: GalaxyFrame, i: number, c: ExCtx): Explanation {
   const facts: Fact[] = [
     { k: 'Type', v: typeStr(s), t: 'P' },
     { k: 'Colour as drawn', v: colourWord(s.spec, s.lc), t: 'P' },
-    { k: 'Surface temperature', v: `${fmtNum(Math.round(s.teff / 10) * 10)} K`, t: 'E' },
+    { k: 'Surface temperature', v: `${num(Math.round(s.teff / 10) * 10)} K`, t: 'E' },
     { k: 'Mass', v: `${s.mass.toPrecision(2)} M☉`, t: 'E' },
     { k: 'Luminosity', v: `${sig(s.lum)} L☉`, t: 'E' },
     { k: 'Radius', v: `${sig(s.radius)} R☉`, t: 'E' },
@@ -265,7 +265,7 @@ function starCard(f: GalaxyFrame, i: number, c: ExCtx): Explanation {
   return {
     eyebrow: `Star in ${f.name === 'Milky Way' ? 'the Milky Way' : f.name}`,
     title: desig(f, w),
-    lede: `A ${typeStr(s)} ${kind} in ${s.region}, ${fmtLy(galLB(w.x, w.y, w.z).d)} from the Sun.`,
+    lede: `${an(typeStr(s)).replace(/^a/, 'A')} ${kind} in ${s.region}, ${fmtLy(galLB(w.x, w.y, w.z).d)} from the Sun.`,
     facts, why,
   };
 }
@@ -278,7 +278,7 @@ function linkedCard(f: GalaxyFrame, i: number, c: ExCtx, sysId: number, w: Retur
   const region = (() => { const m = f.data.meta[i]; return metaComp(m) === 0 ? 'the bulge' : metaComp(m) === 2 ? 'the halo' : `the ${f.armNames[metaArm(m) % f.armNames.length]}`; })();
   const facts: Fact[] = [
     { k: 'Type', v: `${sys.spec} V`, t: 'P' },
-    { k: 'Surface temperature', v: `${fmtNum(Math.round(ms.teff / 10) * 10)} K`, t: 'E' },
+    { k: 'Surface temperature', v: `${num(Math.round(ms.teff / 10) * 10)} K`, t: 'E' },
     { k: 'Mass', v: `${ms.mass.toPrecision(2)} M☉`, t: 'E' },
     { k: 'Luminosity', v: `${sig(sys.lum)} L☉`, t: 'P' },
     { k: 'Worlds in the catalogue', v: worlds.map((b) => `${b.name} (${b.kind})`).join(', '), t: 'P' },
@@ -288,9 +288,9 @@ function linkedCard(f: GalaxyFrame, i: number, c: ExCtx, sysId: number, w: Retur
   return {
     eyebrow: `Star system in ${f.name === 'Milky Way' ? 'the Milky Way' : f.name}`,
     title: sys.name,
-    lede: `This dot is ${sys.name}, one of the ${f.name === 'Milky Way' ? 'far' : 'other-galaxy'} star systems the simulation tracks. It is drawn in its own colour, a ${sys.spec} star.`,
+    lede: `This dot is ${sys.name}, one of the ${f.name === 'Milky Way' ? 'far' : 'other-galaxy'} star systems the simulation tracks. It is drawn in its own colour, ${an(sys.spec)} star.`,
     facts,
-    why: st.n ? `People live here, ${fmtLy(sys.dist)} from Earth: news from home is ${fmtNum(Math.round(sys.dist))} years old when it arrives, so they govern themselves.` : f.name === 'Milky Way' ? 'Out of reach without faster-than-light travel. If a future gets a warp or wormhole drive, worlds like this are where its ships go.' : 'Only a traversable wormhole could bring people here, and most futures never build one.',
+    why: st.n ? `People live here, ${fmtLy(sys.dist)} from Earth: news from home is ${num(sys.dist)} years old when it arrives, so they govern themselves.` : f.name === 'Milky Way' ? 'Out of reach without faster-than-light travel. If a future gets a warp or wormhole drive, worlds like this are where its ships go.' : 'Only a traversable wormhole could bring people here, and most futures never build one.',
     links: [{ label: `Open ${sys.name}`, act: 'system', id: sysId }, { label: 'Enter the system', act: 'dive-system', id: sysId }],
   };
 }
@@ -317,7 +317,7 @@ function hiiCard(f: GalaxyFrame, i: number, c: ExCtx, w: ReturnType<typeof where
     lede: `A cloud of hydrogen lit pink by the hot young stars born inside it. The pink is hydrogen-alpha light, 656 nanometres, given off as electrons fall back onto protons.`,
     facts: [
       { k: 'Designation', v: gName(lb.l, lb.b, 2), t: 'P' },
-      { k: 'Size', v: `${fmtNum(Math.round(size))} ly across`, t: 'P' },
+      { k: 'Size', v: `${num(size)} ly across`, t: 'P' },
       { k: 'Ionising O stars', v: String(oStars), t: 'P' },
       { k: 'Gas mass', v: `${sig(mass)} M☉`, t: 'E' },
       { k: 'Gas temperature', v: '≈10,000 K', t: 'R' },
@@ -343,7 +343,7 @@ function dustCard(f: GalaxyFrame, i: number, c: ExCtx): Explanation {
     title: `DC ${gName(lb.l, lb.b, 1).slice(1)}`,
     lede: `A cold cloud of gas and soot along the inner edge of the ${f.armNames[arm]}, dark because it swallows the light of the stars behind it.`,
     facts: [
-      { k: 'Size', v: `${fmtNum(Math.round(size / 10) * 10)} ly across`, t: 'P' },
+      { k: 'Size', v: `${num(Math.round(size / 10) * 10)} ly across`, t: 'P' },
       { k: 'Mass', v: `${sig(mass)} M☉`, t: 'E' },
       { k: 'Temperature', v: `${Math.round(10 + 10 * H(2))} K`, t: 'E' },
       { k: 'Made of', v: 'molecular hydrogen, helium, 1% dust (silicate and carbon grains)', t: 'R' },
@@ -376,7 +376,7 @@ function nebulaCard(f: GalaxyFrame, i: number, c: ExCtx): Explanation {
     lede: K.lede,
     facts: [
       { k: 'Designation', v: gName(lb.l, lb.b, 1), t: 'P' },
-      { k: 'Size', v: `${fmtNum(Math.round(size / 100) * 100)} ly across`, t: 'P' },
+      { k: 'Size', v: `${num(Math.round(size / 100) * 100)} ly across`, t: 'P' },
       { k: 'Made of', v: K.made, t: 'R' },
       ...placeFacts(f, { x, y, z, rGal: Math.hypot(p.x, p.z) * f.scaleLy, h: p.y * f.scaleLy }, c, 'a spiral arm'),
       humansFact(c, x, y, z),

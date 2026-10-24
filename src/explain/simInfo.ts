@@ -64,12 +64,12 @@ export function nearestSettled(world: World, snap: StateMsg | null, x: number, y
 export function humansFact(c: ExCtx, x: number, y: number, z: number, here = 'not reached'): Fact {
   const n = nearestSettled(c.world, c.snap, x, y, z);
   if (!n) return { k: 'Humans', v: here, t: 'P' };
-  const d = n.d < 100 ? n.d.toFixed(1) : fmtNum(Math.round(n.d));
+  const d = n.d < 100 ? n.d.toFixed(1) : Math.round(n.d).toLocaleString('en-US');
   return { k: 'Humans', v: `${here}; nearest people ${d} ly away, at ${c.world.systems[n.sys].name}`, t: 'P' };
 }
 
 /** Year in plain calendar words, e.g. "29,160 BCE". */
 export function calYear(y: number): string {
   const r = Math.round(y);
-  return r < 1 ? `${(1 - r).toLocaleString('en-US')} BCE` : r.toLocaleString('en-US').replace(/,/g, r < 10000 ? '' : ',');
+  return r < 1 ? `${(1 - r).toLocaleString('en-US')} BCE` : `${r.toLocaleString('en-US').replace(/,/g, r < 10000 ? '' : ',')} CE`;
 }

@@ -162,7 +162,8 @@ const views: Record<Level, View> = {
   street: new StreetView((b, y, o, n) => sim.residents(b, y, o, n)),
 };
 const street = views.street as StreetView;
-const sky = makeSky(1, 7000);
+// seen from the Sun in the local view; behind the whole galaxy it is only a backdrop
+const sky = makeSky(1, 7000, 'sky', () => (level === 'local' ? { name: 'the Sun', x: 0, y: 0, z: 0, sol: true } : null));
 scene.add(sky);
 for (const v of Object.values(views)) { v.group.visible = false; scene.add(v.group); }
 let level: Level = 'system';
@@ -864,7 +865,8 @@ function readHash(): { seed: number; year: number | null; sel: Pickable | null; 
     else if (r[1] === 'c' && world.bodies[id] && r[3]) { ctx.body = id; ctx.city = Number(r[3]); sel = { kind: 'city', id: Number(r[3]), name: `${world.bodies[id].name} settlement ${r[3]}`, pos: new THREE.Vector3() }; }
   }
   const x = h.match(/(?:^|-)x([a-z0-9]+)\.(\d+)(?=-|$)/);
-  if (x && explainerFor(x[1])) sel = { kind: 'thing', id: Number(x[2]), ex: x[1], name: '', pos: new THREE.Vector3() };
+  // kinds inside a system or around a world register when that view is built, so accept any well-formed one
+  if (x) sel = { kind: "thing", id: Number(x[2]), ex: x[1], name: "", pos: new THREE.Vector3() };
   return { seed, year: y ? Math.min(10000, Number(y[1])) : null, sel, level: lv ?? null };
 }
 

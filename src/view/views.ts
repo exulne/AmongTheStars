@@ -214,7 +214,7 @@ const WHITE = new THREE.Color(1, 1, 1);
 const tmpC2 = new THREE.Color();
 
 /** Distant stars with a Milky Way band; follows the camera. */
-export function makeSky(seed = 7, count = 9000, kind?: string, observer?: () => Observer): THREE.Group {
+export function makeSky(seed = 7, count = 9000, kind?: string, observer?: () => Observer | null): THREE.Group {
   const r = new Rng(seed);
   const { pts, pos, col, size } = pointCloud(count, pointsMaterial({ attenuate: false, minPx: 0.5 }));
   const cls = new Uint8Array(count), bri = new Float32Array(count);
