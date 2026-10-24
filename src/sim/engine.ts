@@ -4,7 +4,7 @@
 
 import { ERA_FX, ERA_MATRIX, ERAS, EV, STAGE, STAGE_CAP, STAGE_TECH, TECHS, isAlive, type Tech } from './catalog.ts';
 import { F, GM, HIST_FIELDS, NF, NGM } from './metrics.ts';
-import { AGE_W, CREW_AGES, FERT_SHARE, GM_A0, GM_B0, GM_b0, MIGRANT_AGES, NAGE, binHazard, earthBins, infantHazard, lifeExpectancyBins, medianAge, tfrTransition } from './ages.ts';
+import { AGE_W, A_MIN, CREW_AGES, FERT_SHARE, GM_A0, GM_B0, GM_b0, MIGRANT_AGES, deployed, NAGE, binHazard, earthBins, infantHazard, lifeExpectancyBins, medianAge, tfrTransition } from './ages.ts';
 import { EFFECTS, compat, effectFor, effectSize, isAdd, isDown, spineField, FIELDS, type Field } from './invent.ts';
 import { FLOW, GENERATION, Ledger, NPERIODS, isPeriodBoundary, periodOf } from './ledger.ts';
 import { next, seedRng, type RngState } from './rng.ts';
@@ -69,7 +69,9 @@ interface Fx {
   fusion: number; dyson: number; ftl: number; ftl2: number; probes: number; divergence: number; orbital: number;
   gompB: number; gompb: number;
 }
-const MULT_KEYS = new Set(['extract', 'habitat', 'lifeSupport', 'energy', 'launch', 'research', 'productivity', 'death', 'growth', 'war', 'secession', 'voyage', 'divergence', 'gompB']);
+const MULT_KEYS = new Set(['extract', 'habitat', 'lifeSupport', 'energy', 'launch', 'research', 'productivity', 'death', 'growth', 'war', 'secession', 'voyage', 'divergence']);
+/** techs that move the ageing curve, phased in along their S-curve every step (see `longevity`) */
+const AGEING = TECHS.flatMap((t, i) => (t.fx.gompB !== undefined || t.fx.gompb !== undefined ? [i] : []));
 
 const RESEARCH = 10; // calibrates knowledge output to the tech tree's milestone years
 const SHIP_MIN_HAB = 0.15;
@@ -118,7 +120,7 @@ export class Engine {
   private pos: Int32Array;
   private mu = new Float64Array(NAGE);
   /** mean Gompertz factor per bin for the current ageing rate b: μ_k = A + B·gk[k] (+ under-5) */
-  private gk = new Float64Array(NAGE);
+  private gk = new Float64Array(NAGE); private gkB = -1;
   /** per body: this step's mortality law [A, B, b, under-5] for the people ledger (main run only) */
   private mort: Float64Array;
 
@@ -241,8 +243,8 @@ export class Engine {
     TECHS.forEach((t: Tech, i) => {
       if (this.st.techDone[i] < 0) return;
       for (const [k, v] of Object.entries(t.fx) as [keyof Fx, number][]) {
+        if (k === 'gompB' || k === 'gompb') continue; // deployed gradually, see longevity()
         if (k === 'shipSpeed') fx.shipSpeed = Math.max(fx.shipSpeed, v);
-        else if (k === 'gompb') fx.gompb = Math.min(fx.gompb, v);
         else if (MULT_KEYS.has(k)) fx[k] *= v;
         else fx[k] += v;
       }
@@ -257,7 +259,25 @@ export class Engine {
       else fx[key] *= size;
     }
     this.fx = fx;
-    for (let k = 0; k < NAGE; k++) this.gk[k] = binHazard(k, { A: 0, B: 1, b: fx.gompb, inf: 0 });
+    this.gkB = -1;
+  }
+
+  /** The ageing curve this year: each longevity gate mixes treated and untreated people
+   *  by its deployment share, so B and b move smoothly from invention to full use. */
+  private longevity(year: number): void {
+    const fx = this.fx, d = this.st.techDone;
+    let B = 1, b = GM_b0;
+    for (const i of AGEING) {
+      if (d[i] < 0) continue;
+      const x = deployed(year - d[i], TECHS[i].tau ?? 5), f = TECHS[i].fx;
+      if (f.gompB !== undefined) B *= 1 + x * (f.gompB - 1);
+      if (f.gompb !== undefined) b = Math.min(b, GM_b0 + x * (f.gompb - GM_b0));
+    }
+    fx.gompB = B; fx.gompb = b;
+    if (b !== this.gkB) {
+      this.gkB = b;
+      for (let k = 0; k < NAGE; k++) this.gk[k] = binHazard(k, { A: 0, B: 1, b, inf: 0 });
+    }
   }
 
   rand(): number { return next(this.st.rng); }
@@ -310,6 +330,7 @@ export class Engine {
     g[G.launchCap] = 5000 * (1 / fx.launch) * E.launch * kessler * Math.pow(Math.max(S[eo + F.gdp], 1e13) / 1.6e14, 0.8) * (1 + year / 40);
 
     // ---- per settlement
+    this.longevity(year);
     const swarm = this.swarmPower(year);
     this.tick++; // never repeats, even after a restore to an earlier step
     const tfp = fx.productivity * Math.pow(1 + g[G.knowledge] / 2000, 0.22);
@@ -428,7 +449,7 @@ export class Engine {
       const gdppc = pop > 0 ? S[o + F.gdp] / pop : 0;
       // mortality law: extrinsic risk A rises on hostile worlds (bible §1.14 radiation, ~0.003/yr
       // unshielded), in famine and when overcrowded; medicine lowers B; only life extension moves b
-      const mA = GM_A0 * fx.death + 0.003 * (1 - h) + 0.04 * short * short + (crowd > 1 ? 0.02 * (crowd - 1) : 0);
+      const mA = Math.max(A_MIN, GM_A0 * fx.death) + 0.003 * (1 - h) + 0.04 * short * short + (crowd > 1 ? 0.02 * (crowd - 1) : 0);
       const mB = GM_B0 * fx.gompB * Math.max(0.5, fx.death), mb = fx.gompb, mInf = infantHazard(gdppc);
       const mu = this.mu, gk = this.gk;
       for (let k = 0; k < NAGE; k++) mu[k] = (mA + mB * gk[k] + (k === 0 ? mInf : 0)) * E.death;
@@ -472,7 +493,9 @@ export class Engine {
       const deaths = deathsDt / dt;
       void pop0;
       S[o + F.births] = births; S[o + F.deaths] = deaths; S[o + F.imports] = Math.max(0, immig / dt) * 10;
-      S[o + F.tfr] = tfr; if (st.step % 4 === 0 || S[o + F.lifeExp] === 0) S[o + F.lifeExp] = lifeExpectancyBins(mu); // smooth: every 4th step is plenty S[o + F.medianAge] = medianAge(N, ao);
+      // life expectancy is smooth: every 4th step is plenty
+      S[o + F.tfr] = tfr; S[o + F.medianAge] = medianAge(N, ao);
+      if (st.step % 4 === 0 || S[o + F.lifeExp] === 0) S[o + F.lifeExp] = lifeExpectancyBins(mu);
 
       // economy
       const kpc = pop > 0 ? S[o + F.capital] / pop : 0;

@@ -11,7 +11,13 @@
 //   genetic medicine B × 0.13 (the curve shifts ≈ 23 yr right)  → e0 ≈ 100
 //   radical life extension b → 0.045 (ageing at half speed)     → e0 ≈ 190
 // Ageing is a gate on b, not an endless multiplier: no stack of small inventions
-// moves b; they only trim A (and B down to a floor).
+// moves b; they only trim A (down to the accident floor A_MIN) and B (to half).
+// A gate is not switched on the day it is invented: it is deployed along a
+// logistic S-curve (invention-model §6.3), x(t) = 1 / (1 + 99·e^{−t/τ}), 1% at
+// invention, 50% after τ·ln 99 ≈ 4.6τ. The hazard is the mixture of treated and
+// untreated people, so B and b move linearly with x. With τ = 6 yr genetic
+// medicine lifts e0 by ≈ 0.45 yr per year at its fastest, a little above the
+// best-practice record of +0.25 yr/yr since 1840 (Oeppen & Vaupel 2002, Science 296:1029).
 //
 // Fertility: total fertility follows the demographic transition,
 //   TFR = 1.6 + 2.5·exp(−y_ppp / 20,000)
@@ -30,6 +36,14 @@ export const FERT_SHARE: number[] = [0, 0, 0.33, 0.45, 0.2, 0.02, 0, 0, 0, 0, 0,
 export const WORK_SHARE: number[] = [0, 0, 1, 1, 1, 1, 1 / 3, 0, 0, 0, 0, 0];
 
 export const GM_A0 = 4e-4, GM_B0 = 3e-5, GM_b0 = 0.09, GM_INFANT = 0.005;
+/** Extrinsic-risk floor: accidents and violence never vanish. WHO GHE 2019: injuries kill
+ *  ≈ 4.4M a year (≈ 5.6e-4/person-yr); the safest rich countries ≈ 2e-4. */
+export const A_MIN = 1e-4;
+
+/** Logistic deployment of a technology t years after invention with time constant tau. */
+export function deployed(t: number, tau: number): number {
+  return t < 0 ? 0 : 1 / (1 + 99 * Math.exp(-t / Math.max(0.1, tau)));
+}
 export const PPP = 1.75;
 
 export interface Mortality { A: number; B: number; b: number; inf: number }
