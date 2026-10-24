@@ -896,6 +896,7 @@ ensemble.onUpdate = () => {
 charts.setBand((k, n) => ensemble.band(k, n), (k, i, v) => ensemble.rank(k, i, v));
 
 function refreshPanels(): void {
+  if (!sim.years.length) return; // nothing simulated yet (a level entered from the URL before the first rows)
   const step = Math.max(0, sim.stepAt(ctx.year));
   const row = (col: number) => sim.series[step * NGM + col];
   inspector.render({
