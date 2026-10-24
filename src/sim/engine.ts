@@ -4,6 +4,7 @@
 
 import { ERA_FX, ERA_MATRIX, ERAS, EV, STAGE, STAGE_CAP, TECHS, type Tech } from './catalog.ts';
 import { F, GM, HIST_FIELDS, NF, NGM } from './metrics.ts';
+import { EFFECTS, compat, effectFor, effectSize, isAdd, isDown, spineField, FIELDS, type Field } from './invent.ts';
 import { FLOW, GENERATION, Ledger, NPERIODS, isPeriodBoundary, periodOf } from './ledger.ts';
 import { next, seedRng, type RngState } from './rng.ts';
 import type { World } from './world.ts';
@@ -25,6 +26,11 @@ const SH = { from: 0, to: 1, depart: 2, arrive: 3, colonists: 4, kind: 5, flow: 
 const NSH = 7;
 const MAX_SHIPS = 4096;
 
+// Generated invention columns: parents (spine index, or TECHS.length + k), effect key, size, year, place, depth, field, other field, draw
+export const GC = { a: 0, b: 1, key: 2, size: 3, year: 4, place: 5, depth: 6, field: 7, other: 8, r: 9 } as const;
+export const NGC = 10;
+export const MAX_GEN = 4096;
+
 // Global scalar slots
 const G = {
   year: 0, era: 1, eraSince: 2, knowledge: 3, shipsLaunched: 4, shipsLost: 5, dead: 6, wars: 7,
@@ -33,8 +39,9 @@ const G = {
   // the series) so a restored snapshot replays exactly
   prevShortage: 15, prevFactions: 16, prevStability: 17, rivals: 18,
   flowSeq: 19, // id of the next discrete group of travellers (crew or ship), same in replays
+  nGen: 20,    // generated inventions so far
 } as const;
-const NG = 20;
+const NG = 24;
 
 export interface SimState {
   step: number;
@@ -45,6 +52,7 @@ export interface SimState {
   ships: Float64Array;     // MAX_SHIPS × NSH
   settled: Int32Array;     // body ids with a settlement, in founding order
   shipRetry: Float64Array; // per system: year before which a failed ship search is not retried
+  gen: Float64Array;       // generated inventions, MAX_GEN × GC (see GC)
   nSettled: number;
   rng: RngState;
 }
@@ -163,6 +171,7 @@ export class Engine {
       step: 0, S, g: new Float64Array(NG), techProg: new Float64Array(TECHS.length),
       techDone: new Float64Array(TECHS.length).fill(-1), ships: new Float64Array(MAX_SHIPS * NSH),
       settled: new Int32Array(nb), nSettled: 0, rng, shipRetry: new Float64Array(this.world.systems.length),
+      gen: new Float64Array(MAX_GEN * NGC),
     };
     st.g[G.era] = 0;
     st.g[G.launchCap] = 5000;
@@ -221,6 +230,14 @@ export class Engine {
       }
     });
     fx.orbital = this.has('orbitalHabitats') ? 1 : 0;
+    const gen = this.st.gen;
+    for (let k = 0; k < this.st.g[G.nGen]; k++) {
+      const key = EFFECTS[gen[k * NGC + GC.key]], size = gen[k * NGC + GC.size];
+      if (key === 'shipSpeed') { if (fx.shipSpeed > 0) fx.shipSpeed += size; }
+      else if (isAdd(key)) fx[key] += size;
+      else if (isDown(key)) fx[key] /= size;
+      else fx[key] *= size;
+    }
     this.fx = fx;
   }
 
@@ -581,14 +598,64 @@ export class Engine {
     for (const i of frontier) {
       st.techProg[i] += amount * (1 / TECHS[i].cost) / w;
       if (st.techProg[i] < TECHS[i].cost * this.techCostMult[i] || year + YEAR0 < TECH_FLOOR[i]) continue;
-      if (!this.feasible[i]) { st.techProg[i] = -1; continue; }
+      if (!this.feasible[i]) { st.techProg[i] = -1; this.log(EV['No-go theorem'], this.pickLab(-1), i); continue; }
       st.techDone[i] = year; changed = true;
       // an invention happens somewhere: a lab picked in proportion to its research,
       // and now and then a second, independent one at the same time (Merton's multiples)
       const where = this.pickLab(-1), twin = this.rand() < 0.12 ? this.pickLab(where) : -1;
       this.log(EV.Technology, where, i, twin);
     }
+    if (this.invent(amount, year)) changed = true;
     if (changed) this.recomputeFx();
+  }
+
+  private pairs = new Set<number>();
+  private keyCount = new Float64Array(EFFECTS.length);
+  private rebuildPairs(): void {
+    this.pairs.clear(); this.keyCount.fill(0);
+    const gen = this.st.gen;
+    for (let k = 0; k < this.st.g[G.nGen]; k++) {
+      this.pairs.add(pairKey(gen[k * NGC + GC.a], gen[k * NGC + GC.b]));
+      this.keyCount[gen[k * NGC + GC.key]]++;
+    }
+  }
+
+  /** Recombination: two known technologies become a new, named invention (invention-model §4). */
+  private invent(amount: number, year: number): boolean {
+    const st = this.st, g = st.g, gen = st.gen;
+    if (g[G.nGen] >= MAX_GEN || amount <= 0) return false;
+    const known: number[] = [];
+    for (let i = 0; i < TECHS.length; i++) if (st.techDone[i] >= 0) known.push(i);
+    const nG = g[G.nGen];
+    if (known.length + nG < 2) return false;
+    const dt = this.years[st.step + 1] - this.years[st.step];
+    const lambda = dt * 0.14 * Math.log10(1 + g[G.researchRate]) * Math.exp(-nG / 900);
+    let n = Math.floor(lambda) + (this.rand() < lambda % 1 ? 1 : 0);
+    n = Math.min(n, 6);
+    let made = false;
+    const pick = () => { const j = Math.floor(this.rand() * (known.length + nG)); return j < known.length ? known[j] : TECHS.length + (j - known.length); };
+    const fieldOf = (t: number): Field => (t < TECHS.length ? spineField(t) : FIELDS[gen[(t - TECHS.length) * NGC + GC.field]]);
+    const depthOf = (t: number) => (t < TECHS.length ? 0 : gen[(t - TECHS.length) * NGC + GC.depth]);
+    for (let tries = 0; n > 0 && tries < n * 6; tries++) {
+      const a = pick(), b = pick();
+      if (a === b || this.pairs.has(pairKey(a, b))) continue;
+      const fa = fieldOf(a), fb = fieldOf(b), depth = 1 + Math.max(depthOf(a), depthOf(b));
+      if (depth > 3 || this.rand() > compat(fa, fb)) continue;
+      const key = effectFor(fa, fb, this.rand());
+      const ki = EFFECTS.indexOf(key);
+      // heavy-tailed value: most inventions are refinements, a few change everything
+      const u = Math.max(1e-9, this.rand()), v = this.rand();
+      const r = Math.min(5, Math.exp(0.8 * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v) - 0.32));
+      const o = g[G.nGen] * NGC;
+      gen[o + GC.a] = a; gen[o + GC.b] = b; gen[o + GC.key] = ki; gen[o + GC.size] = effectSize(key, r, depth, this.keyCount[ki]);
+      gen[o + GC.year] = year; gen[o + GC.place] = this.pickLab(-1); gen[o + GC.depth] = depth;
+      gen[o + GC.field] = FIELDS.indexOf(fa); gen[o + GC.other] = FIELDS.indexOf(fb); gen[o + GC.r] = r;
+      this.pairs.add(pairKey(a, b)); this.keyCount[ki]++;
+      this.log(EV.Invention, gen[o + GC.place], g[G.nGen], r);
+      g[G.nGen]++;
+      n--; made = true;
+    }
+    return made;
   }
 
   private pickLab(not: number): number {
@@ -940,7 +1007,7 @@ export class Engine {
     return {
       step: st.step, S: st.S.slice(), g: st.g.slice(), techProg: st.techProg.slice(), techDone: st.techDone.slice(),
       ships: st.ships.slice(0, st.g[G.nShips] * NSH), settled: st.settled.slice(0, st.nSettled), nSettled: st.nSettled, rng: st.rng.slice(),
-      shipRetry: st.shipRetry.slice(),
+      shipRetry: st.shipRetry.slice(), gen: st.gen.slice(0, st.g[G.nGen] * NGC),
     };
   }
 
@@ -951,7 +1018,9 @@ export class Engine {
     this.st = {
       step: s.step, S: s.S.slice(), g: s.g.slice(), techProg: s.techProg.slice(), techDone: s.techDone.slice(),
       ships, settled, nSettled: s.nSettled, rng: s.rng.slice(), shipRetry: s.shipRetry.slice(),
+      gen: (() => { const g = new Float64Array(MAX_GEN * NGC); g.set(s.gen); return g; })(),
     };
+    this.rebuildPairs();
     this.surveyCursor = this.nbr.start.slice();
     this.recomputeFx();
   }
@@ -1016,6 +1085,8 @@ function neighbours(world: World): Neighbours {
   NBR_CACHE.set(world, out);
   return out;
 }
+
+function pairKey(a: number, b: number): number { return a < b ? a * 65536 + b : b * 65536 + a; }
 
 function push(m: Map<number, number[]>, k: number, v: number): void {
   const a = m.get(k);
