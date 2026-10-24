@@ -19,7 +19,7 @@ interface SeedResult {
   popAt: Record<number, number>; offAt: Record<number, number>;
   marsAt2100: number; marsBiggest2140: boolean; earthMin: number; earthMinYear: number;
   reach: number; systems: number; kardashev: number; k1: number; k2: number; wars: number; factions: number;
-  eraYears: number[]; longestDark: number; events: Record<string, number>; finalPop: number;
+  eraYears: number[]; longestDark: number; longestWar: number; events: Record<string, number>; finalPop: number;
   churn: number; maxPopGrowth: number;
 }
 
@@ -168,11 +168,12 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
   const firstYear = (pred: (s: number) => boolean) => { for (let s = 0; s < e.years.length; s++) if (pred(s)) return YEAR0 + e.years[s]; return NaN; };
   const last = e.years.length - 1;
   const eraYears = new Array(ERAS.length).fill(0);
-  let dark = 0, longestDark = 0;
+  let dark = 0, longestDark = 0, war = 0, longestWar = 0;
   for (let s = 0; s < last; s++) {
     const dt = e.years[s + 1] - e.years[s], era = col(GM.era, s);
     eraYears[era] += dt;
     dark = era === 6 ? dark + dt : 0; longestDark = Math.max(longestDark, dark);
+    war = era === 4 ? war + dt : 0; longestWar = Math.max(longestWar, war);
   }
   let maxPopGrowth = 0;
   for (let s = 1; s <= last; s++) {
@@ -194,7 +195,7 @@ function runSeed(world: World, seed: number, det: boolean): SeedResult {
     popAt, offAt, marsAt2100, marsBiggest2140, earthMin, earthMinYear,
     reach: col(GM.reach, last), systems: col(GM.systems, last), kardashev: col(GM.kardashev, last),
     k1: firstYear((s) => col(GM.kardashev, s) >= 1), k2: firstYear((s) => col(GM.kardashev, s) >= 2),
-    wars: col(GM.wars, last), factions: col(GM.factions, last), eraYears, longestDark, events, finalPop: col(GM.pop, last), churn, maxPopGrowth,
+    wars: col(GM.wars, last), factions: col(GM.factions, last), eraYears, longestDark, longestWar, events, finalPop: col(GM.pop, last), churn, maxPopGrowth,
   };
 }
 
@@ -239,6 +240,7 @@ function report(rs: SeedResult[]): void {
   row('wars per millennium', rs.map((r) => r.wars / 10));
   row('factions at end', rs.map((r) => r.factions));
   row('longest dark age (yr)', rs.map((r) => r.longestDark));
+  row('longest war era (yr)', rs.map((r) => r.longestWar), '< ~200');
   row('settlements (re)entering life', rs.map((r) => r.churn));
   row('max pop growth (/yr)', rs.map((r) => r.maxPopGrowth));
   row('runtime (ms)', rs.map((r) => r.ms), '<3000');

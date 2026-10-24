@@ -208,20 +208,23 @@ export class Engine {
     const dt = this.years[st.step + 1] - year;
     g[G.year] = year;
 
-    // ---- era Markov chain, reweighted by the state of the world
+    // ---- era Markov chain. The state of the world reweights the ways out of the
+    // current era (bible §0.2: modifiers touch off-diagonals only, each capped),
+    // so a bad decade makes War likelier to start but never makes it last forever.
     const era = g[G.era];
-    const row = ERA_MATRIX[era].slice();
     const shortage = st.step > 0 ? g[G.prevShortage] / 100 : 0;
     const stab = st.step > 0 ? g[G.prevStability] : 0.6;
-    row[4] *= (1 + 4 * shortage) * (1 + 0.2 * Math.min(g[G.rivals], 10)) * fx.war; // war (bible §5.3)
-    row[6] *= (1 + 6 * shortage) * (stab < 0.4 ? 3 : 1);                         // collapse
-    row[2] *= stab > 0.65 ? 2 : 1;                                               // golden age
-    row[7] *= era === 6 ? 1 + (year - g[G.eraSince]) / 50 : 1;                   // renaissance after long dark
-    const pStay = Math.pow(row[era] / row.reduce((a, b) => a + b, 0), dt / 10);
+    const mod = [1, 1, stab > 0.65 ? 2 : 1, 1,
+      (1 + 4 * shortage) * (1 + 0.2 * Math.min(g[G.rivals], 10)) * fx.war,  // war (bible §5.3)
+      1,
+      (1 + 6 * shortage) * (stab < 0.4 ? 3 : 1),                            // collapse
+      era === 6 ? 1 + (year - g[G.eraSince]) / 50 : 1];                     // renaissance after a long dark
+    const row = ERA_MATRIX[era].map((p, k) => (k === era ? 0 : p * Math.min(mod[k], 4)));
+    let leave = row.reduce((a, b) => a + b, 0);
+    if (leave > 0.95) { for (let k = 0; k < row.length; k++) row[k] *= 0.95 / leave; leave = 0.95; }
+    const pStay = Math.pow(1 - leave, dt / 10);
     if (this.rand() > pStay) {
-      let tot = 0;
-      for (let k = 0; k < row.length; k++) if (k !== era) tot += row[k];
-      let x = this.rand() * tot;
+      let x = this.rand() * leave;
       for (let k = 0; k < row.length; k++) {
         if (k === era) continue;
         x -= row[k];
