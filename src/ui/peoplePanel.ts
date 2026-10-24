@@ -71,6 +71,12 @@ export function biographyHtml(b: Biography | null, year: number, loading: boolea
     ? `<p>${fmtNum(d.total)} descendant${d.total === 1 ? '' : 's'} over ${d.generations} generation${d.generations === 1 ? '' : 's'} by ${yr(year)}${d.total >= 1500 ? ' (counting stops at 1,500)' : ''}; ${fmtNum(d.alive)} alive.</p>
       ${d.places.length ? `<p class="muted">Living in ${d.places.map((p) => `<button class="link" data-act="goto-body" data-id="${p.body}" type="button">${esc(p.name)}</button> (${fmtNum(p.n)})`).join(', ')}.</p>` : ''}`
     : '<p class="muted">No descendants yet.</p>';
+  // the pathway of their life: every place they were, in order; the current one is lit
+  const path = b.path.map((s) => {
+    const cur = s.from <= year && (s.to === null || year < s.to);
+    const name = s.body === null ? esc(s.name) : `<button class="link" data-act="body" data-id="${s.body}" type="button">${esc(s.name)}</button>`;
+    return `<li class="${cur ? 'now' : s.from > year ? 'future' : ''}"><span class="num ev-year">${s.to === null ? `from ${yr(s.from)}` : `${yr(s.from)}–${yr(s.to)}`}</span> ${name}</li>`;
+  }).join('');
   const traits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Steadiness'];
   return `
     <p class="eyebrow muted">Person · ${esc(b.id)}</p>
@@ -80,6 +86,7 @@ export function biographyHtml(b: Biography | null, year: number, loading: boolea
     ${b.status !== 'unborn' ? `<p class="act"><button class="link" data-act="look-closer" data-pid="${b.id}" type="button">Look closer: ${b.body === 'uploaded' ? 'the substrate their mind runs on' : 'their body'}, its cells, molecules and atoms</button></p>` : ''}
     <p class="muted">This person stays open as you move through time. Drag the slider to see them younger, older, or not yet born.</p>
     <h3>Life</h3><ol class="events story">${story || '<li class="muted">Nothing yet.</li>'}</ol>
+    <h3>Pathway</h3><ol class="events path">${path || '<li class="muted">Nowhere yet.</li>'}</ol>
     <h3>Family</h3>
     <dl class="family">
       <dt>Mother</dt><dd>${b.mother ? briefLine(b.mother, year) : '<span class="muted">unknown</span>'}</dd>

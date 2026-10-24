@@ -136,6 +136,23 @@ button, select, input { font: inherit; color: inherit; }
 .spark svg { width: 100%; height: 3rem; display: block; }
 .spark figcaption { font-size: 0.7rem; }
 
+#lifepick[aria-expanded="true"] { color: var(--accent); }
+
+/* the life picker: a quiet drop-down under the header buttons */
+.lifepick { position: absolute; z-index: 6; top: 4.4rem; right: max(16px, env(safe-area-inset-right, 0px)); width: min(21rem, calc(100vw - 32px)); padding: 0.9rem 1.1rem;
+  background: rgba(4, 4, 7, 0.94); border-top: 1px solid var(--rule); box-shadow: 0 12px 32px #000; font-size: 0.85rem; box-sizing: border-box; }
+.lifepick[hidden] { display: none; }
+.lifepick .lp-title { margin: 0 0 0.5rem; }
+.lifepick label { display: flex; justify-content: space-between; align-items: baseline; gap: 0.6rem; color: var(--quiet); margin: 0.35rem 0; }
+.lifepick select, .lifepick input { background: transparent; border: 0; border-bottom: 1px solid var(--rule); color: var(--ink); font-size: 0.85rem; border-radius: 0; max-width: 13rem; }
+.lifepick select option { background: #111; color: var(--ink); }
+.lifepick .lp-n { width: 7em; text-align: right; }
+.lifepick .lp-row { display: flex; gap: 0.9rem; margin: 0.6rem 0 0; }
+.lifepick .lp-result { margin: 0.45rem 0 0; font-size: 0.8rem; }
+.lifepick .lp-x { position: absolute; top: 0.1rem; right: 0.3rem; color: var(--quiet); font-size: 1.1rem; }
+.lifepick .lp-x:hover { color: var(--ink); }
+.events.path li.now { color: var(--accent); }
+
 .help { position: absolute; z-index: 10; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(24rem, calc(100vw - 32px)); padding: 1.2rem 1.4rem;
   background: rgba(4, 4, 7, 0.95); border-top: 1px solid var(--rule); box-shadow: 0 20px 60px #000; font-size: 0.85rem; box-sizing: border-box; }
 .help[hidden] { display: none; }
@@ -238,6 +255,8 @@ input.tl-big:focus { outline: none; border-bottom-color: var(--accent); }
   .insp-grab::before { content: ''; position: absolute; left: 50%; top: 0.35rem; width: 2.2rem; height: 2px; margin-left: -1.1rem; background: var(--faint); }
   .inspector.open .insp-grab { position: sticky; margin-bottom: -2.9rem; }
   .legend { display: none; }
+  /* the header crowds a phone's top: the life picker floats above the bottom panel instead */
+  .lifepick { top: auto; bottom: calc(var(--bottom-h, 200px) + 8px); left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); width: auto; }
   .tl-row { flex-wrap: wrap; gap: 0.2rem 0.8rem; }
   .tl-sub { display: none; }
   .ticker { order: 3; flex-basis: 100%; margin-right: 0; min-height: 1.2rem; }

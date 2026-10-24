@@ -20,6 +20,7 @@ import { GALAXIES, buildWorld } from './sim/world.ts';
 import { ChartStrip, globalSeries, type Series } from './ui/charts.ts';
 import { fmtNum, fmtYear, parseCount } from './ui/format.ts';
 import { Inspector } from './ui/inspector.ts';
+import { LifePick } from './ui/lifePick.ts';
 import { installDataDesk } from './ui/dataDesk.ts';
 import { STAMP_CODE } from './ui/stamp.ts';
 import { Search, type Hit } from './ui/search.ts';
@@ -59,6 +60,7 @@ app.innerHTML = `
       <label for="seed">Future #</label><input id="seed" inputmode="numeric" value="1" size="6">
       <button id="reroll" class="link" type="button">Another future</button>
       <button id="chronicle" class="link" type="button">Chronicle</button>
+      <button id="lifepick" class="link" type="button" aria-expanded="false" title="Pick one person and follow their whole life">Follow a life</button>
       <button id="data" class="link" type="button" aria-pressed="false">Data</button>
       <button id="board" class="link" type="button" aria-pressed="false" title="Fly this future yourself: tell the ship where and when">Board the Starship</button>
       <span class="status num" aria-live="polite"></span>
@@ -564,6 +566,19 @@ inspector.onLookCloser = (pid, bio) => enterPerson(pid, null, bio);
 inspector.onEnter = () => { if (ctx.selected) dive(ctx.selected); };
 inspector.onBio = () => { if (micro.pid) { inspector.openPerson(micro.pid); inspector.el.classList.add('open'); } };
 
+// pick one person and follow their whole life: a quiet panel off the header
+const lifePick = new LifePick({
+  bodies: () => (ctx.snap ? Array.from(ctx.snap.settled) : [world.earth]).filter((b) => world.bodies[b]),
+  nameOf: (b) => naming.place(world, b),
+  year: () => ctx.year,
+  find: (b, n, k, y) => sim.findPerson(b, n, k, y),
+  open: (pid) => { inspector.openPerson(pid); inspector.el.classList.add('open'); },
+});
+app.append(lifePick.el);
+const lifePickBtn = app.querySelector<HTMLButtonElement>('#lifepick')!;
+lifePick.onToggle = (on) => lifePickBtn.setAttribute('aria-expanded', String(on));
+lifePickBtn.addEventListener('click', () => lifePick.toggle());
+
 // Wheel out past the outer limit goes up a level. Wheel in over a thing pulls
 // it to the centre of the view, and once close enough enters it.
 let pull: Ref | null = null, lastWheel = 0;
@@ -1068,6 +1083,7 @@ function startRun(seed: number): void {
   runGen++;
   clearSocietyLooks();
   inspector.resetPeople();
+  lifePick.hide();
   resetShips();
   ctx.snap = null; lastStep = -1; wanted = -1; inFlight = false; events = []; history = null; fc = null;
   ticker.clear(); tickFrom = 0;
@@ -1106,7 +1122,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key.length === 1 && /[\p{L}\p{N}#]/u.test(e.key)) { e.preventDefault(); search.focus(e.key); return; }
   if (e.code === 'Space') { e.preventDefault(); timeline.toggle(); }
   else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); timeline.step(e.key === 'ArrowRight' ? 1 : -1, e.shiftKey); }
-  else if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; else if (level === 'street' && street.follow >= 0) street.follow = -1; else select(null); }
+  else if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; else if (!lifePick.el.hidden) lifePick.hide(); else if (level === 'street' && street.follow >= 0) street.follow = -1; else select(null); }
   else if (e.key === '/') { e.preventDefault(); search.focus(); }
   else if (e.key === '?') help.hidden = !help.hidden;
   else if (e.key === 'Enter' && ctx.selected && !(e.target instanceof HTMLButtonElement)) dive(ctx.selected);
