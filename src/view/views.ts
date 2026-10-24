@@ -34,7 +34,7 @@ export interface Ctx {
 
 export type PickKind = 'galaxy' | 'system' | 'body' | 'city' | 'humanspace';
 /** `weight` (px) lets important things win near-ties when picking */
-export interface Pickable { pos: THREE.Vector3; kind: PickKind; id: number; name: string; weight?: number }
+export interface Pickable { pos: THREE.Vector3; kind: PickKind; id: number; name: string; weight?: number; r?: number }
 /** Enough to find a thing again in any view. */
 export interface Ref { kind: PickKind; id: number; name?: string }
 /** Higher `prio` labels win when two would overlap on screen. */
@@ -76,7 +76,13 @@ export function alive(stage: number): boolean { return stage >= STAGE.OUTPOST &&
 
 /** Settlements drawn on a world: one capital plus more as it grows. */
 export function cityCount(stage: number, pop: number): number {
-  return alive(stage) ? Math.min(48, Math.ceil(1 + stage * stage * 1.2 + Math.log10(1 + pop))) : 0;
+  if (!alive(stage)) return 0;
+  return pop < 1000 ? 1 : Math.min(48, Math.ceil(Math.cbrt(pop / 1000)));
+}
+
+/** Night-side light coverage: dark below ~10k people, full at tens of billions. */
+export function cityLights(pop: number): number {
+  return Math.min(0.95, Math.max(0, (Math.log10(1 + pop) - 4) / 6.5));
 }
 /** Head-count of city i of n and the index of its first resident in the world's list. Capital holds 30%. */
 export function citySplit(pop: number, n: number, i: number): { count: number; offset: number } {
@@ -251,7 +257,7 @@ export class UniverseView implements View {
   enter(ctx: Ctx): void {
     // frame the Milky Way and Andromeda together
     const m31 = this.centres.find((c) => c.name === 'Andromeda')!.pos;
-    const mid = m31.clone().multiplyScalar(0.6); // a little past halfway: the inspector covers the right edge
+    const mid = m31.clone().multiplyScalar(0.5);
     ctx.controls.target.copy(mid);
     ctx.camera.position.copy(mid).add(new THREE.Vector3(-m31.z, 0, m31.x).normalize().multiplyScalar(200)).add(new THREE.Vector3(0, 40, 0));
   }
@@ -274,7 +280,7 @@ export class UniverseView implements View {
   frame(): void {}
 
   pickables(): Pickable[] {
-    return this.centres.map((c, i) => ({ pos: c.pos, kind: 'galaxy', id: i, name: c.name }));
+    return this.centres.map((c, i) => ({ pos: c.pos, kind: 'galaxy', id: i, name: c.name, r: GALAXIES[i].radius / 10000 * 3 * 0.6 }));
   }
 
   locate(ctx: Ctx, r: Ref): THREE.Vector3 | null {
@@ -451,7 +457,7 @@ export class GalaxyView implements View {
 export class LocalView implements View {
   level: Level = 'local';
   group = new THREE.Group();
-  limits: [number, number] = [2, 2600];
+  limits: [number, number] = [2, 1400];
   private ids: number[];
   private stars: ReturnType<typeof pointCloud>;
   private shipLines: THREE.LineSegments;
@@ -617,6 +623,7 @@ export class SystemView implements View {
   enter(ctx: Ctx): void {
     this.build(ctx);
     const far = Math.max(40, ...this.vis.filter((v) => v.parent < 0).map((v) => v.orbitR));
+    this.limits = [1.5, far * 2.4];
     ctx.controls.target.set(0, 0, 0);
     ctx.camera.position.set(far * 0.25, far * 0.55, far * 1.05);
   }
@@ -707,7 +714,7 @@ export class SystemView implements View {
         if (st === STAGE.MEGA) mega = true;
       } else m.opacity = st === STAGE.SURVEY ? 0.15 : 0;
       const mat = v.mesh.material as THREE.ShaderMaterial;
-      mat.uniforms.uLights.value = alive(st) ? Math.min(0.9, Math.log10(1 + popOf(ctx.snap, v.id)) / 11) : 0;
+      mat.uniforms.uLights.value = alive(st) ? cityLights(popOf(ctx.snap, v.id)) : 0;
       mat.uniforms.uGreen.value = ctx.snap ? Math.min(1, ctx.snap.S[v.id * NF + F.terraform] * 2) : 0;
     }
     // Dyson swarm: shimmer of collectors around a star with a megastructure
@@ -880,7 +887,7 @@ export class PlanetView implements View {
     const b = ctx.body;
     const st = stageOf(ctx.snap, b), pop = popOf(ctx.snap, b);
     const mat = this.planet.material as THREE.ShaderMaterial;
-    mat.uniforms.uLights.value = alive(st) ? Math.min(0.95, Math.log10(1 + pop) / 10.5) : 0;
+    mat.uniforms.uLights.value = alive(st) ? cityLights(pop) : 0;
     mat.uniforms.uGreen.value = ctx.snap ? Math.min(1, ctx.snap.S[b * NF + F.terraform] * 2) : 0;
     // cities: one marker per ~stage, positions stable per body
     const nCities = cityCount(st, pop);
@@ -991,7 +998,13 @@ export class PlanetView implements View {
 
   pickables(ctx: Ctx): Pickable[] {
     const name = ctx.world.bodies[ctx.body].name;
-    return this.cityPos.map((p, i) => ({ pos: p.clone().applyMatrix4(this.pivot.matrixWorld), kind: 'city' as const, id: i, name: i === 0 ? `${name} capital` : `${name} settlement ${i}` }));
+    const out: Pickable[] = [];
+    this.cityPos.forEach((p, i) => {
+      const w = p.clone().applyMatrix4(this.pivot.matrixWorld);
+      if (w.dot(tv1.copy(ctx.camera.position).sub(w)) <= 0) return; // facing away
+      out.push({ pos: w, kind: 'city', id: i, name: i === 0 ? `${name} capital` : `${name} settlement ${i}` });
+    });
+    return out;
   }
 
   locate(ctx: Ctx, r: Ref): THREE.Vector3 | null {

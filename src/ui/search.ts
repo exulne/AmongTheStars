@@ -1,6 +1,6 @@
 // Find anything by name: a star system, a world, a galaxy, or "resident #N of <settlement>".
 
-export interface Hit { kind: 'galaxy' | 'system' | 'body' | 'resident' | 'tech'; id: number; name: string; sub: string; n?: number }
+export interface Hit { kind: 'galaxy' | 'system' | 'body' | 'resident' | 'tech' | 'note'; id: number; name: string; sub: string; n?: number }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 

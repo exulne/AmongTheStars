@@ -322,20 +322,31 @@ crumbsEl.addEventListener('click', (e) => {
 });
 
 function dive(p: Ref): void {
-  if (p.kind === 'galaxy' && (p.name ?? '') === 'Milky Way') setLevel('galaxy', p);
+  if (p.kind === 'galaxy' && (p.name ?? GALAXIES[p.id]?.name) !== 'Milky Way') {
+    // no deeper level for other galaxies yet: frame it in the Local Group
+    const at = level === 'universe' ? views.universe.locate(ctx, p) : null;
+    if (at && !busy) fly(at.clone().add(camera.position.clone().sub(at).setLength(GALAXIES[p.id].radius / 10000 * 3 * 4)), at, 1.1, easeInOut);
+    else if (level !== 'universe') setLevel('universe');
+    return;
+  }
+  if (p.kind === 'galaxy') setLevel('galaxy', p);
   else if (p.kind === 'humanspace') setLevel('local', p);
   else if (p.kind === 'system') setLevel('system', p, () => { ctx.system = p.id; });
   else if (p.kind === 'body') setLevel('planet', p, () => { ctx.body = p.id; ctx.system = world.bodies[p.id].system; });
+}
+
+function fetchHistory(): void {
+  const p = ctx.selected;
+  if (p?.kind !== 'body' && p?.kind !== 'city') return;
+  const id = p.kind === 'body' ? p.id : ctx.body, g = runGen;
+  sim.history(id).then((h) => { if (g !== runGen || ctx.selected !== p) return; history = h; charts.draw(); refreshPanels(); });
 }
 
 function select(p: Pickable | null): void {
   const changed = p?.kind !== ctx.selected?.kind || p?.id !== ctx.selected?.id;
   ctx.selected = p;
   history = null;
-  if (p?.kind === 'body' || p?.kind === 'city') {
-    const id = p.kind === 'body' ? p.id : ctx.body, g = runGen;
-    sim.history(id).then((h) => { if (g !== runGen || ctx.selected !== p) return; history = h; charts.draw(); refreshPanels(); });
-  }
+  fetchHistory();
   charts.refreshOptions();
   refreshEvents();
   refreshPanels();
@@ -401,7 +412,8 @@ function pickAt(x: number, y: number): Pickable | null {
     if (proj.z > 1) continue;
     const sx = (proj.x * 0.5 + 0.5) * r.width, sy = (-proj.y * 0.5 + 0.5) * r.height;
     const d = Math.hypot(sx - (x - r.left), sy - (y - r.top));
-    if (d > 16) continue;
+    const reach = p.r ? Math.max(16, (p.r / (camera.position.distanceTo(p.pos) * Math.tan((camera.fov * Math.PI) / 360))) * (r.height / 2)) : 16;
+    if (d > reach) continue;
     const score = d - (p.weight ?? 0);
     if (score < bestD) { bestD = score; best = p; }
   }
@@ -644,14 +656,16 @@ ticker.onPick = (it) => {
   if (level !== 'system' || ctx.system !== sys) setLevel('system', { kind: 'system', id: sys }, () => { ctx.system = sys; });
 };
 
-let panelsAt = 0;
+let panelsAt = 0, panelsTrail = 0;
 timeline.onChange = (y) => {
   ctx.year = y;
   if (!timeline.playing) writeHash();
   refreshForecast();
   pollTicker(y);
   const now = performance.now();
+  clearTimeout(panelsTrail);
   if (!timeline.playing || now - panelsAt > 120) { panelsAt = now; refreshPanels(); }
+  else panelsTrail = window.setTimeout(refreshPanels, 130);
   requestState(y);
   charts.setYear(y);
 };
@@ -663,6 +677,8 @@ sim.onProgress = () => {
   charts.draw();
   if (!ctx.snap) requestState(ctx.year);
   if (sim.done) refreshForecast();
+  // a reseed drops the place history; ask again as the new run fills in
+  if (!history && (sim.done || sim.frontier % 40 === 0)) fetchHistory();
   // a year from the URL waits until the run has reached it
   if (pendingYear !== null && (sim.done || sim.years[sim.frontier] >= pendingYear)) { const y = pendingYear; pendingYear = null; timeline.set(y, true); }
 };
@@ -730,6 +746,8 @@ app.append(help);
 help.querySelector('button')!.addEventListener('click', () => { help.hidden = true; });
 
 window.addEventListener('keydown', (e) => {
+  // the slider keeps arrows for itself but lets Space through
+  if (e.target instanceof HTMLInputElement && e.target.type === 'range' && e.code === 'Space') { e.preventDefault(); timeline.toggle(); return; }
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   // typing a name anywhere goes to search, so letters never fire shortcuts
@@ -783,7 +801,13 @@ function find(raw: string): Hit[] {
     const n = Math.max(1, parseCount(res[1]) || 1);
     const where = res[2]?.trim();
     const bodies = where ? findBodies(where, 6) : ctx.selected?.kind === 'body' ? [{ kind: 'body' as const, id: ctx.selected.id, name: '', sub: '' }] : [];
-    return bodies.filter((b) => alive(stageOf(ctx.snap, b.id))).map((b) => ({
+    const living = bodies.filter((b) => alive(stageOf(ctx.snap, b.id)));
+    const fits = living.filter((b) => n <= popOf(ctx.snap, b.id));
+    if (!fits.length && living.length) {
+      const b = living[0].id;
+      return [{ kind: 'note', id: b, name: `${world.bodies[b].name} has ${fmtNum(popOf(ctx.snap, b))} people in ${Math.round(2040 + ctx.year)}`, sub: 'try a number up to that' }];
+    }
+    return fits.map((b) => ({
       kind: 'resident', id: b.id, n, name: `Resident #${n.toLocaleString('en-US')} of ${world.bodies[b.id].name}`,
       sub: `${fmtNum(popOf(ctx.snap, b.id))} people live there in ${Math.round(2040 + ctx.year)}`,
     }));
@@ -818,6 +842,7 @@ const search = new Search(find);
 app.querySelector('.search-slot')!.replaceWith(search.el);
 search.onPick = (h) => {
   pull = null;
+  if (h.kind === 'note') return;
   if (h.kind === 'tech') { inspector.showTech(h.id); select(null); refreshPanels(); return; }
   if (h.kind === 'galaxy') {
     const name = GALAXIES[h.id].name;
