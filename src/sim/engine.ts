@@ -57,6 +57,7 @@ interface Fx {
 }
 const MULT_KEYS = new Set(['extract', 'habitat', 'lifeSupport', 'energy', 'launch', 'research', 'productivity', 'death', 'growth', 'war', 'secession', 'voyage', 'divergence']);
 
+const MIGRATE = 0.001; // share of a town's people per year who move to younger settlements in the same system
 const REACH_OUTER = 1, REACH_RAD = 2, REACH_DEEP = 4;
 const MINOR = new Set([EV.Famine, EV['Rich deposit found'], EV['Baby boom'], EV.Revolt, EV['Habitat breach'], EV['Probe survey']]);
 const TECH_INDEX = new Map(TECHS.map((t, i) => [t.id, i]));
@@ -85,6 +86,7 @@ export class Engine {
   /** per system: neighbours before this index have nothing left to survey (a cache, rebuilt after restore) */
   private surveyCursor: Int32Array;
   private sysBodies: number[][];
+  private migW: Float64Array; private migD: Float64Array; // per-system scratch, rebuilt every step
 
   constructor(world: World, seed: number) {
     this.world = world;
@@ -106,6 +108,7 @@ export class Engine {
     this.sysX = new Float64Array(ns); this.sysY = new Float64Array(ns); this.sysZ = new Float64Array(ns);
     this.sysRegion = new Uint8Array(ns);
     this.sysBodies = world.systems.map((s) => s.bodies);
+    this.migW = new Float64Array(ns); this.migD = new Float64Array(ns);
     world.systems.forEach((s, i) => {
       this.sysX[i] = s.x; this.sysY[i] = s.y; this.sysZ[i] = s.z;
       this.sysRegion[i] = ({ sol: 0, local: 1, galaxy: 2, extra: 3 } as const)[s.region];
@@ -250,11 +253,15 @@ export class Engine {
     // ---- per settlement
     const tfp = fx.productivity * Math.pow(1 + g[G.knowledge] / 2000, 0.22);
     let research = 0;
-    const solImmigration = Math.min(g[G.launchCap] / 8, S[eo + F.pop] * 0.002) * (S[eo + F.stage] === STAGE.HUB ? 1 : 0.2);
-    let solColonyWeight = 0;
+    // migration inside a system: Earth (launch-limited) and every town or bigger send
+    // people to the young settlements around the same star, weighted by free room
+    const migW = this.migW.fill(0), migD = this.migD.fill(0);
+    migD[0] = Math.min(g[G.launchCap] / 8, S[eo + F.pop] * 0.002) * (S[eo + F.stage] === STAGE.HUB ? 1 : 0.2);
     for (let n = 0; n < st.nSettled; n++) {
       const b = st.settled[n], o = b * NF, stg = S[o + F.stage];
-      if (b !== earth && this.bSys[b] === 0 && stg >= STAGE.OUTPOST && stg <= STAGE.CITY) solColonyWeight += Math.max(0, S[o + F.capacity] - S[o + F.pop]) ** 0.5;
+      if (b === earth || stg < STAGE.OUTPOST || stg > STAGE.MEGA) continue;
+      if (stg <= STAGE.CITY) migW[this.bSys[b]] += Math.max(0, S[o + F.capacity] - S[o + F.pop]) ** 0.5;
+      if (stg >= STAGE.TOWN) migD[this.bSys[b]] += S[o + F.pop] * MIGRATE;
     }
 
     const sysNet = new Map<number, Float64Array>(); // per-system resource pooling
@@ -321,14 +328,14 @@ export class Engine {
       const dBase = (isEarth ? 0.0085 : 0.009) * fx.death;
       let births = pop * (bRate * Math.max(0, 1 - crowd) + dBase * Math.min(1, crowd) * (1 - short));
       const deaths = pop * dRate;
-      if (pop < 2000 && !isEarth) births *= 0.3; // tiny crews don't raise families
+      if (stg === STAGE.OUTPOST) births *= 0.3; // rotating crews don't raise families
+      const sy = this.bSys[b];
       let immig = 0;
-      if (!isEarth && this.bSys[b] === 0 && stg >= STAGE.OUTPOST && stg <= STAGE.CITY && solColonyWeight > 0) {
-        immig = solImmigration * Math.max(0, cap - pop) ** 0.5 / solColonyWeight;
-      }
+      if (!isEarth && stg <= STAGE.CITY && migW[sy] > 0) immig = Math.min(migD[sy] * Math.max(0, cap - pop) ** 0.5 / migW[sy], Math.max(0, cap - pop) / dt);
+      if (!isEarth && stg >= STAGE.TOWN && migW[sy] > 0) immig -= pop * MIGRATE;
       pop = Math.max(0, pop + (births - deaths + immig) * dt);
       if (pop > cap * 1.5) pop = cap * 1.5;
-      S[o + F.births] = births; S[o + F.deaths] = deaths; S[o + F.imports] = immig * 10;
+      S[o + F.births] = births; S[o + F.deaths] = deaths; S[o + F.imports] = Math.max(0, immig) * 10;
 
       // economy
       const kpc = pop > 0 ? S[o + F.capital] / pop : 0;
