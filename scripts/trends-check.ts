@@ -7,7 +7,7 @@ import { Engine } from '../src/sim/engine.ts';
 import { FLOW, NPERIODS, isShipBody, periodOf, periodStart } from '../src/sim/ledger.ts';
 import { GLOBAL_METRICS, GM, HIST_FIELDS, NGM } from '../src/sim/metrics.ts';
 import { MARKET_WINDOW, buildTrends } from '../src/sim/trends.ts';
-import { SECTIONS, marketsAt, rowAt, shockSignal, signalAt } from '../src/sim/trendSignals.ts';
+import { SECTIONS, buildReport, marketsAt, rowAt, shockSignal, signalAt } from '../src/sim/trendSignals.ts';
 import { buildWorld } from '../src/sim/world.ts';
 
 const seed = Number(process.argv[2] ?? 7);
@@ -175,6 +175,36 @@ ok(!/faith/i.test(JSON.stringify(t)), 'payload mentions no faith');
     }
     ok(diff === 0, `truncated run: ${diff} periods differ from the full run`);
   }
+}
+
+// ---- end-of-run report (buildReport) ----
+{
+  const n = main.st.step + 1;
+  const rows = buildReport(main.years, main.series, n, t);
+  const wantRows = SECTIONS.reduce((a, s) => a + s.metrics.length, 0) + t.shocks.length;
+  ok(rows.length === wantRows, `report rows ${rows.length} vs ${wantRows}`);
+  let badR = 0;
+  for (const r of rows) {
+    if (r.kind === 'count') {
+      const c = t.shocks.find((x) => `shock:${x.key}` === r.key)!;
+      if (r.runChange !== c.years.length) badR++;
+      const top = c.top[0];
+      if (!(top ? r.peakYear === top.year : Number.isNaN(r.peakYear))) badR++;
+    } else {
+      if (r.endYear !== main.years[n - 1] || !Number.isFinite(r.end) || !Number.isFinite(r.peakYear) || !Number.isFinite(r.troughYear)) badR++;
+      if (r.kind === 'delta' && (!Number.isFinite(r.start) || !Number.isFinite(r.runChange))) badR++;
+      if (r.kind === 'rate' && (r.runChange !== null) !== (r.start > 0 && r.end > 0)) badR++;
+      if (r.lastDir !== 'rising' && r.lastDir !== 'falling' && r.lastDir !== 'flat') badR++;
+    }
+  }
+  ok(badR === 0, `report row sanity (${badR} bad)`);
+  const g = GM.gdp;
+  let i0 = -1;
+  for (let i = 0; i < n; i++) if (Number.isFinite(main.series[i * NGM + g]) && main.series[i * NGM + g] > 0) { i0 = i; break; }
+  const cagr = 100 * (Math.pow(main.series[(n - 1) * NGM + g] / main.series[i0 * NGM + g], 1 / (main.years[n - 1] - main.years[i0])) - 1);
+  const gr = rows.find((r) => r.section === 'Market size and growth' && r.key === 'gdp')!;
+  ok(Math.abs(gr.runChange! - cagr) < 1e-9, `gdp run CAGR ${gr.runChange} vs ${cagr}`);
+  ok(!/faith/i.test(JSON.stringify(rows)), 'report mentions no faith');
 }
 
 // ---- faith stays out ----

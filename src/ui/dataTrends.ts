@@ -8,7 +8,7 @@
 import type { Annals } from '../sim/chronicle.ts';
 import { NPERIODS, periodOf } from '../sim/ledger.ts';
 import { GLOBAL_METRICS, GM } from '../sim/metrics.ts';
-import { marketsAt, SECTIONS, shockSignal, signalAt, turningPoints, type Dir, type Signal, type TrendSection } from '../sim/trendSignals.ts';
+import { buildReport, marketsAt, SECTIONS, shockSignal, signalAt, turningPoints, type Dir, type ReportRow, type Signal, type TrendSection } from '../sim/trendSignals.ts';
 import type { Trends } from '../sim/trends.ts';
 import { AnalystChart, type AData, type ALine } from './analystChart.ts';
 import { globalSeries } from './charts.ts';
@@ -37,10 +37,18 @@ export class TrendsTab implements DataTab {
   private lastAt = 0;
   private busy = false;
   private dirty = true;
+  private repBody: HTMLElement;
+  private repHtml = '';
+  private report: ReportRow[] | null = null;
 
   constructor(host: DataHost) {
     this.host = host;
     this.el = document.createElement('div');
+    const rep = document.createElement('section');
+    rep.className = 'tr-sec tr-report';
+    rep.innerHTML = `<h3>End-of-run report</h3><div class="tr-rep-body"></div>`;
+    this.repBody = rep.querySelector('.tr-rep-body')!;
+    this.el.append(rep);
     for (const def of SECTIONS) {
       const el = document.createElement('section');
       el.className = 'tr-sec';
@@ -154,7 +162,8 @@ export class TrendsTab implements DataTab {
   // ------------------------------------------------------------------ static render (data changed)
 
   private render(): void {
-    const a = this.annals, S = this.secs;
+    const a = this.annals, S = this.secs, sim = this.host.sim;
+    this.report = sim.done && this.trends ? buildReport(sim.years, sim.series, Math.min(sim.years.length, sim.frontier + 1), this.trends) : null;
     for (const s of S) if (s.def) this.renderData(s);
 
     // belief: narrative milestones only, no chart
@@ -312,14 +321,19 @@ export class TrendsTab implements DataTab {
 
   // ------------------------------------------------------------------ cursor repaint (year changed)
 
+  /** A signed change as text: rate as "+1.84 %/yr", delta as signed fmtNum plus its unit (yr or %). */
+  private fmtChg(kind: 'rate' | 'delta', change: number, unit: string): string {
+    if (kind === 'rate') return `${change >= 0 ? '+' : ''}${change.toFixed(2)} %/yr`;
+    return `${change >= 0 ? '+' : ''}${fmtNum(change)}${unit === 'yr' || unit === '%' ? ` ${unit}` : ''}`;
+  }
+
   /** A signal's change as text: "+1.84 %/yr", "from zero", or a signed delta with its unit. */
   private chg(s: Signal): string {
     if (s.kind === 'rate') {
       if (s.change === null) return s.to > s.from ? 'from zero' : s.to < s.from ? 'to zero' : 'unchanged';
-      return `${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)} %/yr`;
+      return this.fmtChg('rate', s.change, '');
     }
-    const unit = GLOBAL_METRICS[GM[s.key]].unit;
-    return `${s.change! >= 0 ? '+' : ''}${fmtNum(s.change!)}${unit === 'yr' || unit === '%' ? ` ${unit}` : ''}`;
+    return this.fmtChg('delta', s.change!, GLOBAL_METRICS[GM[s.key]].unit);
   }
 
   /** The signal line of a data section at cursor year y. */
@@ -360,9 +374,42 @@ export class TrendsTab implements DataTab {
     return `<p class="muted">Fastest-growing markets, the century to ${fmtYear(t.edges[ms[0].p])}</p><ol class="tr-pts">${lis.join('')}</ol>`;
   }
 
+  /** The end-of-run report: one line per section's headline row. */
+  private reportHtml(): string {
+    const r = this.report;
+    if (!r) return '';
+    const yb = (y: number) => `<button class="link num" type="button" data-y="${y}" data-b="-1">${fmtYear(y)}</button>`;
+    const lis: string[] = [];
+    for (const sec of SECTIONS) {
+      const head = sec.id === 'shocks' ? 'shock:disaster' : sec.metrics[0];
+      const row = r.find((x) => x.section === sec.title && x.key === head);
+      if (!row) continue;
+      if (row.kind === 'count') {
+        const busiest = Number.isFinite(row.peakYear) ? ` Busiest period from ${yb(row.peakYear)} (${row.peak} events).` : '';
+        lis.push(`<li><b>Shocks</b>: Disasters, ${row.runChange} over the run; last 50 years ${row.lastChange! >= 0 ? '+' : ''}${row.lastChange} against the 50 before (${row.lastDir}).${busiest}</li>`);
+        continue;
+      }
+      const from = Number.isFinite(row.startYear) ? `${fmtUnit(row.start, row.unit)} in ${yb(row.startYear)} → ` : '';
+      let s = `<b>${esc(row.section)}</b>: ${esc(row.label)} ${from}${fmtUnit(row.end, row.unit)} in ${yb(row.endYear)}`;
+      if (row.runChange !== null) s += `, ${this.fmtChg(row.kind, row.runChange, row.unit)} over the run`;
+      s += `. Last 50 years: ${CAP[row.lastDir]}`;
+      if (row.lastChange !== null) s += ` (${this.fmtChg(row.kind, row.lastChange, row.unit)})`;
+      const tps = ([['Peak', row.peakYear], ['low', row.troughYear], ['steepest rise', row.riseYear], ['steepest fall', row.fallYear]] as [string, number][])
+        .filter(([, y]) => Number.isFinite(y));
+      if (tps.length) s += `. ${tps.map(([w, y]) => `${w} ${yb(y)}`).join(', ')}.`;
+      lis.push(`<li>${s}</li>`);
+    }
+    return `<ol class="tr-rep">${lis.join('')}</ol>`;
+  }
+
   /** Signal lines, the live market list, faint future points and chart cursors — all at the cursor year. */
   private paintCursor(): void {
     const y = this.host.year();
+    const sim = this.host.sim;
+    const rep = !sim.done
+      ? `<p class="muted">The report is ready when this future's run ends. The run has reached ${fmtYear(sim.years[sim.frontier] ?? 0)}.</p>`
+      : !this.report ? '<p class="muted">Preparing the report…</p>' : this.reportHtml();
+    if (rep !== this.repHtml) { this.repHtml = rep; this.repBody.innerHTML = rep; }
     for (const s of this.secs) {
       if (s.signal) s.signal.innerHTML = this.signalLine(s.def!, y);
       if (s.live) s.live.innerHTML = this.marketLive(y);

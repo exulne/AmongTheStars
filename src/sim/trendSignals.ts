@@ -171,3 +171,68 @@ export const SECTIONS: TrendSection[] = [
     metrics: ['divergence'], chart: ['divergence'], log: false,
   },
 ];
+
+export interface ReportRow {
+  section: string;              // SECTIONS title
+  key: string;                  // metric key, or `shock:${category key}` for the shocks section
+  label: string;                // GLOBAL_METRICS label, or the shock category label
+  unit: string;                 // metric unit; 'events' for shock rows
+  kind: 'rate' | 'delta' | 'count';
+  startYear: number; start: number;   // first usable row (NaN for count rows)
+  endYear: number; end: number;       // last row, n - 1 (NaN for count rows)
+  runChange: number | null;     // rate: CAGR %/yr start→end; delta: end - start; count: events over the whole run
+  lastChange: number | null;    // the end-of-run signal: signalAt(…, years[n-1]).change; count: recent - before
+  lastDir: Dir;
+  peakYear: number; peak: number;      // turningPoints max; count: the busiest period (top[0].year, top[0].n)
+  troughYear: number; trough: number;  // turningPoints min (NaN for count)
+  riseYear: number; fallYear: number;  // steepest rise / fall (NaN for count)
+}
+
+/** The end-of-run report: one row per SECTIONS metric, plus one count row per shock category. */
+export function buildReport(years: ArrayLike<number>, series: ArrayLike<number>, n: number, t: Trends): ReportRow[] {
+  const rows: ReportRow[] = [];
+  const at = (xs: number[], ys: number[], i: number) => i >= 0 && i < n ? { y: xs[i], v: ys[i] } : { y: NaN, v: NaN };
+  for (const sec of SECTIONS) {
+    if (sec.id === 'shocks') {
+      for (const c of t.shocks) {
+        const s = shockSignal(t, c.key, years[n - 1]);
+        const top = c.top[0];
+        rows.push({
+          section: sec.title, key: `shock:${c.key}`, label: c.label, unit: 'events', kind: 'count',
+          startYear: NaN, start: NaN, endYear: NaN, end: NaN,
+          runChange: c.years.length, lastChange: s ? s.recent - s.before : null, lastDir: s?.dir ?? 'flat',
+          peakYear: top ? top.year : NaN, peak: top ? top.n : NaN,
+          troughYear: NaN, trough: NaN, riseYear: NaN, fallYear: NaN,
+        });
+      }
+      continue;
+    }
+    for (const key of sec.metrics) {
+      const g = GM[key], m = GLOBAL_METRICS[g], rate = !!m.log;
+      let i0 = -1;
+      for (let i = 0; i < n; i++) {
+        const v = series[i * NGM + g];
+        if (Number.isFinite(v) && (!rate || v > 0)) { i0 = i; break; }
+      }
+      const end = series[(n - 1) * NGM + g], endYear = years[n - 1];
+      const start = i0 >= 0 ? series[i0 * NGM + g] : NaN, startYear = i0 >= 0 ? years[i0] : NaN;
+      let runChange: number | null = null;
+      if (i0 >= 0) runChange = rate
+        ? (start > 0 && end > 0 && endYear > startYear ? 100 * (Math.pow(end / start, 1 / (endYear - startYear)) - 1) : null)
+        : end - start;
+      const s = signalAt(years, series, n, key, years[n - 1]);
+      const xs: number[] = [], ys: number[] = [];
+      for (let i = 0; i < n; i++) { xs.push(years[i]); ys.push(series[i * NGM + g]); }
+      const tp = turningPoints(xs, ys, rate);
+      const pk = at(xs, ys, tp.max), tr = at(xs, ys, tp.min);
+      rows.push({
+        section: sec.title, key, label: m.label, unit: m.unit, kind: rate ? 'rate' : 'delta',
+        startYear, start, endYear, end,
+        runChange, lastChange: s ? s.change : null, lastDir: s?.dir ?? 'flat',
+        peakYear: pk.y, peak: pk.v, troughYear: tr.y, trough: tr.v,
+        riseYear: at(xs, ys, tp.rise).y, fallYear: at(xs, ys, tp.fall).y,
+      });
+    }
+  }
+  return rows;
+}
