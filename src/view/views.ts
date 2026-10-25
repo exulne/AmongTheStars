@@ -19,6 +19,7 @@ import { BEAM, SCOOP, shipStyle } from './shipStyles.ts';
 import { applyCultureLights, cultureLight, cultureSkin, lookKey, societyLook } from './societyLook.ts';
 import { REDUCED_MOTION, applyPlanetLook } from './timeLook.ts';
 import { WarLayer } from './warLayer.ts';
+import { PlanetWar } from './planetWar.ts';
 import { STAGE_COLORS, flareTex, galaxySpriteTex, glowTex, pointsMaterial, specColor } from './textures.ts';
 import { explainGalaxy } from '../explain/galaxy.ts';
 import { addCpuSet, addGpuSet, nearestPoint, pxPerUnit } from '../explain/picker.ts';
@@ -1005,6 +1006,7 @@ export class PlanetView implements View {
   private cityKey = ''; private satKey = -1; private elevKey = -1; private archKey = '';
   private arch: THREE.InstancedMesh | null = null;
   private prings: { mesh: THREE.Mesh; body: number }[] = [];
+  private war = new PlanetWar();
 
   enter(ctx: Ctx): void {
     this.build(ctx);
@@ -1062,6 +1064,7 @@ export class PlanetView implements View {
     this.group.add(this.orbit);
     explainElevators('elev', this.pivot, () => this.elevators, () => this.builtFor);
     explainWorks('work', this.group, () => this.works.works, () => ({ body: this.builtFor, sys: ctx.world.bodies[this.builtFor].system }));
+    this.pivot.add(this.war.group);
     this.cities = null; this.works.reset(); this.sats = null; this.elevators = [];
     this.cityKey = ''; this.satKey = -1; this.elevKey = -1; this.archKey = ''; this.arch = null;
   }
@@ -1095,6 +1098,7 @@ export class PlanetView implements View {
       }
       dirty(this.cities.pts);
       this.pivot.add(this.cities.pts);
+      this.war.setCities(this.cityPos);
     }
     const on = alive(st);
     // the cities' buildings, seen from orbit: domes early, towers and spires later, in the culture's colours
@@ -1198,6 +1202,7 @@ export class PlanetView implements View {
       c.position.copy(c.userData.dir as THREE.Vector3).multiplyScalar(10.2 + (TETHER - 10.4) * (0.5 - 0.5 * Math.cos(u * Math.PI * 2)));
     }
     if (this.cities) (this.cities.pts.material as THREE.ShaderMaterial).uniforms.uOpacity.value = 0.75 + 0.25 * Math.sin(ctx.t * 1.5);
+    this.war.draw(ctx.world, ctx.snap, ctx.body, ctx.year, ctx.t);
   }
 
   pickables(ctx: Ctx): Pickable[] {
@@ -1229,6 +1234,8 @@ export class PlanetView implements View {
       const top = (this.elevators[0].children[1] as THREE.Sprite).position.clone().applyMatrix4(this.pivot.matrixWorld);
       out.push({ pos: top, text: this.elevators.length > 1 ? `${this.elevators.length} space elevators` : 'Space elevator', sub: `since ${Math.round(2040 + this.elevSince)}`, prio: 4, ref: { kind: 'thing', id: 0, ex: 'elev', name: 'Space elevator' } });
     }
+    const war = this.war.label();
+    if (war) out.push({ pos: new THREE.Vector3(11.5, -1.5, 3), text: war.text, sub: war.sub, strong: true, prio: 9 });
     out.push({ pos: new THREE.Vector3(0, 11.5, 0), text: b.name, sub: alive(st) ? `${STAGE_NAMES[st]} · ${fmtNum(popOf(ctx.snap, ctx.body))} people` : st >= 0 ? STAGE_NAMES[st] : 'never settled', strong: true, ref: { kind: 'body', id: ctx.body }, prio: 10 });
     return out;
   }
