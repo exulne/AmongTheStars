@@ -154,7 +154,9 @@ button, select, input { font: inherit; color: inherit; }
 .lifepick .lp-row { display: flex; gap: 0.9rem; margin: 0.6rem 0 0; }
 .lifepick .lp-result { margin: 0.45rem 0 0; font-size: 0.8rem; }
 .lifepick .lp-life { max-height: 34vh; overflow-y: auto; margin-top: 0.3rem; }
-.lifepick .lp-life .lp-ev { display: flex; gap: 0.6rem; align-items: baseline; margin: 0.22rem 0; font-size: 0.78rem; }
+.lifepick .lp-life .lp-ev { display: flex; gap: 0.6rem; align-items: baseline; margin: 0.22rem 0; font-size: 0.78rem; cursor: pointer; }
+.lifepick .lp-life .lp-ev:hover { color: var(--accent); }
+.lifepick .lp-life .lp-ev:hover .y { color: var(--accent); }
 .lifepick .lp-life .lp-ev .y { flex: 0 0 3.2em; text-align: right; color: var(--quiet); }
 .lifepick .lp-x { position: absolute; top: 0.1rem; right: 0.3rem; color: var(--quiet); font-size: 1.1rem; }
 .lifepick .lp-x:hover { color: var(--ink); }

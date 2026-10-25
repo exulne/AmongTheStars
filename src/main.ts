@@ -576,6 +576,7 @@ const lifePick = new LifePick({
   nameOf: (b) => naming.place(world, b),
   year: () => ctx.year,
   find: (b, n, k, y, w) => sim.findPerson(b, n, k, y, w),
+  seek: (y, b) => { timeline.set(y, true); if (b != null) select(asPick({ kind: 'body', id: b })); },
   open: (pid) => { inspector.openPerson(pid); inspector.el.classList.add('open'); startFollow(pid); },
 });
 app.append(lifePick.el);

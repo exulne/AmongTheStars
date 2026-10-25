@@ -23,6 +23,8 @@ export interface LifePickOpts {
   nameOf: (b: number) => string;
   year: () => number;
   find: (body: number, n: number, kind: string, year: number, want?: PickWant) => Promise<FindResult>;
+  /** jump the simulation clock to a year and focus a body, when one is given */
+  seek: (year: number, body?: number) => void;
   /** open the chosen person's biography */
   open: (pid: string) => void;
 }
@@ -82,6 +84,10 @@ export class LifePick {
     this.el.querySelector('.lp-go')!.addEventListener('click', () => this.go(false));
     this.el.querySelector('.lp-rand')!.addEventListener('click', () => { this.clear(); this.go(true); });
     this.el.querySelector('.lp-clear')!.addEventListener('click', () => this.clear());
+    this.el.addEventListener('click', (e) => {
+      const ev = (e.target as HTMLElement).closest<HTMLElement>('.lp-ev');
+      if (ev?.dataset.y) this.opts.seek(Number(ev.dataset.y), ev.dataset.b === undefined ? undefined : Number(ev.dataset.b));
+    });
   }
 
   onToggle: (open: boolean) => void = () => {};
@@ -176,11 +182,12 @@ export class LifePick {
     if (p || st) this.showRoll(p ?? undefined, st ?? null);   // blank fields get filled by whoever was found
     const stats = st ? ` ${esc(st.class)}${st.devotion ? `, ${st.devotion}` : ''}, ${esc(st.mood)}.` : '';
     this.say(p ? `Following <b>${esc(p.name)}</b> — born on ${esc(where ?? p.place)} in ${fmtYear(p.born)}${p.born > this.opts.year() ? ', not yet born.' : p.alive ? `; ${Math.floor(p.age)}, ${esc(p.job)}${p.place && p.place !== where ? ` on ${esc(p.place)}` : ''}.${stats}` : ', now gone.'}` : 'Following them.', seq);
-    // the whole life laid out — including everything after the year being shown
+    // the whole life laid out — including everything after the year being shown;
+    // click a beat to be taken to it
     if (r.life?.length) {
       this.el.querySelector<HTMLElement>('.lp-life')!.innerHTML =
         `<p class="lp-sec">their life, in full</p>` +
-        r.life.map((ev) => `<div class="lp-ev" role="listitem"><span class="y num">${fmtYear(ev.year)}</span><span>${esc(ev.text)}</span></div>`).join('');
+        r.life.map((ev) => `<div class="lp-ev" role="listitem" data-y="${Math.round(ev.year)}"${ev.body != null ? ` data-b="${ev.body}"` : ''}><span class="y num">${fmtYear(ev.year)}</span><span>${esc(ev.text)}</span></div>`).join('');
     }
   }
 
