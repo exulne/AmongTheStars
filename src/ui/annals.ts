@@ -67,7 +67,17 @@ export function humanityAnnalsHtml(A: Annals, w: World, y: number, name: (b: num
     <h3>Wars <span class="muted num">${now.length} now, ${A.wars.filter((x) => x.start <= y).length} so far</span></h3>
     ${now.length || past.length ? `<ol class="events annals">${[...now, ...past].map((x) => warLine(A, x, y)).join('')}</ol>` : '<p class="muted">No war yet.</p>'}
     <h3>Faiths</h3>
-    ${faiths.length ? `<ul class="annals">${faiths.map((f) => `<li><span class="ev-name">${esc(cap(f.name))}</span> <span class="muted">born on ${bodyLink(w, f.home, name)} in ${fmtYear(f.founded)}. ${esc(f.tenets)}</span></li>`).join('')}</ul>` : '<p class="muted">No new faith yet: the old religions of Earth.</p>'}`;
+    ${faiths.length ? `<ul class="annals">${faiths.map((f) => `<li><span class="ev-name">${esc(cap(f.name))}</span> <span class="muted">born on ${bodyLink(w, f.home, name)} in ${fmtYear(f.founded)}. ${esc(f.tenets)}</span></li>`).join('')}</ul>` : '<p class="muted">No new faith yet: the old religions of Earth.</p>'}
+    ${natureHtml(A, w, y, name)}`;
+}
+
+/** The worlds' own upheavals so far: long winters, great impacts, a sunshade, new seas (living worlds). */
+function natureHtml(A: Annals, w: World, y: number, name: (b: number) => string): string {
+  const past = (A.nature ?? []).filter((x) => x.year <= y);
+  if (!past.length) return '';
+  const recent = past.slice(-6).reverse();
+  return `<h3>The worlds <span class="muted num">${past.length} upheaval${past.length === 1 ? '' : 's'} so far</span></h3>
+    <ol class="events annals">${recent.map((x) => `<li><button class="link num ev-year" data-act="year" data-id="${x.year}" type="button">${fmtYear(x.year)}</button> ${x.body >= 0 && w.bodies[x.body] ? `${bodyLink(w, x.body, name)} ` : ''}<span class="muted">${esc(x.text)}</span></li>`).join('')}</ol>`;
 }
 
 const GRIEVANCE: Record<string, string> = {

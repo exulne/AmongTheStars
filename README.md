@@ -52,7 +52,34 @@ Same **seed**, same future. Change the seed and you get a different future: mayb
 - **Expansion:** rich, stable settlements send ships to nearby worlds. Interstellar trips take decades to centuries, and some ships never arrive.
 - **Politics:** humanity as a whole moves between moods such as expansion, golden age, stagnation, war, pandemic and collapse, and each mood changes the dice. Far-off colonies with long light-delay to Earth tend to declare independence.
 - **News travels at light speed:** an invention happens at one lab on one world. A colony 60 light years away hears of it 60 years later, and only then can it build with it or live differently because of it. Each world's inspector lists the news still on its way.
-- **Events:** solar storms, habitat breaches, asteroid strikes, breakthroughs, plagues, mutinies, new religions, and humans slowly drifting genetically on low-gravity worlds.
+- **Events:** habitat breaches, breakthroughs, plagues, mutinies, new religions, and humans slowly drifting genetically on low-gravity worlds. The worlds themselves have their own events too (see *Living worlds* below).
+
+## Living worlds: planets that change
+
+Planets in this simulation are not painted backdrops. Every world has a physical state that changes over the ten thousand years: how warm it is, how much ice it has, where its sea level stands, how thick its air is, how much volcanic haze or dust hangs in its sky, how far it has been terraformed. Nature changes it, and so do people.
+
+**Clocks that need no dice.** Some things are pure astronomy and run the same in every future. Earth's axis is slowly straightening (from 23.44° in 2040 toward 22.6° near the year 11,800, after Laskar's formula). Precession walks Earth's closest approach to the Sun from early January to early July, so northern summers get a little more sunlight. The Moon drifts away 3.8 cm a year. Mars's seasons follow its real 687-day year, so its polar caps grow over each winter pole and shrink in spring as you drag the slider. Halley's comet returns in 2061 and 2134 and about every 76 years after.
+
+**Events at their real rates.** Natural disasters happen about as often as the real record says, rolled from their own dice so they never disturb the rest of the simulation:
+
+| What | How often (on Earth) | Source |
+|---|---|---|
+| Chelyabinsk-size meteor (20 m) | about every 60 years | Brown et al. 2013 |
+| Tunguska-size airburst (50 m) | about every 500 years | NASA, Catalina Sky Survey |
+| 1 km asteroid (global winter) | about every 600,000 years | Chodas (KISS) |
+| Tambora-size eruption (VEI 7) | about every 700 years | VEI records |
+| Supervolcano (VEI 8) | about every 50,000 years | recurrence estimates of 30,000–130,000 years |
+| Magnitude 9 earthquake | about every 30 years | USGS catalogue |
+| Extreme solar storm (like 774 CE) | about every 2,000 years | tree-ring radiocarbon |
+| Mars global dust storm | one Mars year in three to five, always in the dusty season | Mars orbiters and rovers |
+
+Other worlds get the same physics scaled by size and neighbourhood: asteroid-belt colonies are hit far more often per square kilometre than Earth, Jupiter sweeps up comets (and wears their dark scars for months), Io erupts constantly, Enceladus's geysers surge, red dwarfs flare. Over a whole future that usually means a dozen or so Tambora-size eruptions and a one-in-five chance of a supervolcano, but almost never a big asteroid. No ice age comes within the window: the next one is not due for 50,000 years even without our carbon.
+
+**People push back.** Earth starts at 1.7 °C above pre-industrial and keeps burning some fossil fuel until fusion power arrives. That carbon stays in the air for thousands of years, and the ice sheets keep melting long after the warming stops (about 2.3 m of sea level per degree, over millennia). A huge civilisation also warms its planets with its own waste heat, and a star's Dyson swarm shades its planets a little. When nanotechnology arrives, a stable Earth can raise a sunshade to cool itself back down. Terraforming is no longer a switch: it costs energy, so Mars only turns blue and green once its people can pay for it, and an abandoned project slowly fails.
+
+**It matters to the people.** A volcanic or impact winter fails open-air harvests (indoor farms barely notice). Disasters kill by distance from each settlement drawn on the globe. Dust storms starve solar power. Solar superstorms knock out grids and satellites in proportion to how much a civilisation depends on them, and kill crews without shielding. Planetary defence pushes most big rocks aside once a world has asteroid mining and nuclear rockets. The Chronicle writes these up with the people who lived through them and names ages after them ("the Long Winter of 3170").
+
+**What you see.** Mars's caps come and go with its seasons, and the whole planet blurs to butterscotch in a global dust storm. Earth's coastlines creep with the sea and its sky dims after a big eruption. Fresh craters, glowing lava, Io's hot spots, Jupiter's Red Spot (which in some futures finally breaks up), Saturn's white storms, Titan's methane seas and aurorae are all drawn, and you can click them for a card. Each world's inspector has a *Climate and geology* section; every number is tagged R (real data), E (estimate from real data) or P (this future's own roll). The charts and data desk gain Earth's temperature, sea level and haze, and every settlement's temperature, sea level, haze, pressure and habitability can be queried. The full plan, with sources, is in `research/geophysics-plan.md`; the code is `src/sim/geo.ts` and `src/sim/geoView.ts`, and `npm run check` now includes `scripts/geo-check.ts`.
 
 ## The people (how billions of real individuals fit in a browser)
 
@@ -112,7 +139,7 @@ npm run sim -- 42     # run future #42 in the terminal and print a summary
 
 | Folder | What's in it |
 |---|---|
-| `src/sim/` | The simulation: world catalog, rules, background worker, and the people (`ledger.ts`, `demography.ts`, `lives.ts`) |
+| `src/sim/` | The simulation: world catalog, rules, background worker, the people (`ledger.ts`, `demography.ts`, `lives.ts`), and the living worlds (`geo.ts`, `geoView.ts`) |
 | `src/view/` | 3D: galaxies, stars, planets, the zoom levels; `multiverse.ts` above them, `micro*.ts` (body, cell, molecule, atom) below the street |
 | `src/micro/` | What a person is made of: their body read from their world and era (`specimen.ts`), cells and organelles (`cells.ts`), molecules atom by atom (`molecules.ts`), elements and electron orbitals (`elements.ts`) |
 | `src/ui/` | Time slider, charts, inspector, the residents and biography panels |

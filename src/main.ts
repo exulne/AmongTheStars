@@ -37,7 +37,7 @@ import { names as naming } from './ui/names.ts';
 import { StreetView } from './view/street.ts';
 import { Picker } from './explain/picker.ts';
 import { explainLocate, explainName, explainerFor } from './explain/registry.ts';
-import { resetShips, setShipApi, shipId } from './explain/ships.ts';
+import { resetShips, setMissionApi, setShipApi, shipId } from './explain/ships.ts';
 import { GalaxyView, LocalView, LEVELS, PLANET_SUN, PlanetView, SystemView, UniverseView, alive, cityCount, cityDir, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
 
 // ------------------------------------------------------------------ DOM
@@ -546,7 +546,9 @@ inspector.api = {
 inspector.onAnnals = (a) => { timeline.setAges(a?.ages ?? []); calendar.annals = a; timeline.refresh(); };
 inspector.onSelect = (p) => select(p);
 setShipApi((f, t, d) => sim.ship(f, t, d), () => refreshPanels(), (b, y) => sim.residents(b, y, 0, 6));
+setMissionApi((id) => sim.data<'mission'>({ type: 'mission', mission: id }));
 inspector.onYear = (y) => timeline.set(y, true);
+inspector.onMission = (id) => dataPanel.openMission(id);
 app.querySelector('#chronicle')!.addEventListener('click', () => {
   inspector.chronicleOpen = !inspector.chronicleOpen;
   if (inspector.chronicleOpen) inspector.openPerson(null);
@@ -1119,7 +1121,8 @@ function writeHash(): void {
   hashTimer = window.setTimeout(() => {
     const sel = ctx.selected;
     // a linked year still waiting for the run to reach it stays in the link
-    const parts = [`future${sim.seed}`, `y${Math.round(pendingYear ?? ctx.year)}`];
+    const yy = pendingYear ?? ctx.year;
+    const parts = [`future${sim.seed}`, `y${Math.abs(yy - Math.round(yy)) < 0.005 ? Math.round(yy) : yy.toFixed(2)}`];
     if (sel) parts.push(sel.kind === 'city' ? `c${ctx.body}.${sel.id}` : sel.kind === 'thing' ? `x${sel.ex}.${sel.id}` : `${REF_CODE[sel.kind]}${sel.id}`);
     if (isMicro(level) && micro.pid) parts.push(`p${micro.pid.replace(/-/g, '~')}`, micro.hash());
     parts.push(`l${level}`, STAMP_CODE);
@@ -1131,7 +1134,8 @@ function writeHash(): void {
 function readHash(): { seed: number; year: number | null; sel: Pickable | null; level: Level | null; pid: string | null } {
   const h = location.hash.slice(1);
   const seed = Number(h.match(/future(\d+)/)?.[1]) || 0;
-  const y = h.match(/(?:^|-)y(\d+)/);
+  // a year may carry a fraction (y63.78): Mars's seasons, a storm's month
+  const y = h.match(/(?:^|-)y(\d+(?:\.\d+)?)/);
   const lv = h.match(/(?:^|-)l(multiverse|universe|galaxy|local|system|planet|street|person|cell|molecule|atom)(?=-|$)/)?.[1] as Level | undefined;
   const pid = h.match(/(?:^|-)p([0-9.~]+)(?=-|$)/)?.[1]?.replace(/~/g, '-') ?? null;
   micro.readHash(h);

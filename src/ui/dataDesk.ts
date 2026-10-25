@@ -13,6 +13,7 @@ import { RunTab } from './dataRun.ts';
 import { GroupsTab } from './dataGroups.ts';
 import { ChartsTab } from './dataCharts.ts';
 import { HistoryTab } from './dataHistory.ts';
+import { EconTab } from './dataEcon.ts';
 import { esc } from './dataPanel.ts';
 import { installStamp, stampLine } from './stamp.ts';
 
@@ -42,11 +43,14 @@ export function installDataDesk(o: DeskOpts): DataPanel {
   desk.add(new GroupsTab(desk.hostApi, desk));
   desk.add(new HistoryTab(desk.hostApi));
   desk.add(new TimeTab(desk.hostApi, desk));
+  const econ = new EconTab(desk.hostApi);
+  desk.add(econ);
+  desk.openMission = (id) => { if (!desk.open) btn?.click(); desk.show('econ'); econ.open(id); };
   desk.add(new RunTab(desk.hostApi));
+  const btn = o.app.querySelector<HTMLButtonElement>('#data');
   installStamp({ app: o.app, seed: () => o.sim.seed, year: () => o.ctx.year });
   desk.footer(`<span class="num">${esc(stampLine())}</span>`);
   o.app.append(desk.el);
-  const btn = o.app.querySelector<HTMLButtonElement>('#data');
   btn?.addEventListener('click', () => { desk.toggle(); btn.setAttribute('aria-pressed', String(desk.open)); });
   desk.onClose = () => btn?.setAttribute('aria-pressed', 'false');
   return desk;

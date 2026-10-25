@@ -56,6 +56,8 @@ const STYLE: Record<BodyKind, number> = {
 
 /** Most settlements a world's night lights grow from (one per city marker the planet view draws). */
 export const MAX_CITY_LIGHTS = 48;
+/** Most scars (craters, lava fields, impact scars) drawn on one world. */
+export const MAX_SCARS_DRAWN = 16;
 
 /** `haze` (0..1) smooths the surface under a thick atmosphere, as on Titan or Venus. */
 export function planetMaterial(kind: BodyKind, color: number, seed: number, haze = 0): THREE.ShaderMaterial {
@@ -80,6 +82,21 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number, haze
       // the settlements themselves: unit directions in the body's frame, w = how big each one is (0..1)
       uCities: { value: Array.from({ length: MAX_CITY_LIGHTS }, () => new THREE.Vector4()) },
       uCityN: { value: 0 },
+      // living worlds (geoLook.ts): the world's physical state now
+      uIceN: { value: kind === 'desert' ? 0.82 : 0.81 }, // sine of the latitude where the northern cap begins
+      uIceS: { value: kind === 'desert' ? 0.82 : 0.81 },
+      uSeaShift: { value: 0 },    // sea level: coastlines creep inland (Earth)
+      uCloud: { value: 1 },       // cloud cover against normal
+      uDust: { value: 0 },        // 0..1 dust haze (a global dust storm)
+      uAero: { value: 0 },        // 0..1 stratospheric haze (volcanic and impact winters)
+      uAurora: { value: 0 },      // 0..1 polar lights on the night side
+      uVolc: { value: 0 },        // 0..1 Io-like volcanism: sulfur plains, hot spots on the night side
+      uSpot: { value: 1 },        // a giant's great storm, relative size (0: gone)
+      uWhite: { value: 0 }, uWhiteLat: { value: 0.6 }, // Saturn's Great White Spot: strength, sine of its latitude
+      uLakes: { value: 0 }, uSeason: { value: 0 },     // Titan's polar lakes; +1 northern summer
+      uScars: { value: Array.from({ length: MAX_SCARS_DRAWN }, () => new THREE.Vector4()) }, // direction, angular radius
+      uScarK: { value: Array.from({ length: MAX_SCARS_DRAWN }, () => new THREE.Vector2()) }, // kind (0 crater, 1 lava, 2 dark scar), strength
+      uScarN: { value: 0 },
     },
     vertexShader: /* glsl */ `
       varying vec3 vPos; varying vec3 vNormal; varying vec3 vView; varying vec3 vWorld; varying float vR;
@@ -98,6 +115,8 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number, haze
     fragmentShader: /* glsl */ `
       uniform vec3 uColor, uSun, uCulture; uniform float uStyle, uSeed, uLights, uGreen, uTime, uDetail, uHaze, uTerra, uEpoch, uDim, uFlicker, uCultureMix, uGlow;
       uniform vec4 uCities[${MAX_CITY_LIGHTS}]; uniform int uCityN;
+      uniform float uIceN, uIceS, uSeaShift, uCloud, uDust, uAero, uAurora, uVolc, uSpot, uWhite, uWhiteLat, uLakes, uSeason;
+      uniform vec4 uScars[${MAX_SCARS_DRAWN}]; uniform vec2 uScarK[${MAX_SCARS_DRAWN}]; uniform int uScarN;
       varying vec3 vPos; varying vec3 vNormal; varying vec3 vView; varying vec3 vWorld; varying float vR;
       #include <logdepthbuf_pars_fragment>
       ${NOISE}
@@ -130,6 +149,19 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number, haze
           vec2 c1 = crater(q * 3.0 * uDetail, 0.55), c2 = crater(q * 9.0 * uDetail + 4.0, 0.5) * aa, c3 = crater(q * 23.0 * uDetail + 9.0, 0.45) * aa;
           h = n * 0.5 + c1.x * 0.9 + c2.x * 0.45 + c3.x * 0.2 + grain * 0.06;
           col *= 1.0 + c1.y + c2.y * 0.7 + c3.y * 0.5 + grain * 0.06;
+          if (uVolc > 0.0) {
+            // Io: sulfur plains in yellows and whites, red ring deposits, black paterae; its lava renews the surface, so no craters
+            float sulf = fbm4(q * 2.3 + 3.0), ring = fbm4(q * 5.0 + 1.0);
+            vec3 io = mix(vec3(0.62, 0.55, 0.22), vec3(0.72, 0.68, 0.48), smoothstep(-0.2, 0.3, sulf));
+            io = mix(io, vec3(0.5, 0.2, 0.08), smoothstep(0.25, 0.45, ring) * 0.6);
+            vec3 cell = hash33(floor(q * 6.0));
+            float pat = smoothstep(0.16, 0.08, length(fract(q * 6.0) - 0.5 - (cell - 0.5) * 0.5)) * step(0.55, cell.x);
+            io = mix(io, vec3(0.03, 0.025, 0.02), pat);
+            col = mix(col, io, uVolc);
+            h = mix(h, n * 0.2 + grain * 0.03, uVolc);
+            // the hot ones glow on the night side
+            emit += vec3(1.0, 0.35, 0.08) * pat * step(0.8, cell.y) * uVolc * 0.6;
+          }
         } else if (uStyle < 1.5) {     // desert (Mars-like): dark basalt plains, canyons, dunes, polar ice
           float m = smoothstep(-0.25, 0.3, n);
           float albedo = smoothstep(-0.1, 0.25, fbm4(q * 1.3 + 5.0));
@@ -139,12 +171,12 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number, haze
           float dunes = sin(dot(q, vec3(31.0, 7.0, 13.0)) + snoise(q * 4.0) * 3.0) * aa * smoothstep(0.1, -0.3, n);
           h = n * 0.6 - canyon * 0.9 + c1.x * 0.6 + c2.x * 0.3 + dunes * 0.04 + grain * 0.05;
           col *= (1.0 - canyon * 0.35) * (1.0 + c1.y + c2.y * 0.6 + grain * 0.07);
-          // the polar cap shrinks as the planet warms; frost lingers in the craters around it
-          float capLo = 0.82 + 0.15 * smoothstep(0.08, 0.7, uTerra);
-          float cap = smoothstep(capLo, capLo + 0.06, abs(lat) + n * 0.05 + c1.x * 0.02);
-          col = mix(col, vec3(0.7, 0.68, 0.66), cap);
+          // the polar caps follow the seasons (CO₂ frost over each winter pole) and shrink as the planet warms; frost lingers in craters
+          float capLo = lat > 0.0 ? uIceN : uIceS;
+          float cap = smoothstep(capLo, capLo + 0.04, abs(lat) + n * 0.04 + c1.x * 0.02);
+          col = mix(col, vec3(0.74, 0.72, 0.7), cap);
         } else if (uStyle < 2.5) {     // ocean world / Earth: coasts, mountains, forest, desert, ice
-          land = smoothstep(0.02, 0.06, n);
+          land = smoothstep(0.02 + uSeaShift, 0.06 + uSeaShift, n);
           float mtn = ridged(q * 2.4 + 3.0) * smoothstep(0.06, 0.3, n);
           float depth = clamp(-n * 2.5, 0.0, 1.0);
           vec3 sea = mix(mix(vec3(0.012, 0.06, 0.09), base * 0.35, 0.3), vec3(0.004, 0.014, 0.05), smoothstep(0.0, 0.6, depth));
@@ -157,7 +189,8 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number, haze
           col = mix(sea, ground, land);
           h = land * (n * 0.4 + mtn * 0.8 + grain * 0.05);
           spec = 1.0 - land;
-          col = mix(col, vec3(0.62, 0.65, 0.68), smoothstep(0.76, 0.86, abs(lat) + n * 0.1 + mtn * 0.05));
+          float iceLo = lat > 0.0 ? uIceN : uIceS;
+          col = mix(col, vec3(0.62, 0.65, 0.68), smoothstep(iceLo - 0.05, iceLo + 0.05, abs(lat) + n * 0.1 + mtn * 0.05));
         } else if (uStyle < 3.5) {     // lava: dark crust over glowing rivers
           float c = abs(snoise(q * 3.0)) + 0.35 * abs(snoise(q * 9.0 + 2.0)) * aa;
           col = mix(base * 0.18, vec3(0.05, 0.035, 0.03), smoothstep(0.0, 0.2, c));
@@ -183,8 +216,12 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number, haze
           col *= 0.94 + 0.06 * fine;
           col = mix(col, col * vec3(1.06, 0.92, 0.8), smoothstep(0.3, 0.9, bands) * giant * 0.5);
           // one great storm per giant, and a scatter of small white ovals
-          float storm = 1.0 - smoothstep(0.06, 0.1, length(vec2(atan(p.z, p.x) * 0.25 - 0.4, (lat + 0.3) * 0.7)));
+          float sp = max(uSpot, 0.001);
+          float storm = (1.0 - smoothstep(0.06 * sp, 0.1 * sp, length(vec2((atan(p.z, p.x) * 0.25 - 0.4) / mix(1.0, 1.25, step(1.0, sp)), (lat + 0.3) * 0.7)))) * step(0.01, uSpot);
           col = mix(col, base * vec3(1.1, 0.68, 0.52), storm * (giant > 0.5 ? 0.8 : 0.4));
+          // a great white spot: a storm erupting from below, smeared along its band by the winds
+          float wb = exp(-pow((lat - uWhiteLat) / 0.05, 2.0)) * smoothstep(0.1, 0.6, fbm4(vec3(wq.x * 4.0, lat * 30.0, wq.z * 4.0) + 5.0) + 0.3);
+          col = mix(col, vec3(0.86, 0.84, 0.78), wb * uWhite);
           vec3 ov = q * vec3(5.0, 14.0, 5.0);
           float oval = smoothstep(0.45, 0.2, length(fract(ov) - 0.5)) * step(0.88, hash33(floor(ov)).x);
           col = mix(col, vec3(0.82, 0.8, 0.76), oval * 0.5);
@@ -193,6 +230,45 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number, haze
         // thick haze hides the terrain, leaving soft banding
         col = mix(col, base * (0.78 + 0.1 * n + 0.06 * sin(lat * 6.0)), uHaze * 0.85);
         h *= 1.0 - uHaze * 0.9;
+        if (uLakes > 0.0) {
+          // Titan: methane seas near the poles (most in the north: Kraken, Ligeia, Punga Mare), seen through the haze; summer clouds
+          float north = step(0.0, lat);
+          float lakes = smoothstep(0.74, 0.86, abs(lat) + fbm4(q * 3.0 + 4.0) * 0.18) * mix(0.35, 1.0, north);
+          col = mix(col, vec3(0.06, 0.055, 0.05), lakes * uLakes * 0.75);
+          spec = max(spec, lakes * uLakes * 0.6);
+          float summer = smoothstep(0.4, 0.9, lat * uSeason) * smoothstep(0.1, 0.5, fbm4(q * 4.0 + uTime * 0.003));
+          col = mix(col, vec3(0.9, 0.82, 0.62), summer * 0.35 * uLakes);
+        }
+        // a dust storm: the surface vanishes under a warm, flat haze
+        if (uDust > 0.0) {
+          vec3 dustCol = vec3(0.6, 0.38, 0.22) * (0.9 + 0.2 * fbm4(q * 2.0 + uTime * 0.01));
+          col = mix(col, dustCol, uDust * 0.88);
+          h *= 1.0 - uDust * 0.85;
+        }
+        // scars: fresh craters (dark floors, bright rims and rays), lava fields (glowing while fresh), dark impact scars on giants
+        for (int i = 0; i < ${MAX_SCARS_DRAWN}; i++) {
+          if (i >= uScarN) break;
+          vec4 sc = uScars[i]; vec2 sk = uScarK[i];
+          float d = acos(clamp(dot(p, sc.xyz), -1.0, 1.0)) / max(sc.w, 1e-4);
+          if (d > 3.0) continue;
+          float amp = sk.y;
+          if (sk.x < 0.5) {
+            float rays = pow(max(0.0, snoise(vec3(atan(dot(p, cross(sc.xyz, vec3(0.0, 1.0, 0.0))), dot(p, vec3(0.0, 1.0, 0.0))) * 9.0, d, sc.w * 50.0))), 2.0);
+            float floor_ = 1.0 - smoothstep(0.7, 1.0, d), rim = exp(-pow((d - 1.0) * 5.0, 2.0)), ejecta = (1.0 - smoothstep(1.0, 3.0, d)) * step(1.0, d) * (0.4 + rays);
+            col = mix(col, col * 0.45, floor_ * amp);
+            col = mix(col, min(col * 1.9 + 0.06, vec3(0.85)), (rim * 0.7 + ejecta * 0.35) * amp);
+            h += (rim * 0.5 - floor_ * 0.4) * amp;
+          } else if (sk.x < 1.5) {
+            float flow = (1.0 - smoothstep(0.6, 1.0, d + fbm4(p * 40.0 + sc.xyz * 9.0) * 0.35));
+            col = mix(col, vec3(0.05, 0.035, 0.03), flow * min(1.0, amp * 1.5));
+            float cracks = smoothstep(0.7, 0.95, 1.0 - abs(snoise(p * 90.0 + sc.xyz * 7.0)));
+            emit += vec3(1.0, 0.3, 0.05) * flow * (0.25 + 0.75 * cracks) * smoothstep(0.3, 1.0, amp) * 0.7;
+          } else {
+            float blot = 1.0 - smoothstep(0.55, 1.0, d + snoise(p * 25.0 + sc.xyz * 3.0) * 0.2);
+            float halo = exp(-pow((d - 1.2) * 3.0, 2.0)) * 0.5;
+            col = mix(col, vec3(0.09, 0.06, 0.05), (blot + halo) * amp * 0.85);
+          }
+        }
         // terraforming, on solid worlds only: seas fill the low ground, then plants, then weather
         float tf = (uStyle < 1.5 || (uStyle > 3.5 && uStyle < 4.5)) ? uTerra : 0.0;
         float wet = 0.0;
@@ -220,7 +296,7 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number, haze
           float tracks = 0.16 * cos(lat * 9.5) + 0.08 * cos(lat * 3.0); // tropics, storm belts, dry subtropics
           cl = smoothstep(0.02, 0.5, c0 + tracks - 0.06);
           cl *= 0.7 + 0.3 * smoothstep(-0.4, 0.5, snoise(cq * 9.0 + w * 2.0) * aa + 0.3);
-          cl *= cloudAmt * 0.92;
+          cl *= cloudAmt * 0.92 * uCloud;
         }
 
         vec3 Ng = normalize(vNormal);
@@ -234,6 +310,8 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number, haze
         float airy = uStyle > 0.5 && uStyle < 2.5 ? 1.0 : uStyle > 4.5 ? 0.7 : 0.0;
         airy = max(max(airy, uHaze), smoothstep(0.03, 0.45, tf));
         vec3 sunCol = mix(vec3(1.0), mix(vec3(1.0, 0.5, 0.28), vec3(1.0), smoothstep(0.02, 0.38, dG)), airy * (uStyle > 1.5 && uStyle < 2.5 ? 1.0 : 0.6));
+        // a volcanic or impact winter: the sunlight comes through dimmer and redder
+        sunCol *= mix(vec3(1.0), vec3(0.95, 0.74, 0.55), uAero) * (1.0 - 0.3 * uAero);
         // linear light: a sunlit white surface lands near 0.8, so the tone curve keeps its colour
         vec3 lit = col * sunCol * (0.008 + 0.8 * diff);
         vec3 H = normalize(uSun + vView);
@@ -243,6 +321,8 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number, haze
         // clouds over the top, lit by the smooth sphere, a little brighter at the edge of the day
         vec3 cloudLit = vec3(0.82) * sunCol * (0.01 + 0.82 * max(dG, 0.0) * lightOn + 0.06 * lightOn * (1.0 - mu));
         lit = mix(lit, cloudLit, cl);
+        // the haze itself: a pale veil over the day side
+        lit = mix(lit, vec3(0.55, 0.5, 0.45) * sunCol * (0.02 + 0.6 * max(dG, 0.0)) * lightOn, uAero * 0.4);
 
         // night lights: they grow from the settlements the sim placed (cores, suburbs, roads between neighbours)
         float night = smoothstep(0.04, -0.16, dG);
@@ -310,10 +390,18 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number, haze
         // cloud decks soften and dim the lights beneath them
         lit += lights * 0.85 * (1.0 - dark) * stutter * night * on * (1.0 - cl * 0.7);
         lit += emit * (1.0 - cl);
+        // aurora: ovals around the magnetic poles, on the night side
+        if (uAurora > 0.0) {
+          float giantA = uStyle > 4.5 ? 1.0 : 0.0;
+          float ring = exp(-pow((abs(lat) - mix(0.91, 0.96, giantA)) / 0.035, 2.0));
+          float curtain = 0.55 + 0.45 * snoise(vec3(atan(p.z, p.x) * 6.0, lat * 20.0, uTime * 0.25 * uFlicker));
+          lit += mix(vec3(0.18, 0.95, 0.45), vec3(0.65, 0.4, 1.0), giantA) * ring * curtain * uAurora * 0.32 * (0.25 + 0.75 * night);
+        }
 
         // limb: sunlit air scatters blue (or the world's own tint) and goes rose at the terminator
         float rim = pow(1.0 - mu, 3.0);
         vec3 atm = uStyle == 2.0 ? vec3(0.3, 0.55, 1.0) : (uStyle == 1.0 ? vec3(0.85, 0.55, 0.42) : base);
+        atm = mix(atm, vec3(0.9, 0.55, 0.3), uDust);
         atm = mix(atm, mix(base, vec3(0.55, 0.68, 0.9), 0.4), uHaze); // a hazy moon's high haze scatters blue at the limb
         float thick = smoothstep(0.03, 0.45, tf);
         atm = mix(atm, vec3(0.32, 0.58, 1.0), thick);
@@ -321,6 +409,7 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number, haze
         vec3 atmLit = mix(vec3(1.0, 0.45, 0.25) * 0.8, atm, smoothstep(-0.05, 0.4, dG));
         float airAmt = uStyle == 2.0 ? 0.45 : uStyle == 1.0 ? 0.16 : uStyle > 4.5 ? 0.3 : (uHaze > 0.0 ? 0.32 : 0.0);
         airAmt = mix(airAmt, 0.5, thick);
+        airAmt = max(airAmt, 0.4 * uDust + 0.25 * uAero);
         // aerial perspective: the far edge of the disc fades into its own sky
         lit = mix(lit, atmLit * dayAir * 0.55, rim * airAmt * 0.8);
         lit += atmLit * rim * dayAir * airAmt * 0.35;
@@ -329,6 +418,16 @@ export function planetMaterial(kind: BodyKind, color: number, seed: number, haze
         gl_FragColor = vec4(lit, 1.0);
       }`,
   });
+}
+
+/** Draw up to MAX_SCARS_DRAWN scars: unit directions in the body's frame, angular radius (radians), kind and strength. */
+export function setScars(mat: THREE.ShaderMaterial, scars: { x: number; y: number; z: number; rad: number; kind: number; amp: number }[]): void {
+  const u = mat.uniforms;
+  if (!u.uScars) return;
+  const S = u.uScars.value as THREE.Vector4[], K = u.uScarK.value as THREE.Vector2[];
+  const n = Math.min(scars.length, MAX_SCARS_DRAWN);
+  for (let i = 0; i < n; i++) { const s = scars[i]; S[i].set(s.x, s.y, s.z, s.rad); K[i].set(s.kind, s.amp); }
+  u.uScarN.value = n;
 }
 
 /** Point a planet's night lights at its settlements: unit directions in the body's frame, sizes 0..1. */

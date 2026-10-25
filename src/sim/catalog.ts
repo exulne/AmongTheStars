@@ -318,6 +318,27 @@ export const EVENT_NAMES = [
   'AI schism', 'Megastructure complete', 'Ship launched', 'Ship arrived', 'Invention', 'No-go theorem',
   // history that remembers (civ.ts)
   'Schism', 'Faith extinct', 'Faith spreads', 'Treaty', 'Kinetic strike', 'Regime change',
+  // crewed missions inside a star system (launchEconomics.ts): body = origin, a = destination (lost: body = destination, a = origin), b = mission id
+  'Mission launched', 'Mission lost',
+  // living worlds (geo.ts). Asteroid strike: a = share killed, b = impactor size (m); Solar storm: a = share killed;
+  // Supernova / Gamma-ray burst: a = settlements hit, b = radius (ly). New ones below: body = the world.
+  'Airburst',               // a = size (m), b = share of the place's people killed
+  'Impact winter',          // a = impactor size (km), b = peak cooling (K)
+  'Eruption',               // a = VEI (0: a lava flood or cryovolcano), b = peak cooling (K)
+  'Supereruption',          // a = 8, b = peak cooling (K)
+  'Great earthquake',       // a = magnitude (Mw), b = share killed
+  'Solar superstorm',       // a = settlements hit, b = share of capital lost (body: the star's busiest world)
+  'Dust storm',             // a = peak optical depth, b = duration (years)
+  'Io outburst',            // a = share killed
+  'Plume surge',            // a = tonnes of water gained
+  'Jupiter impact',         // a = number of fragments
+  'Comet return',           // a = 0 Halley, 1 Swift–Tuttle; b = closest approach to Earth (AU)
+  'Red Spot fades',
+  'Naked-eye supernova',    // a = distance (ly)
+  'Impact averted',         // a = size (m)
+  'Sunshade raised',        // b = Earth's warming then (K over pre-industrial)
+  'Terraforming milestone', // a = 1 the air holds, 2 open seas, 3 breathable
+  'Seas rise',              // a = metres above 2040
 ] as const;
 export type EventName = typeof EVENT_NAMES[number];
 export const EV = Object.fromEntries(EVENT_NAMES.map((n, i) => [n, i])) as Record<EventName, number>;

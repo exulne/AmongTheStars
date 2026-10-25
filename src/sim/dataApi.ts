@@ -7,6 +7,7 @@ import { isAlive } from './catalog.ts';
 import { FC, HG, NFC } from './civ.ts';
 import { Engine, type SimState } from './engine.ts';
 import { F, NF } from './metrics.ts';
+import { NMC } from './launchEconomics.ts';
 import { compile, placeBinder, QueryError, type PlaceRow } from './query.ts';
 import type { World } from './world.ts';
 
@@ -20,7 +21,11 @@ export type DataReq =
   | { type: 'groups'; id: number; by: GroupBy; of?: string; stride: number; top: number; focus?: number }
   | { type: 'faiths'; id: number }
   /** every field of up to a few places at every stride-th step */
-  | { type: 'place'; id: number; bodies: number[]; stride: number };
+  | { type: 'place'; id: number; bodies: number[]; stride: number }
+  /** mission economics records launched up to a year (launchEconomics.ts MC columns) */
+  | { type: 'missions'; id: number; year: number }
+  /** one mission's record by its id (the ship's flow id, or a crewed mission's) */
+  | { type: 'mission'; id: number; mission: number };
 
 export type DataRes =
   | { type: 'table'; id: number; step: number; year: number; bodies: Int32Array; rows: Float64Array }
@@ -32,7 +37,10 @@ export type DataRes =
   /** every faith by number: its name and where it was founded (body -1: the faiths of Earth) */
   | { type: 'faiths'; id: number; pending?: boolean; faiths: { n: number; name: string; body: number; year: number }[] }
   /** rows[(i * bodies.length + j) * NF + f]: field f of bodies[j] at steps[i] (NaN before it was settled) */
-  | { type: 'place'; id: number; pending?: boolean; bodies: number[]; steps: Int32Array; rows: Float64Array };
+  | { type: 'place'; id: number; pending?: boolean; bodies: number[]; steps: Int32Array; rows: Float64Array }
+  /** rows[i * NMC + c]: column c of mission i, launch order; the run's seed and the assumption scenario it was priced with */
+  | { type: 'missions'; id: number; seed: number; scenario: string; done: boolean; rows: Float64Array }
+  | { type: 'mission'; id: number; row: Float64Array | null };
 
 export type PlaceRes = Extract<DataRes, { type: 'place' }>;
 export type GroupBy = 'faction' | 'culture' | 'system' | 'stage';
@@ -49,7 +57,7 @@ export interface DataEnv {
   minds?: (e: Engine) => void;
 }
 
-const DATA_TYPES = new Set(['table', 'scan', 'runinfo', 'groups', 'faiths', 'place']);
+const DATA_TYPES = new Set(['table', 'scan', 'runinfo', 'groups', 'faiths', 'place', 'missions', 'mission']);
 export function isDataReq(m: { type: string }): m is DataReq { return DATA_TYPES.has(m.type); }
 
 export const living = isAlive;
@@ -113,6 +121,14 @@ export function handleData(m: DataReq, env: DataEnv): void {
     if (!e) { env.post({ type: 'runinfo', id: m.id, seed: 0, done: false, feasible: [], costMult: [], wanderlust: 1, techDone: [] }); return; }
     env.post({ type: 'runinfo', id: m.id, seed: e.seed, done: e.done, feasible: Array.from(e.feasible), costMult: Array.from(e.techCostMult), wanderlust: e.wanderlust, techDone: Array.from(e.st.techDone) });
   } else if (m.type === 'groups') groups(m, env);
+  else if (m.type === 'missions') {
+    // a copy: asking never touches the engine's own log
+    const e = env.main(), rows = e ? e.missions.upTo(m.year) : new Float64Array(0);
+    env.post({ type: 'missions', id: m.id, seed: e?.seed ?? 0, scenario: e?.econ.scenario ?? 'baseline', done: !!e?.done, rows }, [rows.buffer]);
+  } else if (m.type === 'mission') {
+    const e = env.main(), i = e ? e.missions.row(m.mission) : -1;
+    env.post({ type: 'mission', id: m.id, row: i >= 0 ? e!.missions.rows.slice(i * NMC, i * NMC + NMC) : null });
+  }
   else if (m.type === 'place') {
     const bodies = m.bodies.slice(0, 8).filter((b) => b >= 0 && b < env.world.bodies.length), nb = bodies.length;
     const steps: number[] = [], chunks: Float64Array[] = [];

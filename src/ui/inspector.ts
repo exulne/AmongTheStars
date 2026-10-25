@@ -16,6 +16,7 @@ import { explainHtml, galaxyFactsHtml, starFactsHtml } from '../explain/card.ts'
 import { explain } from '../explain/registry.ts';
 import type { Annals } from '../sim/chronicle.ts';
 import { ageAt, humanityAnnalsHtml, polityAt, polityCardHtml, polityLink } from './annals.ts';
+import { climateHtml } from './climate.ts';
 
 type Residents = { total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] };
 type SocietyView = { polity: { id: number; name: string; regime: string; since: number } | null; government: string; governmentWhy: string; language: string; faith: string | null; art: string; architecture: { name: string; materials: string }; daily: Record<string, string>; mood: string; sentences: string[] };
@@ -109,6 +110,8 @@ export class Inspector {
       <dl class="kv">${soc.polity && this.ann?.polities[soc.polity.id] ? `<dt>Ruled by</dt><dd>${polityLink(this.ann, soc.polity.id, true)}</dd>` : ''}<dt>Government</dt><dd>${esc(soc.government)}</dd><dt>Language</dt><dd>${esc(soc.language)}</dd>${soc.faith ? `<dt>Faith</dt><dd>${esc(soc.faith)}</dd>` : ''}<dt>Art</dt><dd>${esc(soc.art)}</dd><dt>Buildings</dt><dd>${esc(soc.architecture.materials)}</dd><dt>Mood</dt><dd>${esc(soc.mood)}</dd></dl>`;
   }
   onYear: (y: number) => void = () => {};
+  /** open a mission's launch economics in the data desk */
+  onMission: (id: number) => void = () => {};
 
   private inventions(): Map<number, Entry | null> | null {
     if (!this.inv) this.fetch('inventions', () => this.api!.inventions(), (v: { list: { tech: number; entry: Entry | null }[] }) => { this.inv = new Map(v.list.map((x) => [x.tech, x.entry])); });
@@ -180,6 +183,7 @@ export class Inspector {
       if (act === 'polity') { this.polityOpen = id; this.personId = null; this.toTop(); this.render(this.last); }
       if (act === 'close-polity') { this.polityOpen = null; this.render(this.last); }
       if (act === 'year') this.onYear(Number(t.dataset.id));
+      if (act === 'mission') this.onMission(id);
       if (act === 'goto-body') { this.openPerson(null); this.onSelect({ kind: 'body', id, name: this.last.world.bodies[id].name, pos: null! }); }
     });
     this.el.addEventListener('change', (e) => {
@@ -254,7 +258,10 @@ export class Inspector {
       if (name === 'Era change') what = `${ERAS[e.b]} → ${ERAS[e.a]}`;
       if (name === 'Colony founded' && e.b === 1) what += ' (interstellar)';
       if (name === 'Stage up') what += ` → ${STAGE_NAMES[e.a]}`;
-      return `<li><span class="num ev-year">${fmtYear(e.year)}</span> <span class="ev-name">${esc(name)}</span> <span class="muted">${esc(what)}</span></li>`;
+      if (name === 'Mission launched' || name === 'Ship launched') what += ` → ${c.world.bodies[e.a]?.name ?? ''}`;
+      if (name === 'Mission lost') what += ` (from ${c.world.bodies[e.a]?.name ?? ''})`;
+      const costs = name === 'Mission launched' || name === 'Ship launched' ? ` <button class="link" type="button" data-act="mission" data-id="${e.b}" title="This mission's launch economics">costs</button>` : '';
+      return `<li><span class="num ev-year">${fmtYear(e.year)}</span> <span class="ev-name">${esc(name)}</span> <span class="muted">${esc(what)}</span>${costs}</li>`;
     }).join('')}</ol>`;
   }
 
@@ -383,8 +390,9 @@ export class Inspector {
       ['Habitability', b.hab.toFixed(2)], ['Starlight', `${b.flux.toPrecision(2)}× Earth`],
     ]);
     const res = `<div class="bars">${RES_NAMES.map((r, k) => `<div class="bar"><span>${r === 'he3' ? 'helium-3' : r}</span><i style="--v:${b.res[k]}"></i></div>`).join('')}</div>`;
+    const climate = climateHtml(c, id);
     if (!alive(st)) {
-      return `${header}${fly}<h3>History</h3>${this.chronicle(c, id)}<h3>World</h3>${phys}<h3>Resources</h3>${res}<h3>Events here</h3>${this.eventsList(c, 8)}`;
+      return `${header}${fly}<h3>History</h3>${this.chronicle(c, id)}<h3>World</h3>${phys}${climate}<h3>Resources</h3>${res}<h3>Events here</h3>${this.eventsList(c, 8)}`;
     }
     const factionId = v('faction');
     const faction = factionId === id ? 'Independent' : `Loyal to ${c.world.bodies[factionId] ? names.place(c.world, factionId) : '?'}`;
@@ -404,6 +412,7 @@ export class Inspector {
       <h3>Residents</h3>${this.people(c, id, cityPop, offset)}
       <h3>All metrics</h3>${this.kv(metrics)}
       <h3>World</h3>${phys}
+      ${climate}
       <h3>Resources</h3>${res}
       <h3>History</h3>${this.chronicle(c, id)}
       <h3>Events here</h3>${this.eventsList(c, 10)}`;

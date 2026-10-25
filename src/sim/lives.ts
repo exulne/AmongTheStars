@@ -40,6 +40,8 @@ const MORTAL: Record<number, string> = {
   [EV.Famine]: 'the famine', [EV.War]: 'the war', [EV['Gamma-ray burst']]: 'the gamma-ray burst', [EV.Supernova]: 'the supernova',
   [EV['Dark forest strike']]: 'the strike from the dark', [EV['Reactor accident']]: 'a reactor accident', [EV.Collapse]: 'the collapse',
   [EV['Solar storm']]: 'a solar storm',
+  [EV.Airburst]: 'the airburst', [EV['Impact winter']]: 'the impact winter', [EV.Eruption]: 'the eruption', [EV.Supereruption]: 'the Long Winter',
+  [EV['Great earthquake']]: 'the earthquake and tsunami', [EV['Io outburst']]: 'the lava on Io',
   [EV['Kinetic strike']]: 'the kinetic strike',
 };
 

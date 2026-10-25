@@ -66,6 +66,8 @@ export class DataPanel {
   private nav: HTMLElement;
   private sub: HTMLElement;
   onClose: () => void = () => {};
+  /** open one mission in the launch-economics tab (set by installDataDesk) */
+  openMission: (id: number) => void = () => {};
   get hostApi(): DataHost { return this.host; }
   /** the shared filter: Places and Over time start from it */
   query = '';

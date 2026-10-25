@@ -28,6 +28,9 @@ import { explainBackground } from '../explain/universe.ts';
 import { explainBelt, type BeltInfo, explainElevators, explainOrbits, explainRings, explainSats, explainSwarm } from '../explain/worlds.ts';
 import { explainLocalRings } from '../explain/local.ts';
 import { explainWorks } from '../explain/orbitals.ts';
+import { explainComet, explainFeatures } from '../explain/geo.ts';
+import { applyGeo, features, type Feature } from './geoLook.ts';
+import { HALLEY, halleyPos } from '../sim/geo.ts';
 
 // 'multiverse' sits above the Local Group (src/view/multiverse.ts); person, cell, molecule and atom below the street (src/view/micro.ts)
 export type Level = 'multiverse' | 'universe' | 'galaxy' | 'local' | 'system' | 'planet' | 'street' | 'person' | 'cell' | 'molecule' | 'atom';
@@ -740,6 +743,10 @@ export class SystemView implements View {
   private edge = 60;
   private rings: { mesh: THREE.Mesh; body: number }[] = [];
   private belts = 0;
+  /** Halley's comet (the Sun's system only): head, tail, orbit, and its distance from the Sun now (AU) */
+  private comet: { head: THREE.Sprite; tail: THREE.Line; orbit: THREE.LineLoop; au: number; seed: number } | null = null;
+  /** planets' (AU, scene radius), to place anything else on the same squeezed scale */
+  private scale: [number, number][] = [];
 
   enter(ctx: Ctx): void {
     this.build(ctx);
@@ -800,6 +807,65 @@ export class SystemView implements View {
     this.trails.addTo(this.group);
     this.trails.explain('shipy');
     explainWorks('starw', this.group, () => this.star.children, () => ({ body: -1, sys: this.builtFor }), 1);
+    this.scale = planets.map((b) => [b.a, this.vis.find((v) => v.id === b.id)!.orbitR] as [number, number]);
+    this.comet = null;
+    if (sys.id === 0) this.addComet(ctx);
+  }
+
+  /** Scene radius for a distance from the star in AU, on the same squeezed scale as the planets' orbits. */
+  private auToR(au: number): number {
+    const S = this.scale;
+    if (!S.length) return au * 10;
+    if (au <= S[0][0]) return S[0][1] * au / S[0][0];
+    for (let i = 1; i < S.length; i++) if (au <= S[i][0]) { const [a0, r0] = S[i - 1], [a1, r1] = S[i]; return r0 + (r1 - r0) * Math.log(au / a0) / Math.log(a1 / a0); }
+    const [a0, r0] = S[S.length - 2], [a1, r1] = S[S.length - 1];
+    return r1 + (r1 - r0) * Math.log(au / a1) / Math.log(a1 / a0);
+  }
+  /** Heliocentric ecliptic AU → scene, radially squeezed. */
+  private auToScene(x: number, y: number, z: number, out: THREE.Vector3): THREE.Vector3 {
+    const r = Math.hypot(x, y, z) || 1e-9, k = this.auToR(r) / r;
+    return out.set(x * k, z * k, -y * k);
+  }
+
+  private addComet(ctx: Ctx): void {
+    const seed = ctx.snap?.geo?.seed ?? 1;
+    // the orbit: an ellipse sampled evenly in true anomaly, so the hairpin at perihelion stays smooth
+    const { a, e } = HALLEY, pts: THREE.Vector3[] = [];
+    const w = HALLEY.peri * Math.PI / 180, O = HALLEY.node * Math.PI / 180, inc = HALLEY.i * Math.PI / 180;
+    for (let k = 0; k < 360; k++) {
+      const nu = -Math.PI + (k / 360) * Math.PI * 2, rr = a * (1 - e * e) / (1 + e * Math.cos(nu)), xv = rr * Math.cos(nu), yv = rr * Math.sin(nu);
+      const x = xv * (Math.cos(w) * Math.cos(O) - Math.sin(w) * Math.sin(O) * Math.cos(inc)) - yv * (Math.sin(w) * Math.cos(O) + Math.cos(w) * Math.sin(O) * Math.cos(inc));
+      const y = xv * (Math.cos(w) * Math.sin(O) + Math.sin(w) * Math.cos(O) * Math.cos(inc)) - yv * (Math.sin(w) * Math.sin(O) - Math.cos(w) * Math.cos(O) * Math.cos(inc));
+      const z = xv * Math.sin(w) * Math.sin(inc) + yv * Math.cos(w) * Math.sin(inc);
+      pts.push(this.auToScene(x, y, z, new THREE.Vector3()));
+    }
+    const orbit = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x9fc4e8, transparent: true, opacity: 0.12, depthWrite: false }));
+    const head = glowSprite(0xdfefff, 1.6, 0.9);
+    const tg = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(1, 0, 0)]);
+    tg.setAttribute('color', new THREE.Float32BufferAttribute([0.75, 0.85, 1, 0.02, 0.03, 0.05], 3));
+    const tail = new THREE.Line(tg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
+    this.group.add(orbit, head, tail);
+    this.comet = { head, tail, orbit, au: 0, seed };
+    explainComet('comet', head, (out) => (this.comet ? out.copy(this.comet.head.position) : null), () => this.comet?.au ?? 0);
+  }
+
+  private moveComet(year: number): void {
+    const c = this.comet;
+    if (!c) return;
+    const [x, y, z] = halleyPos(c.seed, 2040 + year), r = Math.hypot(x, y, z);
+    c.au = r;
+    const p = this.auToScene(x, y, z, c.head.position);
+    // brighter and bigger near the Sun; the tail grows and points away from it
+    const glow = Math.min(1, 1.5 / Math.max(0.5, r));
+    c.head.scale.setScalar(0.6 + 1.6 * glow);
+    (c.head.material as THREE.SpriteMaterial).opacity = 0.25 + 0.7 * glow;
+    const L = r < 6 ? Math.min(14, 7 / Math.max(0.5, r)) : 0;
+    const arr = c.tail.geometry.attributes.position.array as Float32Array;
+    tv3.copy(p).normalize().multiplyScalar(L).add(p);
+    arr[0] = p.x; arr[1] = p.y; arr[2] = p.z; arr[3] = tv3.x; arr[4] = tv3.y; arr[5] = tv3.z;
+    c.tail.geometry.attributes.position.needsUpdate = true;
+    c.tail.geometry.computeBoundingSphere();
+    c.tail.visible = L > 0;
   }
 
   private addBelt(world: World, R: number, seed: number, info: Omit<BeltInfo, 'centreR' | 'width'>, n = 1600, width = 2.2): void {
@@ -851,7 +917,9 @@ export class SystemView implements View {
       } else m.opacity = st === STAGE.SURVEY ? 0.15 : 0;
       applyPlanetLook(v.mesh, ctx.snap, v.id, ctx.year, alive(st) ? cityLights(popOf(ctx.snap, v.id)) : 0);
       lightCities(v.mesh.material as THREE.ShaderMaterial, v.id, st, popOf(ctx.snap, v.id));
+      applyGeo(v.mesh.material as THREE.ShaderMaterial, ctx.world, ctx.snap, v.id, ctx.year);
     }
+    if (this.comet && ctx.snap?.geo) this.comet.seed = ctx.snap.geo.seed;
     // Dyson swarm: shimmer of collectors around a star with a megastructure
     if (mega && !this.swarm) {
       const n = 9000, r = new Rng(ctx.system);
@@ -890,6 +958,7 @@ export class SystemView implements View {
     }
     if (this.swarm) this.swarm.pts.rotation.y = ctx.tm * 0.03;
     this.works.frame(ctx.tm, REDUCED_MOTION);
+    this.moveComet(yr);
     this.drawShips(ctx);
   }
 
@@ -983,6 +1052,9 @@ export class PlanetView implements View {
   private cityKey = ''; private satKey = -1; private elevKey = -1; private archKey = '';
   private arch: THREE.InstancedMesh | null = null;
   private prings: { mesh: THREE.Mesh; body: number }[] = [];
+  /** surface features worth a card (polar caps, scars, storms, lakes, plumes), and the date they were drawn for */
+  private feats: Feature[] = [];
+  private geoYear = NaN;
 
   enter(ctx: Ctx): void {
     this.build(ctx);
@@ -1042,6 +1114,22 @@ export class PlanetView implements View {
     explainWorks('work', this.group, () => this.works.works, () => ({ body: this.builtFor, sys: ctx.world.bodies[this.builtFor].system }));
     this.cities = null; this.works.reset(); this.sats = null; this.elevators = [];
     this.cityKey = ''; this.satKey = -1; this.elevKey = -1; this.archKey = ''; this.arch = null;
+    this.feats = []; this.geoYear = NaN;
+    const cam = ctx.camera, planet = this.planet;
+    explainFeatures('geof', planet, () => this.feats, () => this.builtFor, (i, out) => {
+      const ft = this.feats[i];
+      if (!ft) return null;
+      out.set(ft.x, ft.y, ft.z).normalize().multiplyScalar(10.05).applyMatrix4(planet.matrixWorld);
+      // only what faces the camera
+      return out.dot(tv2.copy(cam.position).sub(out)) > 0 ? out : null;
+    });
+  }
+
+  /** The world's physical state on its surface now: caps, seas, haze, storms, scars (living worlds). */
+  private geoLook(ctx: Ctx): void {
+    this.geoYear = ctx.year;
+    const now = applyGeo(this.planet.material as THREE.ShaderMaterial, ctx.world, ctx.snap, ctx.body, ctx.year);
+    this.feats = features(ctx.world, ctx.body, now);
   }
 
   sync(ctx: Ctx): void {
@@ -1050,6 +1138,7 @@ export class PlanetView implements View {
     const st = stageOf(ctx.snap, b), pop = popOf(ctx.snap, b);
     applyPlanetLook(this.planet, ctx.snap, b, ctx.year, alive(st) ? cityLights(pop) : 0);
     lightCities(this.planet.material as THREE.ShaderMaterial, b, st, pop);
+    this.geoLook(ctx);
     // the society's architecture (from the worker, when it has one): its colour, height, curves, crowding and glow
     const look = alive(st) ? societyLook(b) : null;
     applyCultureLights(this.planet, look);
@@ -1167,6 +1256,8 @@ export class PlanetView implements View {
   frame(ctx: Ctx): void {
     this.pivot.rotation.y = ctx.tm * 0.02;
     (this.planet.material as THREE.ShaderMaterial).uniforms.uTime.value = ctx.t;
+    // seasons turn as the slider moves (Mars's caps, storms), between the steps the state arrives at
+    if (!(Math.abs(ctx.year - this.geoYear) < 0.01)) this.geoLook(ctx);
     this.orbit.rotation.y = ctx.tm * 0.015;
     this.works.frame(ctx.tm);
     if (this.sats) this.sats.pts.rotation.y = ctx.tm * 0.05;
