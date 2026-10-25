@@ -31,6 +31,7 @@ import { EraBanner, eraRun, eraTitle } from './ui/eraBanner.ts';
 import { wayOfWarHtml } from './ui/wayOfWar.ts';
 import { EraMood } from './view/eraMood.ts';
 import { ShipConsole } from './ship/console.ts';
+import { Assistant } from './assistant/assistant.ts';
 import { Voyage } from './ship/voyage.ts';
 import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionCss, faithCss, stageLegend, type ColorMode } from './view/colorModes.ts';
 import { names as naming } from './ui/names.ts';
@@ -61,6 +62,7 @@ app.innerHTML = `
       <button id="reroll" class="link" type="button">Another future</button>
       <button id="chronicle" class="link" type="button">Chronicle</button>
       <button id="data" class="link" type="button" aria-pressed="false">Data</button>
+      <button id="ask" class="link" type="button" aria-pressed="false" title="Ask the ship computer anything, by voice or typing (backquote key: tap to type, hold to talk)">Ask</button>
       <button id="board" class="link" type="button" aria-pressed="false" title="Fly this future yourself: tell the ship where and when">Board the Starship</button>
       <span class="status num" aria-live="polite"></span>
     </div>
@@ -188,6 +190,7 @@ calendar.onChange = () => timeline.refresh();
 const ctx: Ctx = { world, snap: null, year: 0, camera, controls, system: 0, body: world.mars, selected: null, t: 0, tm: 0, colorBy: 'stage', city: 0 };
 let events: SimEvent[] = [];
 let history: HistoryMsg | null = null;
+let assistant: Assistant | null = null; // the GPT assistant, made once the ship console exists (below)
 const dataPanel = installDataDesk({
   app, scene: canvas, world, sim, ctx, view: () => views[level],
   selectBody: (b) => select(asPick({ kind: 'body', id: b })),
@@ -967,6 +970,7 @@ function refreshPanels(): void {
   const sel = ctx.selected, place = sel?.kind === 'body' ? sel.id : sel?.kind === 'city' || level === 'planet' || level === 'street' ? ctx.body : -1;
   calendar.place(ctx.snap, place, ctx.year, sim.years[sim.frontier] ?? 0);
   dataPanel.refresh();
+  assistant?.contextChanged();
 }
 
 charts.setSource((key): Series | null => {
@@ -1106,7 +1110,7 @@ help.setAttribute('aria-label', 'Keyboard shortcuts');
 help.hidden = true;
 help.innerHTML = `<h2>Keys</h2><dl>${([
   ['Space', 'play or pause'], ['← →', 'step through time (Shift: ten steps)'], ['/', 'search'], ['Enter', 'go into the selected thing'],
-  ['Backspace', 'up a level'], ['Esc', 'clear the selection'], ['?', 'this list'],
+  ['Backspace', 'up a level'], ['Esc', 'clear the selection'], ['`', 'ask the ship computer (hold to talk)'], ['?', 'this list'],
 ] as const).map(([k, v]) => `<dt><kbd>${k}</kbd></dt><dd>${v}</dd>`).join('')}</dl><p class="muted">Scroll into anything to enter it; scroll out past the edge to go up. Type a year into the year to jump there.</p><button class="link" type="button">Close</button>`;
 app.append(help);
 help.querySelector('button')!.addEventListener('click', () => { help.hidden = true; });
@@ -1271,13 +1275,7 @@ const shipConsole = new ShipConsole({
     search.onPick({ kind: 'body', id: b, name: world.bodies[b].name, sub: '' });
     return `${world.bodies[b].name}, ${world.systems[world.bodies[b].system].name}`;
   },
-  timeTravel(cal) {
-    const to = Math.max(0, Math.min(cal - 2040, sim.done ? 10000 : sim.years[sim.frontier]));
-    return new Promise((done) => {
-      const d = Math.abs(to - ctx.year);
-      chronoTrip = { from: ctx.year, to, t: 0, dur: reducedMotion ? 0.01 : 1.8 + 1.1 * Math.log10(1 + d), done: (y) => done(Math.round(2040 + y)) };
-    });
-  },
+  timeTravel: (cal) => timeTravel(cal - 2040).then((y) => Math.round(2040 + y)),
   status: placeLine,
   setView: (v) => voyage.setView(v),
   leave: () => board(false),
@@ -1294,6 +1292,70 @@ function board(on: boolean): void {
   if (on) shipConsole.open(); else shipConsole.close();
 }
 boardBtn.addEventListener('click', () => board(!voyage.boarded));
+
+/** Run the timeline to a sim year as a chrono trip; resolves with the year reached once its state has loaded. */
+function timeTravel(simYear: number): Promise<number> {
+  const to = Math.max(0, Math.min(simYear, sim.done ? 10000 : sim.years[sim.frontier]));
+  return new Promise((done) => {
+    const d = Math.abs(to - ctx.year);
+    chronoTrip = { from: ctx.year, to, t: 0, dur: reducedMotion ? 0.01 : 1.8 + 1.1 * Math.log10(1 + d), done };
+  });
+}
+
+// ------------------------------------------------------------------ the GPT assistant (src/assistant)
+
+/** The selection in words, for the assistant's context. */
+function selectionLine(): string {
+  const p = ctx.selected;
+  const who = inspector.personId ? `the life of ${(inspector.el.querySelector('h2')?.textContent ?? 'a person').trim()} is open` : '';
+  if (!p) return who;
+  const what = p.kind === 'body' ? `${naming.place(world, p.id)} (${world.bodies[p.id].kind} in the ${world.systems[world.bodies[p.id].system].name} system)`
+    : p.kind === 'system' ? `the ${world.systems[p.id].name} star system`
+    : p.kind === 'city' ? `${p.id === 0 ? 'the capital' : `settlement ${p.id}`} of ${naming.place(world, ctx.body)}`
+    : p.name || (p.kind === 'thing' && p.ex ? explainName(p.ex, p.id, exCtx()) : p.kind);
+  return who ? `${what}; ${who}` : what;
+}
+const askBtn = app.querySelector<HTMLButtonElement>('#ask')!;
+const tlSub = timeline.el.querySelector<HTMLElement>('.tl-sub');
+assistant = new Assistant({
+  world, sim,
+  year: () => ctx.year,
+  snap: () => ctx.snap,
+  level: () => level,
+  selection: selectionLine,
+  card: () => [...inspector.el.querySelectorAll<HTMLElement>(':scope > :not(.insp-grab):not(.insp-close)')].map((e) => e.innerText).join('\n').trim(),
+  eraLine: () => tlSub?.textContent ?? '',
+  boarded: () => voyage.boarded,
+  find,
+  place: (b) => naming.place(world, b),
+  goto: (h) => search.onPick(h),
+  openPerson: (pid) => { inspector.openPerson(pid); inspector.el.classList.add('open'); },
+  setYear: (y) => voyage.boarded ? timeTravel(y) : new Promise((done) => { timeline.set(Math.max(0, Math.min(y, sim.done ? 10000 : sim.years[sim.frontier])), true); arrived(ctx.year, done); }),
+  setLevel: (l) => { pull = null; if (l !== level) setLevel(l); return true; },
+  openData: (tab) => { if (!dataPanel.open) app.querySelector<HTMLButtonElement>('#data')!.click(); dataPanel.show(tab); return true; },
+  openChronicle: () => { if (!inspector.chronicleOpen) app.querySelector<HTMLButtonElement>('#chronicle')!.click(); },
+  starship: (a) => {
+    if (a === 'board' || a === 'leave') { if (voyage.boarded !== (a === 'board')) board(a === 'board'); return; }
+    if (!voyage.boarded) board(true);
+    shipConsole.setView(a);
+  },
+});
+{
+  const ai = assistant;
+  app.append(ai.el);
+  askBtn.addEventListener('click', () => ai.toggle());
+  new MutationObserver(() => askBtn.setAttribute('aria-pressed', String(ai.open))).observe(ai.el, { attributes: true, attributeFilter: ['hidden'] });
+  // aboard, the ship computer is the assistant's face: its log mirrors the conversation and its Talk opens the voice line
+  ai.redirect = () => { if (!voyage.boarded) return false; shipConsole.focus(); return true; };
+  ai.mirror = { line: (who, text, key) => { if (who === 'you' && !key) return; shipConsole.hear(who, text, key); }, live: (on) => shipConsole.setLive(on) };
+  ai.onTextAnswer = (t) => { if (voyage.boarded) shipConsole.speak(t); };
+  shipConsole.brain = {
+    ready: () => ai.available === 'ready',
+    live: () => ai.voice.live,
+    ask: (t) => ai.ask(t, false),
+    talk: () => { if (ai.voice.state === 'off') void ai.startVoice('handsfree'); else ai.voice.disconnect('Voice off.'); },
+  };
+}
 
 /** Light the hull from the star of the system or planet we're at, as the sim's camera sees it. */
 const lightDir = new THREE.Vector3();
@@ -1372,4 +1434,4 @@ function loop(now: number): void {
 }
 requestAnimationFrame(loop);
 
-if (import.meta.env.DEV) Object.assign(window, { __app: { ctx, views, setLevel, dive, select, timeline, camera, controls, micro, multiverse, enterPerson, street, inspector, sim, get level() { return level; }, get busy() { return busy; }, get flying() { return !!flight; } } });
+if (import.meta.env.DEV) Object.assign(window, { __app: { assistant, ctx, views, setLevel, dive, select, timeline, camera, controls, micro, multiverse, enterPerson, street, inspector, sim, get level() { return level; }, get busy() { return busy; }, get flying() { return !!flight; } } });
