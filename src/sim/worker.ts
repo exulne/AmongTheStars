@@ -6,6 +6,7 @@ import { EV } from './catalog.ts';
 import { Engine, type SimState } from './engine.ts';
 import { HIST_FIELDS, NGM } from './metrics.ts';
 import { Chronicle, type Annals, type Entry } from './chronicle.ts';
+import { buildTrends, type Trends } from './trends.ts';
 import { Lives, type Biography, type PersonBrief, type PickWant } from './lives.ts';
 import { SocietyModel, type Society } from './society.ts';
 import { buildWorld } from './world.ts';
@@ -39,6 +40,7 @@ export type ToWorker =
   | DataReq
   | { type: 'ship'; id: number; from: number; to: number; depart: number }
   | { type: 'annals'; id: number }
+  | { type: 'trends'; id: number }
   | { type: 'wayOfWar'; id: number; year: number; span: number };
 
 export type FromWorker =
@@ -61,6 +63,7 @@ export type FromWorker =
   | DataRes
   | { type: 'ship'; id: number; pending?: boolean; ship: ShipInfo | null }
   | { type: 'annals'; id: number; pending?: boolean; annals: Annals | null }
+  | { type: 'trends'; id: number; pending?: boolean; trends: Trends | null }
   | { type: 'wayOfWar'; id: number; way: WayOfWar };
 
 /** Wars begun in a span of years, and how they went. */
@@ -258,6 +261,9 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
   } else if (m.type === 'annals') {
     const ok = people() && chron;
     post({ type: 'annals', id: m.id, pending: !ok, annals: ok ? chron!.annals() : null });
+  } else if (m.type === 'trends') {
+    const t = main ? buildTrends(main) : null;
+    post({ type: 'trends', id: m.id, pending: !t, trends: t });
   } else if (m.type === 'inventions') {
     const ok = people() && chron;
     post({ type: 'inventions', id: m.id, pending: !ok, list: ok ? chron!.inventions() : [] });
