@@ -89,6 +89,17 @@ const gC = parseGoal('colonisation of mars', world) as { goal: Goal };
   eq('chainLabel', chainLabel(chainFrom([gA.goal, gB.goal], ['then'])), 'the first Dyson swarm and then a breathable Venus');
   eq('chainLabel and', chainLabel(chainFrom([gC.goal, gB.goal], ['and'])), 'the colonisation of Mars and a breathable Venus');
 }
+{
+  // the user's example: "First Dyson Sphere" ⏎ then "Colonise Andromeda" ⏎ — two tags, left to right
+  const sw = parseEvent('First Dyson Sphere', world), an = parseEvent('Colonise Andromeda', world);
+  if ('error' in sw || 'error' in an) fail(`tag chain: ${'error' in sw ? sw.error : ''}${'error' in an ? an.error : ''}`);
+  else {
+    const then = chainFrom([sw.goal, an.goal], ['then']), and = chainFrom([sw.goal, an.goal], ['and']);
+    eq('tags → stages', then.stages.map((s) => s.map(tagLabel)), [['First Dyson swarm'], ['First colony in Andromeda']]);
+    eq('tags & stage', and.stages.map((s) => s.map(tagLabel)), [['First Dyson swarm', 'First colony in Andromeda']]);
+    eq('tags label', chainLabel(then), 'the first Dyson swarm and then the first colony in Andromeda');
+  }
+}
 
 // ------------------------------------------------------------------ parseEvent: galaxies, typos, refusals, 2040
 
