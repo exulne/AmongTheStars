@@ -197,7 +197,7 @@ const dataPanel = installDataDesk({
   app, scene: canvas, world, sim, ctx, view: () => views[level],
   selectBody: (b) => select(asPick({ kind: 'body', id: b })),
   showSeries: (key) => { if (charts.el.hidden) chartsToggle.click(); charts.show(key); },
-  pickYear: (y) => timeline.set(y, true),
+  pickYear: (y) => seekTo(y),
 });
 
 // below the street: one person's body, cells, molecules, atoms; above the Local Group: every future
@@ -573,6 +573,16 @@ inspector.onLookCloser = (pid, bio) => enterPerson(pid, null, bio);
 inspector.onEnter = () => { if (ctx.selected) dive(ctx.selected); };
 inspector.onBio = () => { if (micro.pid) { inspector.openPerson(micro.pid); inspector.el.classList.add('open'); } };
 
+/** Seek to a year (and a world): a click may name a year not yet simulated. */
+function seekTo(y: number, b?: number): void {
+  // events past the simulated frontier can't be shown yet: park the year, go as far
+  // as we can, and the loop lands on the real year once it's simulated
+  const front = sim.done ? 10000 : (sim.years[sim.frontier] ?? 0);
+  if (y > front) pendingYear = y;
+  timeline.set(Math.min(y, front), true);
+  if (b != null) select(asPick({ kind: 'body', id: b }));
+}
+
 // pick one person and follow their whole life: a quiet panel off the header
 const lifePick = new LifePick({
   bodies: () => sim.birthPlaces(),
@@ -580,14 +590,7 @@ const lifePick = new LifePick({
   nameOf: (b) => naming.place(world, b),
   year: () => ctx.year,
   find: (b, n, k, y, w) => sim.findPerson(b, n, k, y, w),
-  seek: (y, b) => {
-    // events past the simulated frontier can't be shown yet: park the year, go as far
-    // as we can, and the loop lands on the real year once it's simulated
-    const front = sim.done ? 10000 : (sim.years[sim.frontier] ?? 0);
-    if (y > front) pendingYear = y;
-    timeline.set(Math.min(y, front), true);
-    if (b != null) select(asPick({ kind: 'body', id: b }));
-  },
+  seek: seekTo,
   open: (pid) => { inspector.openPerson(pid); inspector.el.classList.add('open'); startFollow(pid); },
 });
 app.append(lifePick.el);
@@ -1511,4 +1514,4 @@ function loop(now: number): void {
 }
 requestAnimationFrame(loop);
 
-if (import.meta.env.DEV) Object.assign(window, { __app: { ctx, views, setLevel, dive, select, timeline, camera, controls, micro, multiverse, enterPerson, street, inspector, sim, get level() { return level; }, get busy() { return busy; }, get flying() { return !!flight; } } });
+if (import.meta.env.DEV) Object.assign(window, { __app: { ctx, views, setLevel, dive, select, timeline, camera, controls, micro, multiverse, enterPerson, street, inspector, sim, get level() { return level; }, get busy() { return busy; }, get flying() { return !!flight; }, get following() { return following; }, get pull() { return pull; } } });
