@@ -78,7 +78,7 @@ export class LifePick {
     this.result = this.el.querySelector('.lp-result')!;
     this.el.querySelector('.lp-x')!.addEventListener('click', () => this.hide());
     this.el.querySelector('.lp-go')!.addEventListener('click', () => this.go(false));
-    this.el.querySelector('.lp-rand')!.addEventListener('click', () => this.go(true));
+    this.el.querySelector('.lp-rand')!.addEventListener('click', () => { this.clear(); this.go(true); });
     this.el.querySelector('.lp-clear')!.addEventListener('click', () => this.clear());
   }
 
@@ -147,28 +147,8 @@ export class LifePick {
     // 'anyone' means the user didn't choose — roll a kind per draw rather than fixing one
     const kind = this.val('.lp-kind') === 'any' ? 'random' : this.val('.lp-kind');
     const where = b >= 0 ? this.opts.nameOf(b) : null;
-    const base = this.want();
+    const want = this.want();
     const n = random ? 0 : Math.max(0, Math.floor(parseCount(this.nInput.value) || 0));
-    const pinned = b >= 0 && n > 0;
-    // a blank field is a random roll, not an assumed value — and a rolled spec that
-    // matches nobody just rerolls; only what the user submitted stays fixed
-    const roll = (): PickWant => {
-      const w: PickWant = { ...base };
-      if (pinned) return w;
-      const one = <T,>(arr: readonly T[]) => arr[Math.floor(Math.random() * arr.length)];
-      const randRange = (lo0: number, span: number, pad: number): [number, number] => { const lo = lo0 + Math.floor(Math.random() * span); return [lo, lo + pad + Math.floor(Math.random() * pad)]; };
-      w.sex ??= one(['f', 'm'] as const);
-      w.mood ??= one([...MOODS_GOOD, ...MOODS_BAD]);
-      w.health ??= one(HEALTH_OPTS.map((o) => o[0]));
-      w.education ??= one(EDU_OPTS);
-      w.devotion ??= one(DEVOTION_OPTS);
-      w.wealth ??= randRange(0, 80, 10);
-      w.age ??= randRange(0, 140, 40);
-      w.height ??= randRange(130, 55, 15);
-      w.moves ??= [0, Math.floor(Math.random() * 4)];
-      if (!w.born) { const Y = this.opts.year(); w.born = randRange(0, Math.max(1, Math.floor(Y * 0.9)), Math.max(40, Math.floor(Y * 0.05))); }
-      return w;
-    };
     this.say('Finding them…', seq);
     if (!this.bodiesReady) {
       const r = await this.opts.bodies();
@@ -177,15 +157,10 @@ export class LifePick {
       this.bodiesReady = r.bodies;
     }
     if (b >= 0 && !this.bodiesReady.includes(b)) { this.say(`Nobody has ever been born on ${esc(where!)}.`, seq); return; }
-    const filtered = Object.values(base).some((v) => v !== undefined);
-    let r: Awaited<ReturnType<LifePickOpts['find']>> | null = null, rolls = 0;
-    for (; rolls < 6; rolls++) {
-      const want = roll();
-      r = await this.opts.find(b, n, kind, this.opts.year(), Object.values(want).some((v) => v !== undefined) ? want : undefined);
-      if (seq !== this.seq) return;
-      if (r.pending || r.person || pinned) break;
-    }
-    if (!r || r.pending) { this.say('This future is still simulating; its people appear when it finishes.', seq); return; }
+    const filtered = Object.values(want).some((v) => v !== undefined);
+    const r = await this.opts.find(b, n, kind, this.opts.year(), filtered ? want : undefined);
+    if (seq !== this.seq) return;
+    if (r.pending) { this.say('This future is still simulating; its people appear when it finishes.', seq); return; }
     if (!r.person) {
       this.say(b < 0 ? `Nobody anywhere matches that${filtered ? ' — loosen a filter or two.' : '.'}`
         : !r.total ? `Nobody has ever been born on ${esc(where!)}.`
@@ -195,7 +170,35 @@ export class LifePick {
     }
     this.opts.open(r.person);
     const p = r.brief, st = r.standing;
+    if (p || st) this.showRoll(p ?? undefined, st ?? null);   // blank fields get filled by whoever was found
     const stats = st ? ` ${esc(st.class)}${st.devotion ? `, ${st.devotion}` : ''}, ${esc(st.mood)}.` : '';
     this.say(p ? `Following <b>${esc(p.name)}</b> — born on ${esc(where ?? p.place)} in ${fmtYear(p.born)}${p.born > this.opts.year() ? ', not yet born.' : p.alive ? `; ${Math.floor(p.age)}, ${esc(p.job)}${p.place && p.place !== where ? ` on ${esc(p.place)}` : ''}.${stats}` : ', now gone.'}` : 'Following them.', seq);
+  }
+
+  /** Writes the found person's traits into any control the user left blank — blank
+   *  means "rolled", so the dice's answer is shown, never a default value. */
+  private showRoll(p: PersonBrief | undefined, st: Biography['standing']): void {
+    const set = (cls: string, v: string | number) => { const el = this.get<HTMLInputElement | HTMLSelectElement>(cls); if (!el.value) el.value = String(v); };
+    const setSel = (cls: string, v: string) => { const el = this.get<HTMLSelectElement>(cls); if (el.selectedIndex <= 0 && [...el.options].some((o) => o.value === v)) el.value = v; };
+    const pbody = { 'baseline human': 'baseline', 'adapted to this world': 'adapted', uploaded: 'uploaded' }[p?.body ?? ''] as string | undefined;
+    if (pbody) setSel('.lp-kind', pbody);
+    if (p?.sex) setSel('.lp-sex', p.sex);
+    if (st) {
+      if (st.mood && [...MOODS_GOOD, ...MOODS_BAD].includes(st.mood)) setSel('.lp-mood', st.mood);
+      const hcat = st.health.includes('scarred') ? 'scarred' : st.health.startsWith('a mind') ? 'uploaded' : st.health.startsWith('engineered') ? 'engineered' : st.health === 'a chronic condition' ? 'chronic' : st.health;
+      setSel('.lp-health', hcat);
+      setSel('.lp-edu', st.education);
+      setSel('.lp-faith', st.devotion ?? 'none');
+      set('.lp-wealth-lo', Math.round(100 - st.wealthPct * 100));
+      set('.lp-wealth-hi', Math.round(100 - st.wealthPct * 100));
+      set('.lp-moves-lo', st.moves);
+      set('.lp-moves-hi', st.moves);
+    }
+    if (p) {
+      set('.lp-age-lo', Math.floor(p.age));
+      set('.lp-age-hi', Math.floor(p.age));
+      set('.lp-born-lo', 2040 + p.born);
+      set('.lp-born-hi', 2040 + p.born);
+    }
   }
 }
