@@ -84,6 +84,7 @@ export function biographyHtml(b: Biography | null, year: number, loading: boolea
     <dt>Education</dt><dd>${esc(s.education)}</dd>
     <dt>Health</dt><dd>${esc(s.health)}</dd>
     <dt>Mood</dt><dd>${esc(s.mood)}</dd>
+    <dt>Moves</dt><dd class="num">${s.moves === 0 ? 'never left home' : `${s.moves} relocation${s.moves === 1 ? '' : 's'}`}</dd>
     <dt>Speaks</dt><dd>${esc(s.language)}</dd>` : '';
   return `
     <p class="eyebrow muted">Person · ${esc(b.id)}</p>

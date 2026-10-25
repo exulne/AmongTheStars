@@ -93,6 +93,8 @@ export interface Biography extends PersonBrief {
     wealthPct: number;        // their place in the local wealth distribution, 0..1
     worth: number;            // indicative net worth in $, from local product and inequality
     class: string; education: string; health: string; mood: string; language: string; devotion: string | null;
+    /** relocations so far: every stay after the first, counting returns (Earth→Mars→Earth = 2) */
+    moves: number;
   } | null;
 }
 
@@ -102,6 +104,7 @@ export interface PickWant {
   wealth?: [number, number];
   age?: [number, number];
   height?: [number, number];
+  moves?: [number, number];  // relocations so far: 0 = born-and-stayed
   mood?: string;
   health?: string;        // healthy | scarred | frail | chronic | uploaded | engineered
   education?: string;
@@ -412,6 +415,12 @@ export class Lives {
     const h = this.heightOf(id, born);
     if (want.height && (h < want.height[0] || h > want.height[1])) return false;
     if (want.age && (age < want.age[0] || age > want.age[1])) return false;
+    // moves so far at ey: relocations before then — stays that started on or before its period
+    if (want.moves) {
+      const p = periodOf(ey);
+      const mv = life.filter((s, k) => k > 0 && s.from <= p).length;
+      if (mv < want.moves[0] || mv > want.moves[1]) return false;
+    }
     const stay = this.stayAt(life, ey);
     const at = this.home(stay?.body ?? id.b);
     const faith = this.faithAt?.(this.home(id.b), born, hash01(id.b, id.q, id.i, 71)) ?? null;
@@ -464,16 +473,35 @@ export class Lives {
     const eventBodies = wantsEvent
       ? bodies.filter((b) => (this.eventsBy.get(b) ?? []).some((ev) => ev.year <= year && ev.year > year - win))
       : [];
+    // movers are found where people move through: for moves ≥ 1, most draws come from the
+    // passenger lists of flows that already arrived — every member has moved at least once
+    const L = this.e.ledger!;
+    const pNow = periodOf(year);
+    const moverFlows = want?.moves && want.moves[0] >= 1 && L
+      ? (body >= 0 ? (L.inBy.get(body) ?? []) : L.flows.map((f, i) => i)).filter((i) => { const f = L.flows[i]; return !f.lost && f.pArrive <= pNow; })
+      : null;
+    const rider = (t: number): Id | null => {
+      const fid = moverFlows![Math.floor(hash01(this.e.seed, salt, t, 7) * moverFlows!.length)];
+      const ranges = this.D.flowMembers(fid);
+      const tot = ranges.reduce((a, r) => a + r.count, 0);
+      if (!tot) return null;
+      let j = Math.floor(hash01(this.e.seed, salt, t, 8) * tot);
+      const r = ranges.find((x) => (j < x.count ? true : ((j -= x.count), false)))!;
+      return this.D.origin(r.pool, r.start + j);
+    };
     let total = 0;
     const filtered = !!want && Object.values(want).some((v) => v !== undefined);
     const TRIES = filtered || kind === 'random' ? 500 : 120;
     const censuses = new Map<number, { total: number; at: (k: number) => Id }>();
     const birthsOf = new Map<number, number>();
     for (let t = 0; t < TRIES; t++) {
-      const pool = eventBodies.length && hash01(this.e.seed, salt, t, 9) < 0.7 ? eventBodies : bodies;
+      const biased = eventBodies;
+      const pool = biased.length && hash01(this.e.seed, salt, t, 9) < 0.7 ? biased : bodies;
       const b = pool.length === 1 ? pool[0] : pool[Math.floor(hash01(this.e.seed, salt, t, 1) * pool.length)];
       let id: Id | null;
-      if (filtered) {
+      if (moverFlows?.length && hash01(this.e.seed, salt, t, 9) >= 0.3) {
+        id = rider(t);
+      } else if (filtered) {
         // filters need someone assessable at the year: draw from the living census
         const p = Math.max(0, Math.min(this.D.lastPeriod, periodOf(year) - (year >= 5 ? 1 : 0)));
         let c = censuses.get(b);
@@ -604,7 +632,8 @@ export class Lives {
     const language = dr < 0.15 ? 'Earth languages' : dr < 0.4 ? `${this.coined(3, at, 0, 2)} creole` : dr < 0.7 ? `${this.coined(4, at, 0, 2)}, a daughter language of Earth's` : `${this.coined(5, at, 0, 2)}, unrelated to Earth's`;
     const ud = hash01(id.b, id.q, id.i, 84);
     const devotion = faith ? ud < 0.15 ? 'lapsed' : ud < 0.45 ? 'nominal' : ud < 0.8 ? 'observant' : 'devout' : null;
-    return { wealthPct: pct, worth, class: cls, education: this.education(job), health, mood, language, devotion };
+    const moves = Math.max(0, life.filter((s, k) => k > 0 && s.from <= periodOf(year)).length);
+    return { wealthPct: pct, worth, class: cls, education: this.education(job), health, mood, language, devotion, moves };
   }
 
   biography(idS: string, year: number): Biography | null {

@@ -61,6 +61,7 @@ export class LifePick {
       ${sel('lp-sex', 'Sex', [['', 'anyone'], ['f', 'a woman'], ['m', 'a man']])}
       ${range('lp-wealth', 'Wealth, top %', '0', '100')}
       ${range('lp-age', 'Age', '0', 'any')}
+      ${range('lp-moves', 'Moves', '0', 'any')}
       ${range('lp-height', 'Height, cm', 'short', 'tall')}
       ${sel('lp-mood', 'Mood', [['', 'any'], ...[...MOODS_GOOD, ...MOODS_BAD].map((m) => [m, m] as [string, string])])}
       ${sel('lp-health', 'Health', [['', 'any'], ...HEALTH_OPTS])}
@@ -116,10 +117,12 @@ export class LifePick {
     const loW = num('.lp-wealth-lo'), hiW = num('.lp-wealth-hi');
     const loA = num('.lp-age-lo'), hiA = num('.lp-age-hi');
     const loH = num('.lp-height-lo'), hiH = num('.lp-height-hi');
+    const loM = num('.lp-moves-lo'), hiM = num('.lp-moves-hi');
     const w: PickWant = {};
     if (loW !== undefined || hiW !== undefined) w.wealth = [Math.max(0, Math.min(100, 100 - (hiW ?? 100))), Math.max(0, Math.min(100, 100 - (loW ?? 0)))];
     if (loA !== undefined || hiA !== undefined) w.age = [loA ?? 0, hiA ?? 1e6];
     if (loH !== undefined || hiH !== undefined) w.height = [loH ?? 0, hiH ?? 1e6];
+    if (loM !== undefined || hiM !== undefined) w.moves = [loM ?? 0, hiM ?? 1e6];
     if (this.val('.lp-sex')) w.sex = this.val('.lp-sex') as 'f' | 'm';
     if (this.val('.lp-mood')) w.mood = this.val('.lp-mood');
     if (this.val('.lp-health')) w.health = this.val('.lp-health');
