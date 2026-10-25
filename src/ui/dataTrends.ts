@@ -301,7 +301,7 @@ export class TrendsTab implements DataTab {
     {
       const pts: string[] = [];
       if (a) {
-        const faiths = [...a.faiths].sort((x, y) => y.peakWorlds - x.peakWorlds).slice(0, 12).sort((x, y) => x.founded - y.founded);
+        const faiths = [...a.faiths].sort((x, y) => x.founded - y.founded).slice(0, 12);
         for (const f of faiths) {
           pts.push(this.pt(f.founded, f.home, `${esc(f.name)} founded on ${esc(this.name(f.home) || '?')}`));
           if (f.ended !== null) pts.push(this.pt(f.ended, -1, `${esc(f.name)} dies out`));
