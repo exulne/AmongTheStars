@@ -43,3 +43,11 @@
 @media (max-width: 40rem) {
   .paths { top: auto; bottom: calc(var(--bottom-h, 200px) + 8px); left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); width: auto; max-height: 46vh; }
 }
+
+/* the tag row: pills and joints read left to right; the row carries the underline */
+.paths .pf-tags { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: baseline; border-bottom: 1px solid var(--rule); padding-bottom: 0.15rem; }
+.paths .pf-tags input[type="text"] { flex: 1; min-width: 8em; border: 0; }
+.paths .pf-tag { display: inline-flex; align-items: baseline; gap: 0.3rem; border: 1px solid var(--rule); border-radius: 999px; padding: 0.05rem 0.45rem; font-size: 0.78rem; white-space: nowrap; }
+.paths .pf-tag-x { color: var(--quiet); font-size: 0.85rem; line-height: 1; padding: 0; }
+.paths .pf-tag-x:hover { color: var(--ink); }
+.paths .pf-joint { color: var(--accent); border: 0; background: none; font-size: 0.85rem; padding: 0 0.1rem; cursor: pointer; }

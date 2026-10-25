@@ -4,7 +4,7 @@
 
 import './paths.css';
 import { Pathfinder } from './pathfinder.ts';
-import { chainLabel, chainOf, compareFutures, countLine, lineageSeeds, narrateFuture, narrateOverview, parseEvent, shownFutures, type Chain, type FutureResult, type Step } from '../sim/milestones.ts';
+import { chainFrom, chainLabel, compareFutures, countLine, lineageSeeds, narrateFuture, narrateOverview, parseEvent, shownFutures, tagLabel, type Chain, type FutureResult, type Goal, type Joint, type Step } from '../sim/milestones.ts';
 import type { World } from '../sim/world.ts';
 import type { Voice } from '../ship/voice.ts';
 import type { OracleAgent } from '../ship/agent.ts';
@@ -41,6 +41,11 @@ export class FuturePaths {
   private oracleBtn: HTMLButtonElement;
   private agent: OracleAgent | null = null;
   private chain: Chain | null = null;
+  private tags: { goal: Goal; typed: string; notes?: string[] }[] = [];
+  private joints: Joint[] = [];
+  private tagsEl: HTMLElement;
+  /** the last searched row (goal ids + joints) — E5's extension check reads it */
+  lastRun: { ids: string[]; joints: Joint[] } | null = null;
   private results: FutureResult[] = [];
   private seq = 0;
   private tried = 0;
@@ -57,8 +62,8 @@ export class FuturePaths {
       <button class="pf-x link" type="button" aria-label="Close">×</button>
       <p class="pf-title">What leads to…?</p>
       <form class="pf-ask">
-        <input type="text" autocomplete="off" placeholder="A moment in time: colonisation of Mars…" aria-label="Name a moment in the timeline">
-        <button class="link pf-go" type="submit">Ask</button>
+        <div class="pf-tags" aria-label="Events, read left to right"><input type="text" autocomplete="off" placeholder="A moment in time: colonisation of Mars…" aria-label="Name a moment in the timeline"></div>
+        <button class="link pf-go" type="button">Ask</button>
         <button class="link pf-mic" type="button" aria-label="Ask out loud">Speak</button>
         <label class="pf-n">Futures to simulate <input type="number" min="1" max="100" step="1" aria-label="Futures to simulate"></label>
       </form>
@@ -72,7 +77,8 @@ export class FuturePaths {
       <p class="pf-status" aria-live="polite"></p>
       <div class="pf-cards"></div>
       <p class="pf-footer muted"></p>`;
-    this.input = this.el.querySelector('.pf-ask input')!;
+    this.input = this.el.querySelector('.pf-tags input')!;
+    this.tagsEl = this.el.querySelector('.pf-tags')!;
     this.statusEl = this.el.querySelector('.pf-status')!;
     this.footerEl = this.el.querySelector('.pf-footer')!;
     this.cardsEl = this.el.querySelector('.pf-cards')!;
@@ -85,8 +91,13 @@ export class FuturePaths {
     this.futuresEl.value = String(this.futures());
     this.futuresEl.addEventListener('change', () => this.readFutures());
 
-    this.el.querySelector('form')!.addEventListener('submit', (e) => { e.preventDefault(); const t = this.input.value; this.input.value = ''; void this.ask(t); });
-    this.el.querySelectorAll<HTMLButtonElement>('.pf-chips button').forEach((b) => b.addEventListener('click', () => void this.ask(b.textContent!)));
+    // Enter adds the box's text as a tag (or runs the row when the box is empty); Ask does both
+    this.el.querySelector('form')!.addEventListener('submit', (e) => { e.preventDefault(); if (this.input.value.trim()) this.addTag(this.input.value); else void this.run(); });
+    this.el.querySelector('.pf-go')!.addEventListener('click', () => { if (this.input.value.trim() && !this.addTag(this.input.value)) return; void this.run(); });
+    this.el.querySelectorAll<HTMLButtonElement>('.pf-chips button').forEach((b) => b.addEventListener('click', () => this.addTag(b.textContent!)));
+    this.input.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace' && !this.input.value && this.tags.length) { e.preventDefault(); this.removeTag(this.tags.length - 1); }
+    });
     this.el.querySelector('.pf-x')!.addEventListener('click', () => this.hide());
     this.micBtn.addEventListener('click', () => void this.listen());
     this.speakBox.addEventListener('change', () => opts.voice.setSpeak(this.speakBox.checked));
@@ -155,7 +166,7 @@ export class FuturePaths {
     this.micBtn.classList.add('on');
     try {
       const text = await v.listen(() => {});
-      if (text) { this.input.value = text; void this.ask(text); }
+      if (text && this.addTag(text)) void this.run();
       else this.status('Didn\'t hear anything.');
     } catch (e) { this.status((e as Error).message); }
     finally { this.micBtn.classList.remove('on'); }
@@ -165,28 +176,94 @@ export class FuturePaths {
    * Ask "what leads to X": parses the goal, simulates futures until six reach
    * it, streams the cards in. Resolves for the console/agent with the outcome.
    */
+  /** Parse the box text as one event; on success append it, clear the box and any message. */
+  private addTag(text: string): boolean {
+    const t = text.trim();
+    if (!t) return false;
+    const pr = parseEvent(t, this.opts.world);
+    if ('error' in pr) {
+      this.status(pr.error);
+      this.footerEl.innerHTML = pr.suggestions.length ? `Try: ${pr.suggestions.map((s) => `<button class="link pf-sug" type="button">${esc(s)}</button>`).join(' ')}` : '';
+      this.footerEl.querySelectorAll<HTMLButtonElement>('.pf-sug').forEach((b) => b.addEventListener('click', () => { this.input.value = b.textContent!; this.addTag(b.textContent!); }));
+      return false;
+    }
+    if (this.tags.length) this.joints.push('then');
+    this.tags.push({ goal: pr.goal, typed: t, notes: pr.notes });
+    this.input.value = '';
+    this.status('');
+    this.footerEl.textContent = '';
+    this.renderTags();
+    return true;
+  }
+
+  /** × (or Backspace) removes a tag and the joint on its left (on its right for the first). */
+  private removeTag(i: number): void {
+    this.tags.splice(i, 1);
+    this.joints.splice(i > 0 ? i - 1 : 0, 1);
+    this.renderTags();
+    this.input.focus();
+  }
+
+  /** Rebuild the tag row: pills and toggleable joints, left to right. */
+  private renderTags(): void {
+    this.tagsEl.querySelectorAll('.pf-tag, .pf-joint').forEach((el) => el.remove());
+    this.tags.forEach((tag, i) => {
+      if (i > 0) {
+        const j = document.createElement('button');
+        j.type = 'button';
+        j.className = 'pf-joint';
+        const and = this.joints[i - 1] === 'and';
+        j.textContent = and ? '&' : '→';
+        j.setAttribute('aria-label', and ? 'and (any order) — click for then' : 'then — click for and');
+        j.addEventListener('click', () => { this.joints[i - 1] = and ? 'then' : 'and'; this.renderTags(); });
+        this.tagsEl.insertBefore(j, this.input);
+      }
+      const span = document.createElement('span');
+      span.className = 'pf-tag';
+      const label = tagLabel(tag.goal);
+      span.title = [tag.goal.detail, `Typed: "${tag.typed}"`, ...(tag.notes ?? [])].join('\n');
+      span.innerHTML = `${esc(label)} <button type="button" class="pf-tag-x" aria-label="Remove ${esc(label)}">×</button>`;
+      span.querySelector('button')!.addEventListener('click', () => this.removeTag(i));
+      this.tagsEl.insertBefore(span, this.input);
+    });
+  }
+
+  /**
+   * Ask "what leads to X" through the console/Oracle: replaces the row with that
+   * one event and runs it. The typed row runs through run().
+   */
   ask(text: string): Promise<AskResult> {
-    const seq = ++this.seq;
     const pr = parseEvent(text, this.opts.world);
-    this.results = [];
-    this.tried = 0;
-    // a live Oracle conversation keeps its transcript; only cold asks clear it
-    if (!this.agent?.active) { this.transcriptEl.hidden = true; this.transcriptEl.innerHTML = ''; }
     if ('error' in pr) {
       this.chain = null;
       this.status(pr.error);
       this.footerEl.innerHTML = `Try: ${pr.suggestions.map((s) => `<button class="link pf-sug" type="button">${esc(s)}</button>`).join(' ')}`;
       this.cardsEl.innerHTML = '';
-      this.footerEl.querySelectorAll<HTMLButtonElement>('.pf-sug').forEach((b) => b.addEventListener('click', () => void this.ask(b.textContent!)));
+      this.footerEl.querySelectorAll<HTMLButtonElement>('.pf-sug').forEach((b) => b.addEventListener('click', () => { this.input.value = b.textContent!; this.addTag(b.textContent!); }));
       return Promise.resolve(pr);
     }
-    const chain = this.chain = chainOf(pr.goal);
+    this.tags = [{ goal: pr.goal, typed: text.trim(), notes: pr.notes }];
+    this.joints = [];
+    this.input.value = '';
+    this.renderTags();
+    return this.run();
+  }
+
+  /** Run the whole tag row as one chain, left to right. */
+  run(): Promise<AskResult> {
+    if (!this.tags.length) { this.status('Type an event and press Enter.'); return Promise.resolve({ error: 'Type an event and press Enter.', suggestions: [] }); }
+    const seq = ++this.seq;
+    const chain = this.chain = chainFrom(this.tags.map((t) => t.goal), [...this.joints]);
+    this.lastRun = { ids: this.tags.map((t) => t.goal.id), joints: [...this.joints] };
     const label = chainLabel(chain);
-    const note = pr.notes?.length ? ` (${pr.notes.join('; ')})` : '';
+    this.results = [];
+    this.tried = 0;
+    // a live Oracle conversation keeps its transcript; only cold asks clear it
+    if (!this.agent?.active) { this.transcriptEl.hidden = true; this.transcriptEl.innerHTML = ''; }
     this.showAll = false;
     this.cardsEl.innerHTML = '';
     this.footerEl.textContent = '';
-    this.status(`Simulating futures toward ${label}${note}…`);
+    this.status(`Searching: ${label}…`);
     const { seeds } = lineageSeeds(this.opts.seed(), 0, this.readFutures());
     return new Promise((resolve) => {
       this.pathfinder.run(chain, seeds, (r) => {
