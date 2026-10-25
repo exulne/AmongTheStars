@@ -1082,8 +1082,24 @@ export function searchLimit(n: number): number {
 }
 
 /** An extension's hunt: "Found 3 other futures (from 16 more simulated)." */
-export function huntLine(z: number, n: number): string {
-  return `Found ${z} other ${z === 1 ? 'future' : 'futures'} (from ${n} more simulated).`;
+/** An extension's hunt: "Found 3 other futures (from 16 more simulated)." */
+export function huntLine(z: number, n: number, o: { live?: boolean } = {}): string {
+  return `Found ${z} other ${z === 1 ? 'future' : 'futures'} (from ${n} more simulated${o.live ? ' so far' : ''}).`;
+}
+
+/** The row continues the last search: same tags and joints on the left, more on the right. */
+export function isExtension(last: { ids: string[]; joints: Joint[] } | null, now: { ids: string[]; joints: Joint[] }): boolean {
+  if (!last || now.ids.length <= last.ids.length) return false;
+  for (let i = 0; i < last.ids.length; i++) if (now.ids[i] !== last.ids[i]) return false;
+  for (let i = 0; i < last.joints.length; i++) if (now.joints[i] !== last.joints[i]) return false;
+  return true;
+}
+
+/** Extending a chain: only futures that completed the old chain can complete the longer one — the rest drop as misses. */
+export function narrowPlan(pool: FutureResult[]): { check: number[]; drop: number[] } {
+  const check: number[] = [], drop: number[] = [];
+  for (const r of pool) (r.reached ? check : drop).push(r.seed);
+  return { check, drop };
 }
 
 /** The plain-text answer handed back to the conversational agent. */
