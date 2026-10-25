@@ -65,6 +65,18 @@ export function buildWant(v: (key: string) => string): PickWant {
   return w;
 }
 
+const RUN_END = 10000;   // the last sim year (calendar 12040)
+
+/** The year a search looks at. A born range that starts at or after the viewed year is searched once
+ *  everyone in it has been born (born-hi + 1); an open-ended one, or one running past the run's end, at a
+ *  uniformly random whole year in (born-lo, end], drawn from r in [0, 1). Otherwise the viewed year. */
+export function searchYear(want: PickWant | undefined, viewed: number, end: number, r: number): number {
+  const b = want?.born;
+  if (!b || b[0] < viewed) return viewed;
+  if (b[1] <= end) return b[1];
+  return b[0] >= end ? end : Math.max(Math.floor(b[0]) + 1, Math.ceil(end - r * (end - b[0])));
+}
+
 export class LifePick {
   el: HTMLElement;
   private opts: LifePickOpts;
@@ -181,7 +193,8 @@ export class LifePick {
     }
     if (b >= 0 && !this.bodiesReady.includes(b)) { this.say(`Nobody has ever been born on ${esc(where!)}.`, seq); return; }
     const filtered = Object.values(want).some((v) => v !== undefined);
-    const r = await this.opts.find(b, n, kind, this.opts.year(), filtered ? want : undefined);
+    const shown = this.opts.year(), year = searchYear(filtered ? want : undefined, shown, RUN_END, Math.random());
+    const r = await this.opts.find(b, n, kind, year, filtered ? want : undefined);
     if (seq !== this.seq) return;
     if (r.pending) { this.say('This future is still simulating; its people appear when it finishes.', seq); return; }
     if (!r.person) {
@@ -192,10 +205,12 @@ export class LifePick {
       return;
     }
     this.opts.open(r.person);
+    if (year !== shown) this.opts.seek(year);   // after open on purpose: open() replaces any follow in progress, so the seek can't steer the camera to the previously followed person
     const p = r.brief, st = r.standing;
     if (p || st) this.showRoll(p ?? undefined, st ?? null);   // blank fields get filled by whoever was found
     const stats = st ? ` ${esc(st.class)}, ${esc(st.mood)}.` : '';
-    this.say(p ? `Following <b>${esc(p.name)}</b> — born on ${esc(where ?? p.place)} in ${fmtYear(p.born)}${p.born > this.opts.year() ? ', not yet born.' : p.alive ? `; ${Math.floor(p.age)}, ${esc(p.job)}${p.place && p.place !== where ? ` on ${esc(p.place)}` : ''}.${stats}` : ', now gone.'}` : 'Following them.', seq);
+    const moved = year !== shown ? `Moved to ${fmtYear(year)}${p?.alive ? " so they're alive" : ''}. ` : '';
+    this.say(p ? `${moved}Following <b>${esc(p.name)}</b> — born on ${esc(where ?? p.place)} in ${fmtYear(p.born)}${p.born > year ? ', not yet born.' : p.alive ? `; ${Math.floor(p.age)}, ${esc(p.job)}${p.place && p.place !== where ? ` on ${esc(p.place)}` : ''}.${stats}` : ', now gone.'}` : `${moved}Following them.`, seq);
     // the whole life laid out — including everything after the year being shown;
     // click a beat to be taken to it
     if (r.life?.length) {

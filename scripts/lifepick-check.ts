@@ -6,7 +6,8 @@ import { FLOW, SHIP_BODY, isShipBody, periodOf, periodStart } from '../src/sim/l
 import { Lives } from '../src/sim/lives.ts';
 import { HIST_FIELDS } from '../src/sim/metrics.ts';
 import { buildWorld } from '../src/sim/world.ts';
-import { buildWant } from '../src/ui/lifePick.ts';
+import { buildWant, searchYear } from '../src/ui/lifePick.ts';
+import { fmtYear } from '../src/ui/format.ts';
 
 const seed = Number(process.argv[2] ?? 1);
 const world = buildWorld();
@@ -293,6 +294,40 @@ checkShares(e1500, 'Earth@1500');
     ok(!Object.hasOwn(b9, 'faith'), 'T9: biography has no faith field');
     ok(!b9.standing || !Object.hasOwn(b9.standing, 'devotion'), 'T9: standing has no devotion field');
   }
+}
+
+// --- T10: searchYear looks at the year everyone in a future born range has been born
+{
+  const V = (o: Record<string, string>) => (k: string) => o[k] ?? '';
+  const later = buildWant(V({ 'born-lo': '2100', 'born-hi': '2150' }));   // sim [60, 111)
+  ok(searchYear(later, 0, 10000, 0.5) === 111, 'T10: born 2100–2150 from 2040 → 2151');
+  ok(searchYear(later, 60, 10000, 0.5) === 111, 'T10: a range starting at the viewed year → born-hi + 1');
+  ok(searchYear(later, 80, 10000, 0.5) === 80, 'T10: a range that began before the viewed year → the viewed year');
+  ok(searchYear(buildWant(V({ 'born-lo': '2050', 'born-hi': '2060' })), 500, 10000, 0.5) === 500, 'T10: a range that ended before → the viewed year');
+  ok(searchYear(buildWant(V({ 'age-lo': '30' })), 123.5, 10000, 0.5) === 123.5, 'T10: no born range → the viewed year');
+  ok(searchYear(undefined, 7, 10000, 0.5) === 7, 'T10: no want → the viewed year');
+  const open = buildWant(V({ 'born-lo': '2100' }));   // sim [60, 1e6)
+  ok(searchYear(open, 0, 10000, 0) === 10000, "T10: open-ended, r=0 → the run's end");
+  ok(searchYear(open, 0, 10000, 0.5) === 5030, 'T10: open-ended, r=0.5 → 5030');
+  let mn = Infinity, mx = -Infinity, sum = 0, sweep = true;
+  for (let k = 0; k < 1000; k++) {
+    const y = searchYear(open, 0, 10000, k / 1000);
+    if (!Number.isInteger(y) || y < 61 || y > 10000) sweep = false;
+    mn = Math.min(mn, y); mx = Math.max(mx, y); sum += y;
+  }
+  ok(sweep && mx === 10000 && mn < 100 && Math.abs(sum / 1000 - 5030) <= 5030 * 0.01, `T10: open-ended sweep min ${mn} max ${mx} mean ${(sum / 1000).toFixed(1)}`);
+  ok(searchYear(open, 100, 10000, 0.5) === 100, 'T10: an open range that began before the viewed year → the viewed year');
+  ok(searchYear(buildWant(V({ 'born-lo': '2100', 'born-hi': '15000' })), 0, 10000, 0) === 10000, "T10: born-hi past the run's end counts as open");
+  ok(searchYear(buildWant(V({ 'born-lo': '13000' })), 0, 10000, 0.5) === 10000, "T10: born-lo past the run's end → the run's end");
+  const yr = searchYear(later, 0, 10000, 0.5);
+  ok(L.pickLife(-1, 0, 'any', 0, later, 99).person === null, 'T10: nobody born 2100–2150 exists at 2040');
+  const r10 = L.pickLife(-1, 0, 'any', yr, later, 99);
+  const by = r10.person ? L.D.birthYear(r10.person) : NaN;
+  ok(by >= 60 && by < 111, `T10: at ${fmtYear(yr)} found someone born ${fmtYear(by)}`);
+  const yr2 = searchYear(open, 0, 10000, 0.5);   // 5030
+  const r11 = L.pickLife(-1, 0, 'any', yr2, open, 99);
+  const by2 = r11.person ? L.D.birthYear(r11.person) : NaN;
+  ok(by2 >= 60 && by2 <= yr2, `T10: open-ended at ${fmtYear(yr2)} found someone born ${fmtYear(by2)}`);
 }
 
 process.exit(fails ? 1 : 0);
