@@ -19,6 +19,7 @@ import { EarthOrbitLayers } from './orbitLayers.ts';
 import { BEAM, SCOOP, shipStyle } from './shipStyles.ts';
 import { applyCultureLights, cultureLight, cultureSkin, lookKey, societyLook } from './societyLook.ts';
 import { REDUCED_MOTION, applyPlanetLook } from './timeLook.ts';
+import { SurfaceInfra } from './surfaceInfra.ts';
 import { STAGE_COLORS, flareTex, galaxySpriteTex, glowTex, pointsMaterial, specColor } from './textures.ts';
 import { explainGalaxy } from '../explain/galaxy.ts';
 import { addCpuSet, addGpuSet, nearestPoint, pxPerUnit } from '../explain/picker.ts';
@@ -1058,6 +1059,9 @@ export class PlanetView implements View {
   /** surface features worth a card (polar caps, scars, storms, lakes, plumes), and the date they were drawn for */
   private feats: Feature[] = [];
   private geoYear = NaN;
+  /** what the world has built on its surface (infra.ts): arcologies, transit, spaceports, power, domes... */
+  private surface = new SurfaceInfra();
+  private tier = 0;
 
   enter(ctx: Ctx): void {
     this.build(ctx);
@@ -1090,6 +1094,7 @@ export class PlanetView implements View {
     } else this.prings = [];
     explainRings('pringp', this.group, () => this.prings);
     this.group.add(this.pivot);
+    this.pivot.add(this.surface.group);
     const home = ctx.world.systems[b.system];
     this.group.add(makeSky(b.id, 9000, 'skyp', () => ({ name: b.name, x: home.x, y: home.y, z: home.z, sol: home.id === 0 })));
     const sys = ctx.world.systems[b.system];
@@ -1167,9 +1172,10 @@ export class PlanetView implements View {
       this.pivot.add(this.cities.pts);
     }
     const on = alive(st);
+    this.tier = this.surface.sync(ctx.world, ctx.snap, b, ctx.year, on ? this.cityPos : [])?.tier ?? 0;
     // the cities' buildings, seen from orbit: domes early, towers and spires later, in the culture's colours
     const style = on ? styleOf(ctx.world, ctx.snap, b, ctx.year, { independence: false, speciation: false, collapse: false }) : null;
-    const archKey = style ? `${this.cityKey}:${style.arch}:${style.body.getHexString()}:${Math.round(style.height * 4)}` : ''; // cityKey carries the society's look
+    const archKey = style ? `${this.cityKey}:${style.arch}:${style.body.getHexString()}:${Math.round(style.height * 4)}:${this.tier}` : ''; // cityKey carries the society's look
     if (archKey !== this.archKey) {
       this.archKey = archKey;
       if (this.arch) { this.pivot.remove(this.arch); this.arch.geometry.dispose(); }
@@ -1178,8 +1184,9 @@ export class PlanetView implements View {
         const domes = style.arch === 'huts' || style.arch === 'warrens';
         // a dense culture packs more, closer; a curved one builds rounder, tapering towers; a tall one, taller
         const dens = look ? look.density : 0.5, curve = look ? look.curvature : 0.4;
-        const per = Math.min(64, Math.round((6 + Math.round(Math.log10(1 + pop / this.cityPos.length) * 4)) * (0.5 + dens)));
-        const spread = 1.25 - 0.5 * dens, tall = look ? 0.6 + 0.8 * look.height : 1;
+        // each technological age builds denser and taller (infra.ts tiers)
+        const per = Math.min(96, Math.round((6 + Math.round(Math.log10(1 + pop / this.cityPos.length) * 4)) * (0.5 + dens) * (1 + 0.15 * this.tier)));
+        const spread = 1.25 - 0.5 * dens, tall = (look ? 0.6 + 0.8 * look.height : 1) * (1 + 0.1 * this.tier);
         const geo = domes ? new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2)
           : new THREE.CylinderGeometry(0.5 * (1 - 0.75 * curve), 0.5, 1, curve > 0.55 ? 10 : curve > 0.35 ? 6 : 4).translate(0, 0.5, 0);
         const skin = style.body.clone();
@@ -1275,6 +1282,8 @@ export class PlanetView implements View {
       c.position.copy(c.userData.dir as THREE.Vector3).multiplyScalar(10.2 + (TETHER - 10.4) * (0.5 - 0.5 * Math.cos(u * Math.PI * 2)));
     }
     if (this.cities) (this.cities.pts.material as THREE.ShaderMaterial).uniforms.uOpacity.value = 0.75 + 0.25 * Math.sin(ctx.t * 1.5);
+    this.pivot.updateMatrixWorld();
+    this.surface.frame(ctx.t, this.pivot.worldToLocal(tv1.copy(PLANET_SUN)).clone(), this.pivot.worldToLocal(tv2.copy(ctx.camera.position)).clone());
   }
 
   pickables(ctx: Ctx): Pickable[] {
