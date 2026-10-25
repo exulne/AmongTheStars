@@ -6,6 +6,7 @@
 
 import type { Annals } from '../sim/chronicle.ts';
 import { NPERIODS, periodOf } from '../sim/ledger.ts';
+import { turningPoints } from '../sim/trendSignals.ts';
 import type { Trends } from '../sim/trends.ts';
 import { AnalystChart, type AData, type ALine } from './analystChart.ts';
 import { globalSeries } from './charts.ts';
@@ -14,34 +15,6 @@ import { fmtNum, fmtYear } from './format.ts';
 import { PALETTE } from './miniChart.ts';
 
 interface Sec { el: HTMLElement; list: HTMLElement; chart: AnalystChart | null; data: AData | null }
-
-/** The indices where a series peaks, bottoms and turns sharpest (rise/fall over lag = n/50 steps). */
-function turningPoints(xs: ArrayLike<number>, ys: ArrayLike<number>, log: boolean): { max: number; min: number; rise: number; fall: number } {
-  const n = Math.min(xs.length, ys.length), out = { max: -1, min: -1, rise: -1, fall: -1 };
-  const lag = Math.max(1, Math.round(n / 50));
-  let mx = -Infinity, mn = Infinity, up = log ? 1 : 0, dn = log ? 1 : 0;
-  for (let i = 0; i < n; i++) {
-    const v = ys[i];
-    if (Number.isFinite(v)) {
-      if (v > mx) { mx = v; out.max = i; }
-      if (v < mn) { mn = v; out.min = i; }
-    }
-    const j = i + lag;
-    if (j >= n || !Number.isFinite(v) || !Number.isFinite(ys[j])) continue;
-    const w = ys[j];
-    if (log) {
-      if (v <= 0 || w <= 0) continue;
-      const r = w / v;
-      if (r > up) { up = r; out.rise = j; }
-      if (r < dn) { dn = r; out.fall = j; }
-    } else {
-      const d = w - v;
-      if (d > up) { up = d; out.rise = j; }
-      if (d < dn) { dn = d; out.fall = j; }
-    }
-  }
-  return out;
-}
 
 const HOW = {
   pop: 'Censuses and population registers: head-counts by place, refreshed every few years.',
