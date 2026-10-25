@@ -75,6 +75,8 @@ export interface View {
   diveDist(ctx: Ctx, r: Ref): number;
   /** world-space radius of the thing, for the selection ring; 0 = a point */
   size?(ctx: Ctx, r: Ref): number;
+  /** the solid spheres the camera must stay out of (centre, radius) */
+  obstacles?(ctx: Ctx, out: (c: THREE.Vector3, r: number) => void): void;
 }
 
 // ---------------------------------------------------------------- helpers
@@ -126,6 +128,7 @@ export function lightCities(mat: THREE.ShaderMaterial, b: number, stage: number,
 
 /** Where the star sits in the planet view: off to the side and a little behind, so the night side and its lights show. */
 export const PLANET_SUN = new THREE.Vector3(380, 90, -120);
+const ORIGIN = new THREE.Vector3();
 
 export interface SystemSum { stage: number; pop: number; n: number; faction: number; founded: number; culture: number }
 
@@ -1011,6 +1014,11 @@ export class SystemView implements View {
     return (this.vis.find((x) => x.id === r.id)?.visR ?? 0) * 1.5;
   }
 
+  obstacles(_ctx: Ctx, out: (c: THREE.Vector3, r: number) => void): void {
+    out(ORIGIN, this.starR * 1.1);
+    for (const v of this.vis) out(v.mesh.position, v.visR * 1.15); // atmospheres reach 1.12
+  }
+
   diveDist(_ctx: Ctx, r: Ref): number {
     const v = r.kind === 'body' ? this.vis.find((x) => x.id === r.id) : undefined;
     return v ? Math.max(1.6, v.visR * 7) : 0;
@@ -1297,6 +1305,8 @@ export class PlanetView implements View {
   diveDist(_ctx: Ctx, r: Ref): number { return r.kind === 'city' ? 16 : 0; }
 
   size(_ctx: Ctx, r: Ref): number { return r.kind === 'body' ? 10.9 : 0; }
+
+  obstacles(_ctx: Ctx, out: (c: THREE.Vector3, r: number) => void): void { out(ORIGIN, 10.6); } // the globe and its air (R 10, ×1.05)
 
   labels(ctx: Ctx): Label[] {
     const b = ctx.world.bodies[ctx.body];

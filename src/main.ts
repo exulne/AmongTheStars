@@ -31,6 +31,7 @@ import { LocalCalendar } from './ui/calendar.ts';
 import { EraBanner, eraRun, eraTitle } from './ui/eraBanner.ts';
 import { wayOfWarHtml } from './ui/wayOfWar.ts';
 import { EraMood } from './view/eraMood.ts';
+import { CameraRig, PRESETS, easeInOutCubic, easeInOutSine, easeOutCubic, type MotionPreset } from './view/camRig.ts';
 import { ShipConsole } from './ship/console.ts';
 import { Voyage } from './ship/voyage.ts';
 import { Voice } from './ship/voice.ts';
@@ -68,6 +69,7 @@ app.innerHTML = `
       <button id="lifepick" class="link" type="button" aria-expanded="false" title="Pick one person and follow their whole life">Follow a life</button>
       <button id="data" class="link" type="button" aria-pressed="false">Data</button>
       <button id="board" class="link" type="button" aria-pressed="false" title="Fly this future yourself: tell the ship where and when">Board the Starship</button>
+      <label for="motion">Motion</label><select id="motion" title="How the camera moves between places">${(Object.keys(PRESETS) as MotionPreset[]).map((k) => `<option value="${k}">${PRESETS[k].label}</option>`).join('')}</select>
       <span class="status num" aria-live="polite"></span>
     </div>
   </header>
@@ -77,6 +79,8 @@ app.innerHTML = `
     <div class="legend-war" aria-label="The way of war"></div>
   </div>
   <div class="sel-ring" aria-hidden="true" hidden><i></i><i></i></div>
+  <div class="zoom-ctl" role="group" aria-label="Zoom"><button type="button" data-zoom="-1" aria-label="Zoom in" title="Zoom in (+)">+</button><button type="button" data-zoom="1" aria-label="Zoom out" title="Zoom out (−)">−</button></div>
+  <div class="travel" hidden><span class="travel-to"></span><i class="travel-bar" aria-hidden="true"><b></b></i><button class="link" type="button" title="Get there now (Esc). Hold Shift to hurry.">Skip</button></div>
   <div class="tooltip" hidden></div>
   <footer class="bottom">
     <div class="charts-toggles"><button class="forecast-toggle link" type="button" aria-pressed="true" title="A transformer trained on 360 other futures guesses the next 400 years">Forecast on</button><button class="charts-toggle link" type="button" aria-expanded="true">Hide charts</button></div>
@@ -126,6 +130,14 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.07;
 controls.rotateSpeed = 0.5;
 controls.zoomSpeed = 1.3;
+// every automatic camera move goes through the rig, and every zoom (wheel, trackpad, pinch, keys,
+// buttons) lands in its goal and eases there instead of OrbitControls jumping a step (src/view/camRig.ts)
+const rig = new CameraRig(camera, controls);
+{
+  const c = controls as unknown as { _dollyIn: (s: number) => void; _dollyOut: (s: number) => void };
+  c._dollyIn = (s) => rig.zoomBy(s);
+  c._dollyOut = (s) => rig.zoomBy(1 / s);
+}
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
@@ -169,7 +181,7 @@ new ResizeObserver(resize).observe(canvas);
 // on a 60 Hz screen frame times can't show spare headroom, so stepping back up would oscillate.
 let pixelRatio = Math.min(window.devicePixelRatio, 2), frameEma = 1 / 60, slowFor = 0;
 function govern(dt: number): void {
-  if (document.hidden || flight || pixelRatio <= 1) return;
+  if (document.hidden || rig.flying || pixelRatio <= 1) return;
   frameEma += (dt - frameEma) * 0.05;
   slowFor = frameEma > 1 / 40 ? slowFor + dt : 0;
   if (slowFor < 2) return;
@@ -243,6 +255,9 @@ function enterLevel(next: Level): void {
   v.sync(ctx);
   controls.minDistance = v.limits[0];
   controls.maxDistance = v.limits[1];
+  rig.resetMotion();
+  rig.setLimits(v.limits[0], v.limits[1]);
+  focusKey = '';
   renderCrumbs();
   renderLegend();
   writeHash();
@@ -317,36 +332,141 @@ legendModes.addEventListener('click', (e) => {
 // ------------------------------------------------------------------ camera flights
 
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-const easeInOut = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2);
-const easeOut = (x: number) => 1 - (1 - x) ** 3;
-interface Flight { t0: THREE.Vector3; t1: THREE.Vector3; d0: THREE.Vector3; q: THREE.Quaternion; l0: number; l1: number; t: number; dur: number; ease: (x: number) => number; done?: () => void }
-let flight: Flight | null = null;
-const qI = new THREE.Quaternion(), qK = new THREE.Quaternion();
+const easeInOut = easeInOutCubic, easeOut = easeOutCubic;
+// how the camera moves is the reader's choice, remembered; reduced motion starts at Instant and never arcs or widens the view
+rig.reduced = reducedMotion;
+rig.preset = reducedMotion ? 'instant' : 'balanced';
+try { const m = localStorage.getItem('motion'); if (m && m in PRESETS) rig.preset = m as MotionPreset; } catch { /* storage may be blocked */ }
+const motionSelect = app.querySelector<HTMLSelectElement>('#motion')!;
+motionSelect.value = rig.preset;
+motionSelect.addEventListener('change', () => {
+  rig.preset = motionSelect.value as MotionPreset;
+  try { localStorage.setItem('motion', rig.preset); } catch { /* then it just isn't remembered */ }
+});
 
-/** Ease the camera to a new pose: target moves straight, distance changes in log space, direction slerps. */
-function fly(pos: THREE.Vector3, target: THREE.Vector3, dur: number, ease: (x: number) => number, done?: () => void): void {
-  const o0 = camera.position.clone().sub(controls.target), o1 = pos.clone().sub(target);
-  const l0 = Math.max(o0.length(), 1e-6), l1 = Math.max(o1.length(), 1e-6);
-  const d0 = o0.divideScalar(l0);
-  flight = { t0: controls.target.clone(), t1: target.clone(), d0, q: new THREE.Quaternion().setFromUnitVectors(d0, o1.divideScalar(l1)), l0, l1, t: 0, dur, ease, done };
-  controls.enabled = false;
+/** Ease the camera to a pose (CameraRig.orbitTo); the motion preset stretches or shortens it. */
+function fly(pos: THREE.Vector3, target: THREE.Vector3, dur: number, ease: (x: number) => number, done?: () => void, interruptible = false): void {
+  rig.orbitTo(pos, target, dur * rig.spec.level, ease, done, interruptible);
 }
 
-function stepFlight(dt: number): void {
-  const f = flight!;
-  f.t += dt;
-  const k = f.ease(Math.min(1, f.t / f.dur));
-  controls.target.lerpVectors(f.t0, f.t1, k);
-  qK.slerpQuaternions(qI, f.q, k);
-  camera.position.copy(f.d0).applyQuaternion(qK).multiplyScalar(Math.exp(Math.log(f.l0) + (Math.log(f.l1) - Math.log(f.l0)) * k)).add(controls.target);
-  camera.lookAt(controls.target);
-  if (f.t < f.dur) return;
-  flight = null;
-  controls.enabled = true;
-  // drop any damping momentum from before the flight
-  const c = controls as unknown as { _sphericalDelta: THREE.Spherical; _panOffset: THREE.Vector3; _scale: number };
-  c._sphericalDelta.set(0, 0, 0); c._panOffset.set(0, 0, 0); c._scale = 1;
-  f.done?.();
+// the camera never ends up inside a planet or a star: each view lists its solid spheres
+let clearOf: THREE.Vector3 | null = null;
+const tvClear = new THREE.Vector3();
+function pushOut(c: THREE.Vector3, r: number): void {
+  const p = clearOf!, d = tvClear.subVectors(p, c).length();
+  if (d < r && d > 1e-9) p.copy(c).addScaledVector(tvClear, r / d);
+}
+rig.keepClear = (p) => { clearOf = p; views[level].obstacles?.(ctx, pushOut); };
+
+/**
+ * Where the camera settles when it travels to a thing in this view, the zoom limits while that thing is
+ * the focus, and the side to arrive on (lit by the star, or with the planet behind). Null: not travelled to.
+ */
+function framing(r: Ref): { dist: number; limits: [number, number]; side: 'star' | 'out' | null } | null {
+  const v = views[level], [lo, hi] = v.limits;
+  if (level === 'system' && r.kind === 'body') { const s = v.size?.(ctx, r) || 0.5; return { dist: Math.max(v.diveDist(ctx, r) * 1.8, s * 6), limits: [s * 1.2, hi], side: 'star' }; }
+  if (level === 'system' && r.kind === 'system') return { dist: (v.size?.(ctx, r) || 1) * 9, limits: [lo, hi], side: null };
+  if (level === 'local' && r.kind === 'system') return { dist: v.diveDist(ctx, r) * 1.8, limits: [lo, hi], side: null };
+  // craft, stations, facilities, comets: close in (backdrop stars are not destinations)
+  if (r.kind === 'thing' && (level === 'system' || level === 'planet') && !/^(sky|bgal|dust)/.test(r.ex ?? '')) return { dist: level === 'planet' ? 5 : 3, limits: [0.35, hi], side: level === 'planet' ? 'out' : 'star' };
+  return null;
+}
+
+let focusKey = ''; // what the camera travelled to and now follows
+const refKey = (r: Ref) => `${r.kind}:${r.ex ?? ''}:${r.id}`;
+function unfocus(): void { focusKey = ''; rig.follow(null); const l = views[level].limits; rig.setLimits(l[0], l[1]); }
+const sideV = new THREE.Vector3(), UPV = new THREE.Vector3(0, 1, 0);
+
+/** Travel to a thing in this view and keep it centred as it moves. False if it isn't somewhere to travel. */
+function travelTo(r: Ref, done?: () => void): boolean {
+  if (busy) return false;
+  const lv = level;
+  if (lv === 'planet' && r.kind === 'city') {
+    // a settlement: turn the globe under us until it faces the camera, at a distance that shows its region
+    const at = locateRef(views.planet, r);
+    if (!at || (refKey(r) === focusKey && !rig.flying && !done)) return false;
+    const d = Math.max(camera.position.distanceTo(controls.target), 24);
+    fly(at.clone().normalize().addScaledVector(UPV, 0.25).setLength(d), new THREE.Vector3(), 1.1, easeInOut, done, true);
+    focusKey = refKey(r);
+    return true;
+  }
+  const f = framing(r);
+  if (!f) return false;
+  const dest = () => (level === lv ? locateRef(views[lv], r) : null);
+  const at = dest();
+  if (!at) return false;
+  const key = refKey(r);
+  // clicking again what we're already looking at changes nothing
+  if (key === focusKey && !rig.flying && !done) return false;
+  focusKey = key;
+  pull = null;
+  if (f.side === 'star') sideV.copy(at).negate(); else if (f.side === 'out') sideV.copy(at); else sideV.set(0, 0, 0);
+  const name = r.kind === 'body' ? naming.place(world, r.id) : r.kind === 'system' ? world.systems[r.id].name : ctx.selected && refKey(ctx.selected) === key ? ctx.selected.name : r.name ?? '';
+  rig.travel({ dest, dist: f.dist, side: sideV, limits: f.limits, label: name, yearRate, done });
+  return true;
+}
+
+/** Search, the ship's console and links go to a world. In the system in view, that is a journey: across to it, then down. */
+function goToBody(id: number): void {
+  const b = world.bodies[id], ref: Ref = { kind: 'body', id };
+  const prep = () => { ctx.body = id; ctx.system = b.system; };
+  const journey = !busy && !reducedMotion && rig.preset !== 'instant' && ctx.system === b.system;
+  if (journey && level === 'system' && travelTo(ref, () => { if (level === 'system') setLevel('planet', ref, prep); })) return;
+  if (journey && level === 'planet' && ctx.body !== id) { hop(id, prep); return; }
+  if (level !== 'planet' || ctx.body !== id) setLevel('planet', ref, prep);
+}
+
+/**
+ * Planet to planet in one system: pull back from this world, cut to the system with it where it was on
+ * screen, travel across (the turn, the speed-up, the long slow-down), then go down to the other world.
+ */
+function hop(to: number, prep: () => void): void {
+  busy = true;
+  const from = ctx.body, back = camera.position.clone().sub(controls.target);
+  fly(controls.target.clone().addScaledVector(back, 1.7), controls.target.clone(), 0.75, easeInOutSine, () => {
+    crossfade(false);
+    enterLevel('system');
+    const ref: Ref = { kind: 'body', id: from }, at = views.system.locate(ctx, ref), f = framing(ref);
+    if (at && f) { controls.target.copy(at); camera.position.copy(at).addScaledVector(back.normalize(), f.dist * 1.6); camera.lookAt(at); }
+    busy = false;
+    const dest: Ref = { kind: 'body', id: to };
+    if (!travelTo(dest, () => { if (level === 'system') setLevel('planet', dest, prep); })) setLevel('planet', dest, prep);
+    const q = queued; queued = null; q?.();
+  });
+}
+
+/** The zoom buttons and keys: like a wheel notch, so out past the edge goes up a level and in close enough enters. */
+function zoomStep(dir: 1 | -1): void {
+  rig.interrupt();
+  if (busy) return;
+  const v = views[level], i = LEVELS.indexOf(level);
+  if (dir > 0 && i > 0 && camera.position.distanceTo(controls.target) >= v.limits[1] * 0.97) { pull = null; setLevel(LEVELS[i - 1]); return; }
+  const r = dir < 0 && ctx.selected ? enterableRef(ctx.selected) : null;
+  if (r && !(level === 'street' && r.kind !== 'person') && !(level === 'planet' && r.kind !== 'city')) {
+    const at = locateRef(v, r), dd = level === 'street' ? 1.1 : v.diveDist(ctx, r);
+    if (at && dd > 0 && camera.position.distanceTo(at) < Math.max(dd, v.limits[0] * 1.4)) { dive(r); return; }
+  }
+  rig.zoomBy(dir > 0 ? 1.5 : 1 / 1.5);
+}
+app.querySelector('.zoom-ctl')!.addEventListener('click', (e) => {
+  const z = (e.target as HTMLElement).closest<HTMLElement>('[data-zoom]')?.dataset.zoom;
+  if (z) zoomStep(z === '1' ? 1 : -1);
+});
+window.addEventListener('keydown', (e) => { if (e.key === 'Shift') rig.hurry(true); });
+window.addEventListener('keyup', (e) => { if (e.key === 'Shift') rig.hurry(false); });
+window.addEventListener('blur', () => rig.hurry(false));
+
+// where a long travel is going and how far along it is, with a way to get there now
+const hudEl = app.querySelector<HTMLElement>('.travel')!, hudName = hudEl.querySelector<HTMLElement>('.travel-to')!, hudBar = hudEl.querySelector<HTMLElement>('.travel-bar b')!;
+hudEl.querySelector('button')!.addEventListener('click', () => rig.skip());
+function drawHud(): void {
+  const on = rig.travelling && rig.duration >= 1.2 && !!rig.label;
+  if (hudEl.hidden === on) hudEl.hidden = !on;
+  if (!on) return;
+  const text = `To ${rig.label}`;
+  if (hudName.textContent !== text) hudName.textContent = text;
+  hudBar.style.transform = `scaleX(${rig.progress.toFixed(3)})`;
+  hudEl.style.setProperty('--v', rig.speed.toFixed(2));
 }
 
 /** The outgoing frame, drawn into a 2D canvas that scales and fades over the new view. */
@@ -495,7 +615,7 @@ const MICRO_SELECT: Partial<Record<Level, string>> = { cell: 'mcell', molecule: 
 function dive(p: Ref): void {
   if (p.kind === 'thing' && (p.ex === 'futu' || p.ex === 'futx')) { enterFuture(p.ex === 'futu' ? p.id : foamSeed(p.id), p); return; }
   if (p.kind === 'person' && level === 'street') { const id = street.personId(p.id); if (id) { street.focus = p.id; enterPerson(id, p); } return; }
-  if (p.kind === 'thing' && level === 'atom' && p.ex === 'mnuc' && !busy) { const v = micro.views.atom.nucleusView(); fly(v.pos, v.target, 1.4, easeInOut); return; }
+  if (p.kind === 'thing' && level === 'atom' && p.ex === 'mnuc' && !busy) { const v = micro.views.atom.nucleusView(); fly(v.pos, v.target, 1.4, easeInOut, undefined, true); return; }
   if (p.kind === 'thing' && isMicro(level)) {
     const e = micro.enterRef(level, p, ctx);
     if (e) setLevel(e.next, p, () => {
@@ -514,7 +634,7 @@ function dive(p: Ref): void {
   if (p.kind === 'galaxy' && (p.name ?? GALAXIES[p.id]?.name) !== 'Milky Way') {
     // no deeper level for other galaxies yet: frame it in the Local Group
     const at = level === 'universe' ? views.universe.locate(ctx, p) : null;
-    if (at && !busy) fly(at.clone().add(camera.position.clone().sub(at).setLength(GALAXIES[p.id].radius / 10000 * 3 * 4)), at, 1.1, easeInOut);
+    if (at && !busy) fly(at.clone().add(camera.position.clone().sub(at).setLength(GALAXIES[p.id].radius / 10000 * 3 * 4)), at, 1.1, easeInOut, undefined, true);
     else if (level !== 'universe') setLevel('universe');
     return;
   }
@@ -537,6 +657,7 @@ function select(p: Pickable | null): void {
   // picking something new shows its card, not the polity, chronicle or life that was open over it
   if (changed && p) { inspector.polityOpen = null; inspector.chronicleOpen = false; if (inspector.personId) inspector.openPerson(null); }
   ctx.selected = p;
+  if (focusKey && (!p || refKey(p) !== focusKey)) unfocus();
   history = null;
   fetchHistory();
   charts.refreshOptions();
@@ -556,7 +677,7 @@ inspector.api = {
   annals: () => sim.annals(),
 };
 inspector.onAnnals = (a) => { timeline.setAges(a?.ages ?? []); calendar.annals = a; timeline.refresh(); };
-inspector.onSelect = (p) => select(p);
+inspector.onSelect = (p) => { select(p); if (p) travelTo(p); };
 setShipApi((f, t, d) => sim.ship(f, t, d), () => refreshPanels(), (b, y) => sim.residents(b, y, 0, 6));
 setMissionApi((id) => sim.data<'mission'>({ type: 'mission', mission: id }));
 inspector.onYear = (y) => timeline.set(y, true);
@@ -681,6 +802,7 @@ inspector.onPerson = (id) => { if (following && id !== following.pid) stopFollow
 // it to the centre of the view, and once close enough enters it.
 let pull: Ref | null = null, lastWheel = 0;
 canvas.addEventListener('wheel', (e) => {
+  rig.interrupt(); // a travel hands over to the wheel; a flight between levels hurries
   if (busy) return;
   const gesture = e.timeStamp - lastWheel < 700;
   lastWheel = e.timeStamp;
@@ -697,6 +819,7 @@ canvas.addEventListener('wheel', (e) => {
   const p: Ref | null = (gesture && keep) || pickAt(e.clientX, e.clientY) || keep || sel;
   if (!p || (level === 'street' && p.kind !== 'person') || (level === 'planet' && p.kind !== 'city')) return;
   pull = p;
+  if (focusKey && refKey(p) !== focusKey) unfocus();
   const at = locateRef(v, p);
   const dd = level === 'street' ? 1.1 : v.diveDist(ctx, p);
   if (at && dd > 0 && camera.position.distanceTo(at) < Math.max(dd, v.limits[0] * 1.4)) { pull = null; if (p.kind !== 'person') select(asPick(p)); dive(p); }
@@ -719,6 +842,9 @@ function enterableRef(r: Ref): Ref {
   return r;
 }
 canvas.addEventListener('pointerdown', () => { pull = null; });
+// grabbing the view stops a travel where it is (capture: before OrbitControls sees the press, so the drag starts at once)
+canvas.addEventListener('pointerdown', () => { rig.interrupt(); }, { capture: true });
+labelsEl.addEventListener('pointerdown', () => { rig.interrupt(); }); // a press on a label is a hand on the view too
 
 /** Where a selected thing sits in a view: explained things (stars, asteroids, ships…) know their own place. */
 function locateRef(v: View, r: Ref): THREE.Vector3 | null {
@@ -772,7 +898,7 @@ function pickAny(x: number, y: number): Pickable | null {
 // hover picks run in the frame loop, at most ~25 times a second, never per pointer event
 let hoverAt: { x: number; y: number } | null = null, hoverT = 0;
 function hover(now: number): void {
-  if (!hoverAt || flight || now - hoverT < 40) return;
+  if (!hoverAt || rig.flying || now - hoverT < 40) return;
   hoverT = now;
   const { x, y } = hoverAt;
   hoverAt = null;
@@ -792,7 +918,7 @@ canvas.addEventListener('click', (e) => {
   if (Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5) return;
   const p = pickAny(e.clientX, e.clientY);
   if (p?.kind === 'person') openResident(p.id);
-  else if (p) { if (isMicro(level) && inspector.personId) inspector.openPerson(null); select(p); }
+  else if (p) { if (isMicro(level) && inspector.personId) inspector.openPerson(null); select(p); travelTo(p); }
   else if (level === 'street') street.follow = -1;
 });
 
@@ -893,7 +1019,7 @@ function labelRef(t: EventTarget | null): Ref | undefined {
   for (const e of labelEls.values()) if (e.el === el) return e.ref;
   return undefined;
 }
-labelsEl.addEventListener('click', (e) => { const ref = labelRef(e.target); if (ref) select(asPick(ref)); });
+labelsEl.addEventListener('click', (e) => { const ref = labelRef(e.target); if (ref) { select(asPick(ref)); travelTo(ref); } });
 labelsEl.addEventListener('dblclick', (e) => { const ref = labelRef(e.target); if (ref && !busy) { select(asPick(ref)); dive(ref); } });
 
 // ------------------------------------------------------------------ street mood
@@ -1105,6 +1231,7 @@ ticker.onPick = (it) => {
   select(asPick(r));
   const sys = world.bodies[r.id].system;
   if (level !== 'system' || ctx.system !== sys) setLevel('system', { kind: 'system', id: sys }, () => { ctx.system = sys; });
+  else travelTo(r);
 };
 
 let panelsAt = 0, panelsTrail = 0;
@@ -1225,8 +1352,8 @@ help.setAttribute('aria-label', 'Keyboard shortcuts');
 help.hidden = true;
 help.innerHTML = `<h2>Keys</h2><dl>${([
   ['Space', 'play or pause'], ['← →', 'step through time (Shift: ten steps)'], ['/', 'search'], ['Enter', 'go into the selected thing'],
-  ['Backspace', 'up a level'], ['Esc', 'clear the selection'], ['?', 'this list'],
-] as const).map(([k, v]) => `<dt><kbd>${k}</kbd></dt><dd>${v}</dd>`).join('')}</dl><p class="muted">Scroll into anything to enter it; scroll out past the edge to go up. Type a year into the year to jump there.</p><button class="link" type="button">Close</button>`;
+  ['Backspace', 'up a level'], ['+ −', 'zoom in or out'], ['Esc', 'skip a flight, or clear the selection'], ['Shift', 'hold to hurry a flight'], ['?', 'this list'],
+] as const).map(([k, v]) => `<dt><kbd>${k}</kbd></dt><dd>${v}</dd>`).join('')}</dl><p class="muted">Click a world to travel to it; scroll into anything to enter it; scroll out past the edge to go up. Drag, scroll or tap during a flight to take over. Type a year into the year to jump there.</p><button class="link" type="button">Close</button>`;
 app.append(help);
 help.querySelector('button')!.addEventListener('click', () => { help.hidden = true; });
 
@@ -1239,7 +1366,9 @@ window.addEventListener('keydown', (e) => {
   if (e.key.length === 1 && /[\p{L}\p{N}#]/u.test(e.key)) { e.preventDefault(); search.focus(e.key); return; }
   if (e.code === 'Space') { e.preventDefault(); timeline.toggle(); }
   else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); timeline.step(e.key === 'ArrowRight' ? 1 : -1, e.shiftKey); }
-  else if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; else if (!lifePick.el.hidden) lifePick.hide(); else if (following) stopFollow(); else if (level === 'street' && street.follow >= 0) street.follow = -1; else select(null); }
+  else if (e.key === '+' || e.key === '=') zoomStep(-1);
+  else if (e.key === '-' || e.key === '_') zoomStep(1);
+  else if (e.key === 'Escape') { if (rig.flying) rig.skip(); else if (!help.hidden) help.hidden = true; else if (!lifePick.el.hidden) lifePick.hide(); else if (following) stopFollow(); else if (level === 'street' && street.follow >= 0) street.follow = -1; else select(null); }
   else if (e.key === '/') { e.preventDefault(); search.focus(); }
   else if (e.key === '?') help.hidden = !help.hidden;
   else if (e.key === 'Enter' && ctx.selected && !(e.target instanceof HTMLButtonElement)) dive(ctx.selected);
@@ -1339,10 +1468,11 @@ search.onPick = (h) => {
   } else if (h.kind === 'system') {
     select(asPick({ kind: 'system', id: h.id }));
     if (level !== 'system' || ctx.system !== h.id) setLevel('system', { kind: 'system', id: h.id }, () => { ctx.system = h.id; });
+    else travelTo({ kind: 'system', id: h.id });
   } else {
     if (h.kind === 'resident') inspector.showResident(h.id, h.n!);
     select(asPick({ kind: 'body', id: h.id }));
-    if (level !== 'planet' || ctx.body !== h.id) setLevel('planet', { kind: 'body', id: h.id }, () => { ctx.body = h.id; ctx.system = world.bodies[h.id].system; });
+    goToBody(h.id);
   }
 };
 
@@ -1508,7 +1638,7 @@ function arrived(y: number, done: (y: number) => void, tries = 0): void {
   else setTimeout(() => arrived(y, done, tries + 1), 50);
 }
 
-let last = performance.now(), frame = 0, lastYear = 0;
+let last = performance.now(), frame = 0, lastYear = 0, yearRate = 0;
 function loop(now: number): void {
   const dt = Math.min(0.1, (now - last) / 1000), wall = Math.min(1, (now - last) / 1000); // trips run on the clock, even on a slow machine
   last = now;
@@ -1524,18 +1654,20 @@ function loop(now: number): void {
   motion += ((hovering ? 0 : 1) - motion) * (1 - Math.exp(-dt * 5));
   ctx.tm += dt * motion;
   timeline.tick(dt);
-  if (flight) stepFlight(dt);
-  else {
+  // the world moves first, so the camera follows where things are this frame, not where they were
+  views[level].frame(ctx, dt);
+  if (!rig.flying) {
     // wheel-in target drifts to the thing under the cursor
     const at = pull ? locateRef(views[level], pull) : null;
     if (at) controls.target.lerp(at, 1 - Math.exp(-dt * 6));
-    controls.update();
   }
-  views[level].frame(ctx, dt);
+  rig.frame(dt);
+  drawHud();
   sky.position.copy(camera.position);
+  yearRate = dt > 0 ? (ctx.year - lastYear) / dt : 0;
   if (voyage.boarded) {
     shipLight();
-    const fx = voyage.frame(dt, ctx.t, { camera, orbit: controls.target, jumping: busy || !!flight, yearRate: dt > 0 ? (ctx.year - lastYear) / dt : 0 });
+    const fx = voyage.frame(dt, ctx.t, { camera, orbit: rig.pivot, jumping: busy, travel: rig.travelling ? rig.speed : 0, yearRate });
     shipConsole.engine.update(fx.throttle, fx.warp, fx.chrono, fx.chronoDir, chronoTrip ? Math.min(1, chronoTrip.t / chronoTrip.dur) : 0);
   }
   lastYear = ctx.year;
@@ -1548,4 +1680,4 @@ function loop(now: number): void {
 }
 requestAnimationFrame(loop);
 
-if (import.meta.env.DEV) Object.assign(window, { __app: { ctx, views, setLevel, dive, select, timeline, camera, controls, micro, multiverse, enterPerson, street, inspector, sim, get level() { return level; }, get busy() { return busy; }, get flying() { return !!flight; }, get following() { return following; }, get pull() { return pull; } } });
+if (import.meta.env.DEV) Object.assign(window, { __app: { ctx, views, setLevel, dive, select, timeline, camera, controls, micro, multiverse, enterPerson, street, inspector, sim, get level() { return level; }, get busy() { return busy; }, get flying() { return rig.flying; }, rig, travelTo, goToBody, zoomStep, get following() { return following; }, get pull() { return pull; } } });

@@ -17,6 +17,7 @@ export interface Motion {
   camera: THREE.PerspectiveCamera;  // the sim's camera
   orbit: THREE.Vector3;             // controls target (what we are looking at)
   jumping: boolean;                 // a flight between zoom levels is under way
+  travel: number;                   // 0..1, speed of a travel to a selected thing (camRig)
   yearRate: number;                 // simulated years per real second, signed
 }
 
@@ -33,7 +34,9 @@ export class Voyage {
   private prevDir = new THREE.Vector3();
   private bank = 0;
   private yaw = 0;
+  private vel = new THREE.Vector3(); // the sim camera's velocity in its own frame, per unit of viewing distance, smoothed
   private haveprev = false;
+  private settled = false;
   private sun = new THREE.DirectionalLight(0xfff1d6, 1.6);
 
   constructor(renderer: THREE.WebGLRenderer) {
@@ -53,6 +56,8 @@ export class Voyage {
     this.boarded = on;
     this.pass.enabled = on;
     this.haveprev = false;
+    this.settled = false;
+    this.vel.set(0, 0, 0);
   }
 
   setView(v: ShipView): void {
@@ -76,15 +81,18 @@ export class Voyage {
     const dist = Math.max(1e-6, cam.position.distanceTo(m.orbit));
     const dir = tv1.copy(m.orbit).sub(cam.position).normalize();
     let speed = 0, turn = 0;
+    const k = 1 - Math.exp(-dt * 3);
     if (this.haveprev && dt > 0) {
       speed = cam.position.distanceTo(this.prevPos) / dist / dt;
       turn = Math.atan2(tv2.crossVectors(this.prevDir, dir).dot(UP), this.prevDir.dot(dir)) / dt;
+      tv3.copy(cam.position).sub(this.prevPos).divideScalar(dist * dt).applyQuaternion(tq.copy(cam.quaternion).invert()).clampLength(0, 3); // a cut between scales is one huge frame
+      this.vel.lerp(tv3, k);
     }
     this.prevPos.copy(cam.position); this.prevDir.copy(dir); this.haveprev = true;
 
-    const k = 1 - Math.exp(-dt * 3);
-    const wantThrottle = Math.min(1, speed * 1.4 + (m.jumping ? 0.8 : 0)) * 0.95 + 0.05;
-    const wantWarp = m.jumping ? 1 : Math.min(0.6, Math.max(0, speed - 0.6) * 0.5);
+    // a travel runs the engines and only hints at the tunnel; the full warp is for jumps between scales
+    const wantThrottle = Math.min(1, speed * 1.4 + (m.jumping ? 0.8 : 0) + m.travel * 0.35) * 0.95 + 0.05;
+    const wantWarp = m.jumping ? 1 : Math.max(m.travel * 0.3, Math.min(0.6, Math.max(0, speed - 0.6) * 0.5));
     const rate = Math.abs(m.yearRate);
     const wantChrono = rate < 0.5 ? 0 : Math.min(1, Math.log10(1 + rate) / 2.6);
     s.throttle += (wantThrottle - s.throttle) * k;
@@ -96,7 +104,19 @@ export class Voyage {
     // bank into turns, yaw a little toward them, and keep a slow idle drift
     this.bank += (-turn * 0.6 - this.bank) * k;
     this.yaw += (turn * 0.25 - this.yaw) * k;
-    s.root.rotation.set(Math.sin(t * 0.7) * 0.015, this.yaw, Math.max(-0.6, Math.min(0.6, this.bank)) + Math.sin(t * 0.5) * 0.02);
+    te.set(Math.sin(t * 0.7) * 0.015, this.yaw, Math.max(-0.6, Math.min(0.6, this.bank)) + Math.sin(t * 0.5) * 0.02);
+    tq.setFromEuler(te);
+    // the nose leans into where we are actually going: camera space (x right, z back) to ship space (nose +Z,
+    // seen from behind, so x and z flip), at most ~17° off the chase axis: a lean, never a tail-on view
+    const v = this.vel, vl = v.length();
+    if (vl > 1e-4) {
+      tq2.setFromUnitVectors(NOSE, tv3.set(-v.x, v.y, -v.z).divideScalar(vl));
+      const ang = 2 * Math.acos(Math.min(1, Math.abs(tq2.w)));
+      const lean = Math.min(1, vl * 1.5) * (ang > 1e-6 ? Math.min(1, 0.3 / ang) : 1);
+      tq.premultiply(tq3.identity().slerp(tq2, lean));
+    }
+    // smoothed, so neither a cut between scales nor a stop can flip it
+    if (!this.settled) { s.root.quaternion.copy(tq); this.settled = true; } else s.root.quaternion.slerp(tq, 1 - Math.exp(-dt * 4));
     s.update(dt, t);
 
     // our camera: behind and above the ship, or in the pilot's seat (the nose points +Z)
@@ -115,5 +135,7 @@ export class Voyage {
   }
 }
 
-const tv1 = new THREE.Vector3(), tv2 = new THREE.Vector3();
+const tv1 = new THREE.Vector3(), tv2 = new THREE.Vector3(), tv3 = new THREE.Vector3();
+const tq = new THREE.Quaternion(), tq2 = new THREE.Quaternion(), tq3 = new THREE.Quaternion(), te = new THREE.Euler();
+const NOSE = new THREE.Vector3(0, 0, 1);
 const FLIP = new THREE.Quaternion().setFromAxisAngle(UP, Math.PI);
