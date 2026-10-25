@@ -305,7 +305,7 @@ export class WarLayer {
       });
   }
 
-  private card(id: number, c: ExCtx): Explanation {
+  card(id: number, c: ExCtx): Explanation {
     const w = this.wars.find((x) => x.id === id) ?? null;
     const A = warAnnals()?.wars[id];
     if (!w) return { eyebrow: 'War', title: A?.name ?? 'War', lede: 'This war is no longer on the map at this year.', facts: [] };

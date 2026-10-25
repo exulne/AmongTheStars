@@ -19,6 +19,7 @@ import { BEAM, SCOOP, shipStyle } from './shipStyles.ts';
 import { applyCultureLights, cultureLight, cultureSkin, lookKey, societyLook } from './societyLook.ts';
 import { REDUCED_MOTION, applyPlanetLook } from './timeLook.ts';
 import { WarLayer } from './warLayer.ts';
+import { BattleLayer } from './battle.ts';
 import { STAGE_COLORS, flareTex, galaxySpriteTex, glowTex, pointsMaterial, specColor } from './textures.ts';
 import { explainGalaxy } from '../explain/galaxy.ts';
 import { addCpuSet, addGpuSet, nearestPoint, pxPerUnit } from '../explain/picker.ts';
@@ -758,6 +759,7 @@ export class SystemView implements View {
     },
   });
   private world: World | null = null;
+  private battle = new BattleLayer((b) => this.vis.find((v) => v.id === b)?.mesh.position ?? null, (id, c) => this.wars.card(id, c));
 
   enter(ctx: Ctx): void {
     this.build(ctx);
@@ -818,7 +820,7 @@ export class SystemView implements View {
     this.trails.addTo(this.group);
     this.trails.explain('shipy');
     this.world = ctx.world;
-    this.group.add(this.wars.group);
+    this.group.add(this.wars.group, this.battle.group);
     explainWorks('starw', this.group, () => this.star.children, () => ({ body: -1, sys: this.builtFor }), 1);
   }
 
@@ -912,6 +914,7 @@ export class SystemView implements View {
     this.works.frame(ctx.tm, REDUCED_MOTION);
     this.drawShips(ctx);
     this.wars.draw(ctx.world, ctx.snap, ctx.year, ctx.t);
+    this.battle.draw(ctx.world, ctx.snap, ctx.year, ctx.t, this.builtFor);
   }
 
   /** Interstellar ships leaving or reaching this system: a trail from the world to the edge, toward the other star, with motes flowing along it. */
