@@ -569,6 +569,7 @@ inspector.onBio = () => { if (micro.pid) { inspector.openPerson(micro.pid); insp
 // pick one person and follow their whole life: a quiet panel off the header
 const lifePick = new LifePick({
   bodies: () => (ctx.snap ? Array.from(ctx.snap.settled) : [world.earth]).filter((b) => world.bodies[b]),
+  home: world.earth,
   nameOf: (b) => naming.place(world, b),
   year: () => ctx.year,
   find: (b, n, k, y) => sim.findPerson(b, n, k, y),

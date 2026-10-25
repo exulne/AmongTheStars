@@ -11,6 +11,8 @@ export interface FindResult { person: string | null; brief: PersonBrief | null; 
 export interface LifePickOpts {
   /** bodies anyone was ever born on, for the birthplace list */
   bodies: () => number[];
+  /** the default birthplace (Earth), pinned to the top of the list */
+  home: number;
   nameOf: (b: number) => string;
   year: () => number;
   find: (body: number, n: number, kind: string, year: number) => Promise<FindResult>;
@@ -71,7 +73,7 @@ export class LifePick {
     const keep = this.bodySel.value;
     const bodies = [...new Set(this.opts.bodies())]
       .map((id) => ({ id, name: this.opts.nameOf(id) }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => (a.id === this.opts.home ? -1 : b.id === this.opts.home ? 1 : a.name.localeCompare(b.name)));
     this.bodySel.innerHTML = bodies.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('');
     if (keep && bodies.some((b) => String(b.id) === keep)) this.bodySel.value = keep;
   }
