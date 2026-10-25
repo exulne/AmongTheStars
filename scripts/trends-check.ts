@@ -7,7 +7,8 @@ import { Engine } from '../src/sim/engine.ts';
 import { FLOW, NPERIODS, isShipBody, periodOf, periodStart } from '../src/sim/ledger.ts';
 import { GLOBAL_METRICS, GM, HIST_FIELDS, NGM } from '../src/sim/metrics.ts';
 import { MARKET_WINDOW, buildTrends } from '../src/sim/trends.ts';
-import { SECTIONS, buildReport, marketsAt, rowAt, shockSignal, signalAt } from '../src/sim/trendSignals.ts';
+import { REPORT_COLUMNS, SECTIONS, buildReport, marketsAt, reportTable, rowAt, seriesTable, shockSignal, signalAt } from '../src/sim/trendSignals.ts';
+import { toCsv } from '../src/ui/exporter.ts';
 import { buildWorld } from '../src/sim/world.ts';
 
 const seed = Number(process.argv[2] ?? 7);
@@ -205,6 +206,25 @@ ok(!/faith/i.test(JSON.stringify(t)), 'payload mentions no faith');
   const gr = rows.find((r) => r.section === 'Market size and growth' && r.key === 'gdp')!;
   ok(Math.abs(gr.runChange! - cagr) < 1e-9, `gdp run CAGR ${gr.runChange} vs ${cagr}`);
   ok(!/faith/i.test(JSON.stringify(rows)), 'report mentions no faith');
+
+  // CSV copies
+  const repCsv = toCsv(REPORT_COLUMNS, reportTable(rows), `Trends report, future #${seed}`);
+  const repLines = repCsv.split('\n').filter((l) => l && !l.startsWith('#'));
+  ok(repLines[0] === REPORT_COLUMNS.join(','), 'report CSV header');
+  ok(repLines.length - 1 === rows.length, `report CSV ${repLines.length - 1} lines vs ${rows.length} rows`);
+  ok(!/faith/i.test(repCsv), 'report CSV mentions no faith');
+
+  const { columns, rows: srows } = seriesTable(main.years, main.series, n);
+  const uniq = new Set<string>();
+  for (const sec of SECTIONS) for (const k of sec.metrics) uniq.add(k);
+  ok(columns.length === 1 + uniq.size, `series columns ${columns.length} vs ${1 + uniq.size}`);
+  ok(srows.length === n, `series rows ${srows.length} vs ${n}`);
+  const serCsv = toCsv(columns, srows, `Trends series, future #${seed}`);
+  const serLines = serCsv.split('\n').filter((l) => l && !l.startsWith('#'));
+  ok(serLines.length - 1 === n, `series CSV ${serLines.length - 1} lines vs ${n}`);
+  const numCell = /^-?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+  ok(serLines.slice(1).every((l) => l.split(',').every((c) => c === '' || numCell.test(c))), 'series CSV cells are numbers or empty');
+  ok(!/faith/i.test(serCsv), 'series CSV mentions no faith');
 }
 
 // ---- faith stays out ----

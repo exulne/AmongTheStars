@@ -8,11 +8,12 @@
 import type { Annals } from '../sim/chronicle.ts';
 import { NPERIODS, periodOf } from '../sim/ledger.ts';
 import { GLOBAL_METRICS, GM } from '../sim/metrics.ts';
-import { buildReport, marketsAt, SECTIONS, shockSignal, signalAt, turningPoints, type Dir, type ReportRow, type Signal, type TrendSection } from '../sim/trendSignals.ts';
+import { buildReport, marketsAt, REPORT_COLUMNS, reportTable, SECTIONS, seriesTable, shockSignal, signalAt, turningPoints, type Dir, type ReportRow, type Signal, type TrendSection } from '../sim/trendSignals.ts';
 import type { Trends } from '../sim/trends.ts';
 import { AnalystChart, type AData, type ALine } from './analystChart.ts';
 import { globalSeries } from './charts.ts';
 import { esc, type DataHost, type DataTab } from './dataPanel.ts';
+import { copyText, toCsv } from './exporter.ts';
 import { fmtNum, fmtUnit, fmtYear } from './format.ts';
 import { PALETTE } from './miniChart.ts';
 
@@ -77,6 +78,16 @@ export class TrendsTab implements DataTab {
       this.secs.push({ el, list, chart: null, data: null, signal: null, live: null, def: null });
     }
     this.el.addEventListener('click', (e) => {
+      const act = (e.target as HTMLElement).closest<HTMLElement>('button[data-act]')?.dataset.act;
+      if (act === 'report-csv' || act === 'series-csv') {
+        const sim = this.host.sim, status = this.repBody.querySelector<HTMLElement>('.copy-status');
+        if (act === 'report-csv' && this.report) void copyText(toCsv(REPORT_COLUMNS, reportTable(this.report), `Trends report, future #${sim.seed}`), 'Report as CSV', status);
+        if (act === 'series-csv') {
+          const { columns, rows } = seriesTable(sim.years, sim.series, Math.min(sim.years.length, sim.frontier + 1));
+          void copyText(toCsv(columns, rows, `Trends series, future #${sim.seed}`), 'Series as CSV', status);
+        }
+        return;
+      }
       const b = (e.target as HTMLElement).closest<HTMLElement>('button[data-y]');
       if (!b) return;
       this.host.pickYear?.(Number(b.dataset.y));
@@ -399,7 +410,7 @@ export class TrendsTab implements DataTab {
       if (tps.length) s += `. ${tps.map(([w, y]) => `${w} ${yb(y)}`).join(', ')}.`;
       lis.push(`<li>${s}</li>`);
     }
-    return `<ol class="tr-rep">${lis.join('')}</ol>`;
+    return `<ol class="tr-rep">${lis.join('')}</ol><p class="tr-rep-tools"><button class="link" type="button" data-act="report-csv">Copy report (CSV)</button> <button class="link" type="button" data-act="series-csv">Copy series (CSV)</button> <span class="copy-status muted" aria-live="polite"></span></p>`;
   }
 
   /** Signal lines, the live market list, faint future points and chart cursors — all at the cursor year. */

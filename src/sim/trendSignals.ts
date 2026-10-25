@@ -236,3 +236,25 @@ export function buildReport(years: ArrayLike<number>, series: ArrayLike<number>,
   }
   return rows;
 }
+
+export const REPORT_COLUMNS = ['section', 'key', 'label', 'unit', 'kind', 'start_year', 'start_value', 'end_year', 'end_value', 'run_change', 'run_change_kind', 'last50_change', 'last50_direction', 'peak_year', 'peak_value', 'trough_year', 'trough_value', 'steepest_rise_year', 'steepest_fall_year'];
+/** Report rows as table rows, in REPORT_COLUMNS order: years as calendar years (2040 + year), null as NaN (exported as an empty cell), run_change_kind 'CAGR %/yr' | 'absolute' | 'events'. */
+export function reportTable(rows: ReportRow[]): (string | number)[][] {
+  const cal = (y: number) => 2040 + y;
+  return rows.map((r) => [
+    r.section, r.key, r.label, r.unit, r.kind,
+    cal(r.startYear), r.start, cal(r.endYear), r.end,
+    r.runChange ?? NaN, r.kind === 'rate' ? 'CAGR %/yr' : r.kind === 'delta' ? 'absolute' : 'events',
+    r.lastChange ?? NaN, r.lastDir,
+    cal(r.peakYear), r.peak, cal(r.troughYear), r.trough, cal(r.riseYear), cal(r.fallYear),
+  ]);
+}
+
+/** Every SECTIONS metric over the run: columns ['year', ...unique metric keys in SECTIONS order], one row per simulated step (year as 2040 + year). */
+export function seriesTable(years: ArrayLike<number>, series: ArrayLike<number>, n: number): { columns: string[]; rows: number[][] } {
+  const keys: string[] = [];
+  for (const sec of SECTIONS) for (const k of sec.metrics) if (!keys.includes(k)) keys.push(k);
+  const rows: number[][] = [];
+  for (let i = 0; i < n; i++) rows.push([2040 + years[i], ...keys.map((k) => series[i * NGM + GM[k]])]);
+  return { columns: ['year', ...keys], rows };
+}
