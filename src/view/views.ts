@@ -15,6 +15,7 @@ import { styleOf } from './epoch.ts';
 import { makeGalaxy } from './galaxyPoints.ts';
 import { atmosphereMaterial, planetMaterial, setCityLights } from './planetShader.ts';
 import { Orbitals, StarWorks, tierRank } from './orbitals.ts';
+import { OrbitInfra } from './orbitInfra.ts';
 import { EarthOrbitLayers } from './orbitLayers.ts';
 import { BEAM, SCOOP, shipStyle } from './shipStyles.ts';
 import { applyCultureLights, cultureLight, cultureSkin, lookKey, societyLook } from './societyLook.ts';
@@ -26,7 +27,7 @@ import { pointWorld, registerExplainer } from '../explain/registry.ts';
 import { explainShips, shipId } from '../explain/ships.ts';
 import { explainSky, type Observer } from '../explain/sky.ts';
 import { explainBackground } from '../explain/universe.ts';
-import { explainBelt, type BeltInfo, explainElevators, explainOrbits, explainRings, explainSats, explainSwarm } from '../explain/worlds.ts';
+import { explainBelt, type BeltInfo, explainElevators, explainOrbits, explainRings, explainSwarm } from '../explain/worlds.ts';
 import { explainLocalRings } from '../explain/local.ts';
 import { explainWorks } from '../explain/orbitals.ts';
 import { explainComet, explainFeatures } from '../explain/geo.ts';
@@ -1047,12 +1048,13 @@ export class PlanetView implements View {
   private starCol = new THREE.Color();
   private pivot = new THREE.Group();
   private orbit = new THREE.Group();
-  private sats: ReturnType<typeof pointCloud> | null = null;
+  /** what this world has built in orbit (infra.ts): constellations, stations, power, yards, defence, tugs, an orbital ring */
+  private infra = new OrbitInfra();
   /** Earth only: the simulated fleet's shells and the observed GP layer (orbitLayers.ts) */
   private earthOrbits = new EarthOrbitLayers();
   private elevators: THREE.Group[] = [];
   private elevSince = -1;
-  private cityKey = ''; private satKey = -1; private elevKey = -1; private archKey = '';
+  private cityKey = ''; private elevKey = -1; private archKey = '';
   private arch: THREE.InstancedMesh | null = null;
   private prings: { mesh: THREE.Mesh; body: number }[] = [];
   /** surface features worth a card (polar caps, scars, storms, lakes, plumes), and the date they were drawn for */
@@ -1115,8 +1117,8 @@ export class PlanetView implements View {
     this.group.add(this.orbit);
     explainElevators('elev', this.pivot, () => this.elevators, () => this.builtFor);
     explainWorks('work', this.group, () => this.works.works, () => ({ body: this.builtFor, sys: ctx.world.bodies[this.builtFor].system }));
-    this.cities = null; this.works.reset(); this.sats = null; this.elevators = [];
-    this.cityKey = ''; this.satKey = -1; this.elevKey = -1; this.archKey = ''; this.arch = null;
+    this.cities = null; this.works.reset(); this.elevators = [];
+    this.cityKey = ''; this.elevKey = -1; this.archKey = ''; this.arch = null;
     this.feats = []; this.geoYear = NaN;
     const cam = ctx.camera, planet = this.planet;
     explainFeatures('geof', planet, () => this.feats, () => this.builtFor, (i, out) => {
@@ -1213,26 +1215,8 @@ export class PlanetView implements View {
     const isEarth = b === ctx.world.earth;
     if (isEarth) this.earthOrbits.sync(this.orbit, this.group, ctx.world, ctx.snap, on);
     else this.earthOrbits.dispose(this.orbit, this.group);
-    const nSat = on && !isEarth ? Math.min(900, 30 + st * st * 22) : 0;
-    if (this.satKey !== nSat) {
-      this.satKey = nSat;
-      if (this.sats) { this.orbit.remove(this.sats.pts); this.sats.pts.geometry.dispose(); }
-      this.sats = null;
-      if (nSat) {
-        const r = new Rng(b * 7 + 1);
-        this.sats = pointCloud(nSat, pointsMaterial({ minPx: 0.8, maxPx: 3 }));
-        for (let i = 0; i < nSat; i++) {
-          const shell = i % 3, R = 10.6 + shell * 0.9 + r.next() * 0.25, inc = (shell - 1) * 0.6 + r.gauss() * 0.08, th = r.range(0, Math.PI * 2);
-          tv1.set(Math.cos(th) * R, 0, Math.sin(th) * R).applyAxisAngle(tv2.set(1, 0, 0), inc);
-          this.sats.pos.set([tv1.x, tv1.y, tv1.z], i * 3);
-          this.sats.col.set([0.75, 0.85, 0.95], i * 3);
-          this.sats.size[i] = 0.12 + r.next() * 0.1;
-        }
-        dirty(this.sats.pts);
-        this.orbit.add(this.sats.pts);
-        explainSats('sat', this.sats.pts, () => this.builtFor);
-      }
-    }
+    // everything else this world has built up there, from the infrastructure model
+    this.infra.sync(this.orbit, this.pivot, this.group, ctx.world, ctx.snap, b, ctx.year, on, () => this.cityPos);
     // space elevators once the tech exists: tether from the equator to a counterweight past synchronous orbit
     const elev = ctx.snap && on && st >= STAGE.COLONY && ctx.snap.techDone[ELEVATOR] >= 0 ? (st >= STAGE.HUB ? 3 : 1) : 0;
     this.elevSince = elev ? ctx.snap!.techDone[ELEVATOR] : -1;
@@ -1266,7 +1250,7 @@ export class PlanetView implements View {
     if (!(Math.abs(ctx.year - this.geoYear) < 0.01)) this.geoLook(ctx);
     this.orbit.rotation.y = ctx.tm * 0.015;
     this.works.frame(ctx.tm);
-    if (this.sats) this.sats.pts.rotation.y = ctx.tm * 0.05;
+    this.infra.frame(ctx.t, ctx.tm);
     this.earthOrbits.frame(ctx.tm);
     if (ctx.body === ctx.world.earth) this.earthOrbits.sync(this.orbit, this.group, ctx.world, ctx.snap, alive(stageOf(ctx.snap, ctx.body)));
     for (const g of this.elevators) {
@@ -1306,6 +1290,7 @@ export class PlanetView implements View {
       const top = (this.elevators[0].children[1] as THREE.Sprite).position.clone().applyMatrix4(this.pivot.matrixWorld);
       out.push({ pos: top, text: this.elevators.length > 1 ? `${this.elevators.length} space elevators` : 'Space elevator', sub: `since ${Math.round(2040 + this.elevSince)}`, prio: 4, ref: { kind: 'thing', id: 0, ex: 'elev', name: 'Space elevator' } });
     }
+    for (const l of this.infra.labels()) out.push({ pos: l.pos, text: l.text, sub: l.sub, prio: 3, ref: { kind: 'thing', id: 0, ex: l.ex, name: l.text } });
     out.push({ pos: new THREE.Vector3(0, 11.5, 0), text: b.name, sub: alive(st) ? `${STAGE_NAMES[st]} · ${fmtNum(popOf(ctx.snap, ctx.body))} people` : st >= 0 ? STAGE_NAMES[st] : 'never settled', strong: true, ref: { kind: 'body', id: ctx.body }, prio: 10 });
     return out;
   }
