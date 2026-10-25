@@ -198,6 +198,7 @@ const dataPanel = installDataDesk({
   selectBody: (b) => select(asPick({ kind: 'body', id: b })),
   showSeries: (key) => { if (charts.el.hidden) chartsToggle.click(); charts.show(key); },
   pickYear: (y) => seekTo(y),
+  ensemble: () => ensemble,
 });
 
 // below the street: one person's body, cells, molecules, atoms; above the Local Group: every future

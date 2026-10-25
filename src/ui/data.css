@@ -109,3 +109,4 @@
 .tr-pts li.future { opacity: 0.45; }
 .tr-pts .link, .tr-rep .link { font-size: 0.82rem; }
 .tr-pts .link:hover { color: var(--accent); }
+.tr-ens { font-size: 0.85rem; margin: 0 0 0.4rem; }

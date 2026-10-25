@@ -8,6 +8,7 @@ import { DATA_FIELDS, DATA_FIELD_IDX, DATA_METRICS, F, GM, NF, NGM, SETTLEMENT_L
 import { PLACE_EXTRAS, placeBinder, tryCompile, type PlaceRow } from '../sim/query.ts';
 import type { World } from '../sim/world.ts';
 import { copyText, toCsv, toJson } from './exporter.ts';
+import type { Ensemble } from './ensemble.ts';
 import { fmtNum, fmtYear } from './format.ts';
 
 export interface DataHost {
@@ -16,6 +17,8 @@ export interface DataHost {
   year(): number;
   selectBody(b: number): void;
   selectedBody(): number;
+  /** the sibling-futures ensemble, once the run is done */
+  ensemble?(): Ensemble | null;
   /** mark these bodies in the 3D view (null: none) */
   setHighlight(ids: Iterable<number> | null): void;
   /** show a series key in the bottom charts */

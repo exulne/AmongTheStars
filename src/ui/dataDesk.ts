@@ -4,6 +4,7 @@
 
 import type { SimClient } from '../sim/client.ts';
 import type { World } from '../sim/world.ts';
+import type { Ensemble } from './ensemble.ts';
 import type { Ctx, View } from '../view/views.ts';
 import './data.css';
 import { DataPanel } from './dataPanel.ts';
@@ -28,6 +29,7 @@ export interface DeskOpts {
   selectBody: (b: number) => void;
   showSeries: (key: string) => void;
   pickYear?: (y: number) => void;
+  ensemble?: () => Ensemble | null;
 }
 
 export function installDataDesk(o: DeskOpts): DataPanel {
@@ -39,6 +41,7 @@ export function installDataDesk(o: DeskOpts): DataPanel {
     setHighlight: (ids) => hl.set(ids),
     showSeries: o.showSeries,
     pickYear: o.pickYear,
+    ensemble: o.ensemble,
   });
   desk.add(new ChartsTab(desk.hostApi));
   desk.add(new TrendsTab(desk.hostApi));

@@ -143,6 +143,37 @@ export interface TrendSection { id: string; title: string; question: string; how
 export interface Ctx { years: ArrayLike<number>; series: ArrayLike<number>; n: number; t: Trends | null }
 export interface MetricSignal { key: string; label: string; unit: string; kind: MetricKind; span: number; fromYear: number; from: number; toYear: number; to: number; change: number | null; dir: Dir }
 
+/** Cross-future stats for a series or ratio metric at cursor y: siblings are other futures' global series on the same step years (rows × NGM). */
+export interface CrossStats { compared: number; dirKnown: number; sameDir: number; percentile: number | null }
+
+/** The first series or ratio metric of a section — the one cross-future stats track. */
+export function crossMetric(s: TrendSection): (TrendMetric & { src: 'series' | 'ratio' }) | null {
+  return s.metrics.find((m): m is TrendMetric & { src: 'series' | 'ratio' } => m.src === 'series' || m.src === 'ratio') ?? null;
+}
+
+/** How this future's metric compares with sibling futures' at y: shared direction over the window and the percentile of its level. */
+export function crossAt(m: TrendMetric, c: Ctx, sib: ArrayLike<number>[], y: number): CrossStats | null {
+  if ((m.src !== 'series' && m.src !== 'ratio') || sib.length < 5) return null;
+  const mine = metricSignal(m, c, y);
+  if (!mine) return { compared: sib.length, dirKnown: 0, sameDir: 0, percentile: null };
+  const i = rowAt(c.years, c.n, y);
+  const val = (ser: ArrayLike<number>): number => {
+    if (i < 0) return NaN;
+    if (m.src === 'series') return ser[i * NGM + GM[m.key]];
+    const d = ser[i * NGM + GM[m.den]];
+    return d > 0 ? m.scale * ser[i * NGM + GM[m.num]] / d : NaN;
+  };
+  const mv = val(c.series);
+  let dirKnown = 0, sameDir = 0, below = 0, ranked = 0;
+  for (const s of sib) {
+    const ss = metricSignal(m, { years: c.years, series: s, n: c.n, t: null }, y);
+    if (ss) { dirKnown++; if (ss.dir === mine.dir) sameDir++; }
+    const v = val(s);
+    if (Number.isFinite(v) && Number.isFinite(mv)) { ranked++; if (v < mv) below++; }
+  }
+  return { compared: sib.length, dirKnown, sameDir, percentile: ranked ? below / ranked : null };
+}
+
 /** A metric's display facts: key, label, unit, kind (log → rate) and its window. */
 export function metricInfo(m: TrendMetric): { key: string; label: string; unit: string; kind: MetricKind; span: number } {
   const span = m.span ?? WINDOW;
@@ -359,10 +390,15 @@ export interface ReportRow {
   peakYear: number; peak: number;      // turningPoints max; count: the busiest period's start and count
   troughYear: number; trough: number;  // turningPoints min (NaN for count)
   riseYear: number; fallYear: number;  // steepest rise / fall (NaN for count)
+  futures: number;              // sibling futures compared (NaN without an ensemble; series/ratio rows only)
+  endPct: number;               // share of siblings below this future's end value, 0–1 (NaN)
+  medianRunChange: number;      // median sibling runChange (NaN)
+  sameDir: number;              // siblings whose last-window dir equals lastDir (NaN)
 }
 
-/** The end-of-run report: one row per metric of every section (hotspots contributes none). */
-export function buildReport(years: ArrayLike<number>, series: ArrayLike<number>, n: number, t: Trends): ReportRow[] {
+/** The end-of-run report: one row per metric of every section (hotspots contributes none).
+ *  sib: other futures' global series (rows × NGM on the same step years), for cross-future stats. */
+export function buildReport(years: ArrayLike<number>, series: ArrayLike<number>, n: number, t: Trends, sib?: ArrayLike<number>[]): ReportRow[] {
   const rows: ReportRow[] = [];
   const ctx: Ctx = { years, series, n, t };
   const at = (xs: number[], ys: number[], i: number) => i >= 0 && i < xs.length ? { y: xs[i], v: ys[i] } : { y: NaN, v: NaN };
@@ -382,6 +418,7 @@ export function buildReport(years: ArrayLike<number>, series: ArrayLike<number>,
           runChange: ys.length, lastChange: s.recent - s.before, lastDir: s.dir,
           peakYear: pk >= 0 ? periodStart(pk) : NaN, peak: pn || NaN,
           troughYear: NaN, trough: NaN, riseYear: NaN, fallYear: NaN,
+          futures: NaN, endPct: NaN, medianRunChange: NaN, sameDir: NaN,
         });
         continue;
       }
@@ -399,19 +436,51 @@ export function buildReport(years: ArrayLike<number>, series: ArrayLike<number>,
       const tp = ser ? turningPoints(ser.xs, ser.ys, rate) : { max: -1, min: -1, rise: -1, fall: -1 };
       const xs = ser?.xs ?? [], ys2 = ser?.ys ?? [];
       const pk2 = at(xs, ys2, tp.max), tr = at(xs, ys2, tp.min);
+      // cross-future stats: only for series/ratio rows, only with >= 5 siblings
+      let futures = NaN, endPct = NaN, medianRunChange = NaN, sameDir = NaN;
+      if ((m.src === 'series' || m.src === 'ratio') && sib && sib.length >= 5) {
+        const lastY = years[n - 1];
+        const cs = crossAt(m, ctx, sib, lastY);
+        futures = sib.length;
+        endPct = cs?.percentile ?? NaN;
+        const lastDir = s?.dir ?? 'flat';
+        const med: number[] = [];
+        let sd = 0;
+        for (const ser2 of sib) {
+          const c2: Ctx = { years, series: ser2, n, t: null };
+          const ms2 = metricSeries(m, c2);
+          if (ms2) {
+            let j0 = -1;
+            for (let i = 0; i < ms2.ys.length; i++) if (Number.isFinite(ms2.ys[i]) && (!rate || ms2.ys[i] > 0)) { j0 = i; break; }
+            if (j0 >= 0) {
+              const st2 = ms2.ys[j0], en2 = ms2.ys[ms2.ys.length - 1], t2 = ms2.xs[ms2.xs.length - 1] - ms2.xs[j0];
+              const rc = rate ? (st2 > 0 && en2 > 0 && t2 > 0 ? 100 * (Math.pow(en2 / st2, 1 / t2) - 1) : null) : en2 - st2;
+              if (rc !== null && Number.isFinite(rc)) med.push(rc);
+            }
+          }
+          const ss2 = metricSignal(m, c2, lastY);
+          if (ss2 && ss2.dir === lastDir) sd++;
+        }
+        if (med.length) {
+          med.sort((a, b) => a - b);
+          medianRunChange = med.length % 2 ? med[(med.length - 1) >> 1] : (med[med.length / 2 - 1] + med[med.length / 2]) / 2;
+        }
+        sameDir = sd;
+      }
       rows.push({
         section: sec.title, key: info.key, label: info.label, unit: info.unit, kind: info.kind, span: info.span,
         startYear, start, endYear, end,
         runChange, lastChange: s ? s.change : null, lastDir: s?.dir ?? 'flat',
         peakYear: pk2.y, peak: pk2.v, troughYear: tr.y, trough: tr.v,
         riseYear: at(xs, ys2, tp.rise).y, fallYear: at(xs, ys2, tp.fall).y,
+        futures, endPct, medianRunChange, sameDir,
       });
     }
   }
   return rows;
 }
 
-export const REPORT_COLUMNS = ['section', 'key', 'label', 'unit', 'kind', 'window_years', 'start_year', 'start_value', 'end_year', 'end_value', 'run_change', 'run_change_kind', 'last_window_change', 'last_window_direction', 'peak_year', 'peak_value', 'trough_year', 'trough_value', 'steepest_rise_year', 'steepest_fall_year'];
+export const REPORT_COLUMNS = ['section', 'key', 'label', 'unit', 'kind', 'window_years', 'start_year', 'start_value', 'end_year', 'end_value', 'run_change', 'run_change_kind', 'last_window_change', 'last_window_direction', 'peak_year', 'peak_value', 'trough_year', 'trough_value', 'steepest_rise_year', 'steepest_fall_year', 'futures_compared', 'end_percentile_among_futures', 'median_run_change_other_futures', 'last50_same_direction_futures'];
 /** Report rows as table rows, in REPORT_COLUMNS order: years as calendar years (2040 + year), null as NaN (exported as an empty cell), run_change_kind 'CAGR %/yr' | 'absolute' | 'events'. */
 export function reportTable(rows: ReportRow[]): (string | number)[][] {
   const cal = (y: number) => 2040 + y;
@@ -421,6 +490,7 @@ export function reportTable(rows: ReportRow[]): (string | number)[][] {
     r.runChange ?? NaN, r.kind === 'rate' ? 'CAGR %/yr' : r.kind === 'delta' ? 'absolute' : 'events',
     r.lastChange ?? NaN, r.lastDir,
     cal(r.peakYear), r.peak, cal(r.troughYear), r.trough, cal(r.riseYear), cal(r.fallYear),
+    r.futures, Number.isFinite(r.endPct) ? 100 * r.endPct : NaN, r.medianRunChange, r.sameDir,
   ]);
 }
 
