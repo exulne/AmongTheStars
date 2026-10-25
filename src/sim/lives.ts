@@ -475,7 +475,9 @@ export class Lives {
   }
 
   /** Someone matching `want` on `body` (-1: any world that saw births). `n` > 0 picks that
-   *  birth number; 0 draws at random, up to a few hundred tries until the filters fit. */
+   *  birth number; 0 draws at random, up to a few hundred tries until the filters fit.
+   *  `total` is everyone the draw could reach (the living census when filtered with no born
+   *  range, else the births in the window by `year`); `scanned` is how many people it drew. */
   pickLife(body: number, n: number, kind: string, year: number, want: PickWant | undefined, salt: number): { person: Id | null; total: number; scanned: number; standing: Biography['standing'] } {
     const KIND_WORD: Record<string, string> = { baseline: 'baseline human', adapted: 'adapted to this world', uploaded: 'uploaded' };
     // one named person on one named world: the exact lookup, filters checked once
@@ -521,7 +523,6 @@ export class Lives {
       const r = ranges.find((x) => (j < x.count ? true : ((j -= x.count), false)))!;
       return this.D.origin(r.pool, r.start + j);
     };
-    let total = 0;
     const filtered = !!want && Object.values(want).some((v) => v !== undefined);
     const TRIES = filtered ? 500 : 120;
     const censuses = new Map<number, { total: number; at: (k: number) => Id }>();
@@ -543,6 +544,8 @@ export class Lives {
     };
     const cumFor = (list: number[]) => { const c: number[] = []; let s = 0; for (const b of list) c.push((s += weightOf(b))); return c; };
     const bodiesCum = cumFor(bodies), eventCum = cumFor(eventBodies);
+    const total = bodiesCum.length ? bodiesCum[bodiesCum.length - 1] : 0;   // everyone the draw can reach
+    let sampled = 0;
     for (let t = 0; t < TRIES; t++) {
       const biased = eventBodies.length && hash01(this.e.seed, salt, t, 9) < 0.7;
       const pool = biased ? eventBodies : bodies, cum = biased ? eventCum : bodiesCum;
@@ -558,22 +561,21 @@ export class Lives {
         let c = censuses.get(b);
         if (!c) { c = this.D.census(b, pC); censuses.set(b, c); }
         if (!c.total) continue;
-        total = Math.max(total, c.total);
         id = c.at(Math.floor(hash01(this.e.seed, salt, t, 2) * c.total));
       } else {
         let tot = birthsOf.get(b);
         if (tot === undefined) { tot = this.bornBy(b, 1, year, lo, hi).total; birthsOf.set(b, tot); }
         if (!tot || (n > 0 && n > tot)) continue;
-        total = Math.max(total, tot);
         id = this.bornBy(b, n > 0 ? n : 1 + Math.floor(hash01(this.e.seed, salt, t, 2) * tot), year, lo, hi).person;
       }
       if (!id) continue;
+      sampled++;
       const kk = kind === 'random' ? 'any' : kind;
       if (kk !== 'any' && this.kindAt(id, year) !== KIND_WORD[kk]) continue;
       const got = this.match(id, year, want ?? {});
-      if (got !== false) return { person: id, total, scanned: t + 1, standing: got || null };
+      if (got !== false) return { person: id, total, scanned: sampled, standing: got || null };
     }
-    return { person: null, total, scanned: TRIES, standing: null };
+    return { person: null, total, scanned: sampled, standing: null };
   }
 
   private deathCause(id: Id, s: Stay, age: number): string {

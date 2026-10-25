@@ -77,6 +77,20 @@ export function searchYear(want: PickWant | undefined, viewed: number, end: numb
   return b[0] >= end ? end : Math.max(Math.floor(b[0]) + 1, Math.ceil(end - r * (end - b[0])));
 }
 
+/** Why a search found nobody, as plain text (the caller escapes it): where and when it looked,
+ *  and how many people it sampled from how many. */
+export function noMatchText(m: { where: string | null; n: number; total: number; sampled: number; year: number; want?: PickWant }): string {
+  const place = m.where ? `on ${m.where}` : 'on any world', yr = fmtYear(m.year);
+  if (m.where && m.n > 0) {   // a numbered person on a named world: an exact lookup, not a sample
+    if (!m.total) return `Nobody has ever been born on ${m.where}.`;
+    if (m.n > m.total) return `${m.where} has seen ${fmtNum(m.total)} birth${m.total === 1 ? '' : 's'} — pick a number up to that.`;
+    return `No match for person #${m.n.toLocaleString('en-US')} ${place} in ${yr} — try another number, or loosen a filter.`;
+  }
+  if (!m.total) return m.want && !m.want.born ? `Nobody lived ${m.where ? place : 'anywhere'} in ${yr}.`
+    : `Nobody${m.want?.born ? ' in that birth range' : ''} had been born ${m.where ? place : 'anywhere'} by ${yr}.`;
+  return `No match among ${fmtNum(m.sampled)} ${m.sampled === 1 ? 'person' : 'people'} sampled from ${fmtNum(m.total)} ${place}, in ${yr} — loosen a filter, or press Follow again for a new sample.`;
+}
+
 export class LifePick {
   el: HTMLElement;
   private opts: LifePickOpts;
@@ -197,13 +211,7 @@ export class LifePick {
     const r = await this.opts.find(b, n, kind, year, filtered ? want : undefined);
     if (seq !== this.seq) return;
     if (r.pending) { this.say('This future is still simulating; its people appear when it finishes.', seq); return; }
-    if (!r.person) {
-      this.say(b < 0 ? `Nobody anywhere matches that${filtered ? ' — loosen a filter or two.' : '.'}`
-        : !r.total ? `Nobody has ever been born on ${esc(where!)}.`
-        : kind === 'any' && n === 0 && !filtered ? `${esc(where!)} has seen ${fmtNum(r.total)} birth${r.total === 1 ? '' : 's'} — pick a number up to that.`
-        : `No match on ${esc(where!)} among ${fmtNum(Math.max(r.scanned, n))} scanned${filtered ? ' — loosen a filter or two' : ''}.`, seq);
-      return;
-    }
+    if (!r.person) { this.say(esc(noMatchText({ where, n, total: r.total, sampled: r.scanned, year, want: filtered ? want : undefined })), seq); return; }
     this.opts.open(r.person);
     if (year !== shown) this.opts.seek(year);   // after open on purpose: open() replaces any follow in progress, so the seek can't steer the camera to the previously followed person
     const p = r.brief, st = r.standing;

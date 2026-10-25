@@ -6,8 +6,8 @@ import { FLOW, SHIP_BODY, isShipBody, periodOf, periodStart } from '../src/sim/l
 import { Lives } from '../src/sim/lives.ts';
 import { HIST_FIELDS } from '../src/sim/metrics.ts';
 import { buildWorld } from '../src/sim/world.ts';
-import { buildWant, searchYear } from '../src/ui/lifePick.ts';
-import { fmtYear } from '../src/ui/format.ts';
+import { buildWant, noMatchText, searchYear } from '../src/ui/lifePick.ts';
+import { fmtNum, fmtYear } from '../src/ui/format.ts';
 
 const seed = Number(process.argv[2] ?? 1);
 const world = buildWorld();
@@ -328,6 +328,36 @@ checkShares(e1500, 'Earth@1500');
   const r11 = L.pickLife(-1, 0, 'any', yr2, open, 99);
   const by2 = r11.person ? L.D.birthYear(r11.person) : NaN;
   ok(by2 >= 60 && by2 <= yr2, `T10: open-ended at ${fmtYear(yr2)} found someone born ${fmtYear(by2)}`);
+}
+
+// --- T11: the no-match message says where and when it looked, and how many it drew
+{
+  const V = (o: Record<string, string>) => (k: string) => o[k] ?? '';
+  ok(noMatchText({ where: null, n: 0, total: 9.6e9, sampled: 500, year: 0, want: { sex: 'f' } }) === 'No match among 500 people sampled from 9.60B on any world, in 2040 — loosen a filter, or press Follow again for a new sample.', 'T11: a filtered draw on any world');
+  ok(noMatchText({ where: 'Mars', n: 0, total: 1.2e6, sampled: 120, year: 300 }) === 'No match among 120 people sampled from 1.20M on Mars, in 2340 — loosen a filter, or press Follow again for a new sample.', 'T11: a draw on a named world');
+  ok(noMatchText({ where: 'Mars', n: 0, total: 50, sampled: 1, year: 0 }).includes('among 1 person sampled'), 'T11: one person drawn is singular');
+  ok(noMatchText({ where: 'Mars', n: 5000, total: 1234, sampled: 0, year: 0 }) === 'Mars has seen 1.23K births — pick a number up to that.', 'T11: a number past every birth');
+  ok(noMatchText({ where: 'Mars', n: 3, total: 0, sampled: 0, year: 0 }) === 'Nobody has ever been born on Mars.', 'T11: a number on a birthless world');
+  ok(noMatchText({ where: 'Earth', n: 5, total: 9e9, sampled: 5, year: 0, want: { sex: 'm' } }) === 'No match for person #5 on Earth in 2040 — try another number, or loosen a filter.', 'T11: a numbered person the filters exclude');
+  ok(noMatchText({ where: 'Mars', n: 0, total: 0, sampled: 0, year: 0 }) === 'Nobody had been born on Mars by 2040.', 'T11: a world with no births yet');
+  ok(noMatchText({ where: 'Mars', n: 0, total: 0, sampled: 0, year: 0, want: { sex: 'f' } }) === 'Nobody lived on Mars in 2040.', 'T11: filtered, nobody living there');
+  ok(noMatchText({ where: null, n: 0, total: 0, sampled: 0, year: 10000, want: { born: [10960, 1e6] } }) === 'Nobody in that birth range had been born anywhere by 12040.', 'T11: a birth range nobody reached');
+  // a real miss: an impossible height range, drawn from the living census at the year
+  const imp = buildWant(V({ 'height-lo': '1', 'height-hi': '2' })), YR = 1500;
+  const r = L.pickLife(-1, 0, 'any', YR, imp, 4321);
+  ok(r.person === null, 'T11: impossible heights find nobody');
+  ok(r.scanned > 0 && r.scanned <= 500, `T11: drew ${r.scanned} people looking`);
+  const pC = Math.max(0, Math.min(L.D.lastPeriod, periodOf(YR) - 1));
+  let living = 0;
+  for (const b of L.birthBodies(YR)) living += Math.max(0, e.ledger!.popEnd.get(b)?.[pC] ?? 0);
+  ok(Math.abs(r.total - living) <= 1e-9 * living, `T11: total ${fmtNum(r.total)} ≈ the living ${fmtNum(living)}`);
+  const miss = noMatchText({ where: null, n: 0, total: r.total, sampled: r.scanned, year: YR, want: imp });
+  console.log(`  T11 miss text: ${miss}`);
+  ok(miss.includes(fmtNum(r.scanned)) && miss.includes(fmtNum(r.total)) && miss.includes('3540'), 'T11: the miss text names the counts and the year');
+  // a real numbered miss: a number beyond every birth on Mars
+  const rn = L.pickLife(world.mars, 1e15, 'any', 3000, undefined, 1);
+  const numMiss = noMatchText({ where: 'Mars', n: 1e15, total: rn.total, sampled: rn.scanned, year: 3000 });
+  ok(rn.person === null && numMiss.startsWith('Mars has seen ') && numMiss.endsWith('pick a number up to that.'), `T11: numbered miss — ${numMiss}`);
 }
 
 process.exit(fails ? 1 : 0);
