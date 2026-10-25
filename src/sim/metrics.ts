@@ -79,6 +79,8 @@ export const SETTLEMENT_FIELDS = [
   'lastEvent', 'terraform', 'inbound',
   'lifeExp', 'tfr', 'orbitalPower', 'heatLoad',
   'transport',
+  // living worlds (geo.ts): the world's climate as its people feel it
+  'tempAnom', 'seaLevel', 'aerosol', 'pressure', 'habEff',
 ] as const;
 export type SField = typeof SETTLEMENT_FIELDS[number];
 export const F = Object.fromEntries(SETTLEMENT_FIELDS.map((k, i) => [k, i])) as Record<SField, number>;
@@ -93,7 +95,9 @@ export const SETTLEMENT_LABELS: Partial<Record<SField, [string, string]>> = {
   capacity: ['Habitat capacity', 'people'], imports: ['Imports', 't/yr'], exports: ['Exports', 't/yr'],
   lifeExp: ['Life expectancy at birth', 'yr'], tfr: ['Children per woman', ''],
   energyRatio: ['Energy supply ratio', '×'], orbitalPower: ['Power in orbit (habitats, swarm)', 'W'], transport: ['Transport spending it funds', '$/yr'], heatLoad: ['Surface waste heat, share of limit', '×'], shortage: ['Shortage', ''], robots: ['Robots', ''], terraform: ['Terraforming', ''],
+  tempAnom: ['Temperature against normal', 'K'], seaLevel: ['Sea level against 2040', 'm'], aerosol: ['Volcanic and impact haze (optical depth)', ''],
+  pressure: ['Surface pressure', 'bar'], habEff: ['Habitability now', ''],
 };
 
 // Settlement history columns logged every few steps (for per-settlement charts).
-export const HIST_FIELDS: SField[] = ['pop', 'energy', 'gdp', 'stability', 'research', 'water', 'metals', 'happiness'];
+export const HIST_FIELDS: SField[] = ['pop', 'energy', 'gdp', 'stability', 'research', 'water', 'metals', 'happiness', 'tempAnom'];

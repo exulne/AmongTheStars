@@ -11,6 +11,7 @@ import { FLOW, GENERATION, Ledger, NPERIODS, isPeriodBoundary, periodOf } from '
 import { next, seedRng, type RngState } from './rng.ts';
 import type { World } from './world.ts';
 import { Civ, H, HG, cloneCiv, type CivState } from './civ.ts';
+import { Geo, NGEO, type GeoHost } from './geo.ts';
 import { CF, EnvelopeCache, MissionLog, baseline, evaluate, interstellarAllowance, leoCostPerKg, packMission, routeFor, stepBudget, type Assumptions, type Economics, type MissionContext, type MissionSpec, type Route } from './launchEconomics.ts';
 
 export const YEAR0 = 2040;
@@ -70,6 +71,12 @@ export interface SimState {
   hx: CivState;            // faiths, polities, wars, languages... (civ.ts)
   /** per system: [year its Dyson swarm phase I began, year phase II began], -1 if not (yet) */
   swarm: Float64Array;
+  /** living worlds (geo.ts): per-world physical state (NGEO per row: Solar System bodies, then settlements elsewhere), globals, scars */
+  geo: Float64Array;
+  geoG: Float64Array;
+  scars: Float64Array;
+  /** geophysics draws only from its own stream, so they never reshuffle the engine's */
+  geoRng: RngState;
   nSettled: number;
   rng: RngState;
 }
@@ -172,6 +179,9 @@ export class Engine {
   /** generated inventions' share of fx.launch (the named techs are priced explicitly) */
   private genLaunch = 1;
   private refShip = { step: -1, cost: 0 };
+  /** physical state and events of every world (geo.ts) */
+  geo: Geo;
+  private geoHost: GeoHost;
 
   constructor(world: World, seed: number, opts: EngineOpts = {}) {
     this.world = world;
@@ -234,6 +244,11 @@ export class Engine {
     // how keen this civilization is on colony ships: the main source of spread in reach
     this.wanderlust = Math.exp(0.6 * Math.sqrt(-2 * Math.log(Math.max(1e-9, next(rng)))) * Math.cos(2 * Math.PI * next(rng)));
     this.civ = new Civ(this, (t, b, a = 0, bb = 0) => this.log(t, b, a, bb));
+    this.geo = new Geo(world, seed);
+    this.geoHost = {
+      world, log: (t, b, a = 0, bb = 0) => this.log(t, b, a, bb),
+      disaster: (b, t, k) => this.civ.onDisaster(b, t, k, this.year),
+    };
     this.st = this.initialState(rng);
     this.recomputeFx();
     this.record(0);
@@ -250,6 +265,7 @@ export class Engine {
       settled: new Int32Array(nb), nSettled: 0, rng, shipRetry: new Float64Array(this.world.systems.length),
       gen: new Float64Array(MAX_GEN * NGC), ages: new Float64Array(nb * NAGE), hx: this.civ.init(nb),
       swarm: new Float64Array(this.world.systems.length * 2).fill(-1),
+      ...this.geo.init(this.geo.nSol + nb), geoRng: seedRng(Math.imul(this.seed, 0x9e3779b1) ^ 0x6e0),
     };
     this.st = st;
     st.g[G.era] = 0;
@@ -280,7 +296,10 @@ export class Engine {
 
   private found(st: SimState, body: number, stage: number, pop: number, parent: number, year: number): void {
     const S = st.S, o = body * NF;
-    if (S[o + F.stage] === STAGE.NONE) { this.pos[body] = st.nSettled; st.settled[st.nSettled++] = body; }
+    if (S[o + F.stage] === STAGE.NONE) {
+      this.pos[body] = st.nSettled; st.settled[st.nSettled++] = body;
+      if (body >= this.geo.nSol) this.geo.initRow(st.geo, this.geo.nSol + this.pos[body], body);
+    }
     const ao = this.pos[body] * NAGE;
     for (let k = 0; k < NAGE; k++) st.ages[ao + k] = pop * CREW_AGES[k];
     S[o + F.stage] = stage;
@@ -403,6 +422,9 @@ export class Engine {
     // ---- per settlement
     this.longevity(year);
     this.systemsPass(year);
+    // the worlds themselves: climate, ice, seas, air, and what they cost the people on them this step
+    this.geo.step(this.geoHost, st, fx, this.pos, year, dt);
+    const geo = this.geo;
     // total factor productivity: Jones (1995) semi-endogenous growth, d ln A/dt = g0 (R/R0)^λ A^(−β):
     // research effort R raises A, but ideas get harder to find as A grows (Bloom, Jones, Van Reenen
     // & Webb 2020 find research productivity falling ≈ 5%/yr). Level shifts from named technologies
@@ -477,7 +499,8 @@ export class Engine {
       let pop = S[o + F.pop];
       const hab0 = this.bHab[b];
       const planetLike = hab0 >= 0.25 ? 1 : 0.3;
-      const h = Math.min(1, hab0 + fx.hab * planetLike + fx.habHostile * (hab0 < 0.3 ? 1 : 0.4) + S[o + F.terraform]);
+      const h = Math.max(0, Math.min(1, hab0 + fx.hab * planetLike + fx.habHostile * (hab0 < 0.3 ? 1 : 0.4) + S[o + F.terraform] + geo.habAdd[b] * planetLike));
+      S[o + F.habEff] = h;
 
       // capacity
       // capacity: the stage sets what is built; land (radius^2) and, once O'Neill
@@ -489,7 +512,7 @@ export class Engine {
       // ~3e12 m² each, so 1e9 people per tier is a handful of rings at Earth density)
       const room = 1e10 * this.bArea[b] * hf + (fx.orbital ? Math.min(1e9, STAGE_CAP[stg] * (0.1 + 0.2 * this.bRes[b * 5 + 1])) : 0) +
         (stg > STAGE.MEGA ? 1e9 * (stg - STAGE.MEGA) * (0.5 + this.bRes[b * 5 + 1]) : 0);
-      const cap = isEarth ? 1.15e10 * dense : Math.min(STAGE_CAP[stg] * hf * Math.pow(fx.lifeSupport, 0.25), room);
+      const cap = isEarth ? 1.15e10 * dense * geo.capMul[b] : Math.min(STAGE_CAP[stg] * hf * Math.pow(fx.lifeSupport, 0.25), room);
       S[o + F.capacity] = cap;
       // share of the room that is in orbit (cylinders, rings): those people radiate their own heat
       const fOrb = isEarth || room <= 0 ? 0 : 1 - Math.min(1, (1e10 * this.bArea[b] * hf) / room);
@@ -502,13 +525,15 @@ export class Engine {
       const perCap = isEarth
         ? 2600 * eTech
         : 14000 * Math.max(Math.pow(Math.min(flux, 4), 0.5), fx.fission > 0 ? 1 : 0) * eTech;
+      // dust storms and volcanic haze dim the sunlight solar power runs on
+      const perCapNow = perCap * geo.energyMul[b];
       const need = isEarth ? 2000 : 9000 * (1.5 - 0.5 * h);
       // the surface can only shed so much waste heat; orbital habitats and the system's Dyson
       // swarm radiate into space, so the swarm is booked to the hubs that run it, not to the ground
       const sy = this.bSys[b];
-      const surface = Math.min(pop * (1 - fOrb) * perCap, this.bHeat[b]);
-      const orbital = pop * fOrb * perCap + (stg >= STAGE.HUB && this.hubPop[sy] > 0 ? this.swarmW[sy] * pop / this.hubPop[sy] : 0);
-      const eRatio = pop > 0 ? (surface + orbital) / pop / need : perCap / need;
+      const surface = Math.min(pop * (1 - fOrb) * perCapNow, this.bHeat[b]);
+      const orbital = pop * fOrb * perCapNow + (stg >= STAGE.HUB && this.hubPop[sy] > 0 ? this.swarmW[sy] * pop / this.hubPop[sy] : 0);
+      const eRatio = pop > 0 ? (surface + orbital) / pop / need : perCapNow / need;
       S[o + F.energyRatio] = eRatio;
       S[o + F.energy] = surface + orbital + stg * 1e5;
       S[o + F.orbitalPower] = orbital; S[o + F.heatLoad] = surface / this.bHeat[b];
@@ -531,7 +556,7 @@ export class Engine {
         if (k < 3 && D > 0) worst = Math.min(worst, (P + Math.max(0, stock) / dt) / D);
       }
       const energyOk = Math.min(1, eRatio);
-      const food = Math.min(1, worst, energyOk * 1.2) * (fx.lifeSupport >= 1.5 ? 1 : 0.85 + 0.15 * h);
+      const food = Math.min(1, worst, energyOk * 1.2) * (fx.lifeSupport >= 1.5 ? 1 : 0.85 + 0.15 * h) * geo.foodMul[b];
       S[o + F.food] = food;
       const short = Math.max(0, 1 - Math.min(food, energyOk));
       S[o + F.shortage] = short;
@@ -641,7 +666,6 @@ export class Engine {
       const div0 = S[o + F.divergence];
       S[o + F.divergence] += dt * 0.0006 * fx.divergence * this.civ.mul(b, H.mDiv) * Math.pow(Math.abs(1 - this.bG[b]), 1.5) * (this.bSys[b] === 0 ? 0.4 : 1) * (isEarth ? 0 : 1);
       if (div0 < 1 && S[o + F.divergence] >= 1) this.log(EV.Speciation, b);
-      if (fx.hab > 0.1 && h < 0.8 && stg >= STAGE.CITY) S[o + F.terraform] = Math.min(0.5, S[o + F.terraform] + dt * 0.0008 * fx.hab);
 
       S[o + F.pop] = pop;
 
@@ -730,7 +754,7 @@ export class Engine {
       const b = st.settled[n], o = b * NF, stg = S[o + F.stage];
       if (!isAlive(stg)) continue;
       const sy = this.bSys[b];
-      if (this.sysMark[sy] !== mark) { this.sysMark[sy] = mark; list.push(sy); this.sysPop[sy] = 0; this.hubPop[sy] = 0; this.swarmW[sy] = 0; }
+      if (this.sysMark[sy] !== mark) { this.sysMark[sy] = mark; list.push(sy); this.sysPop[sy] = 0; this.hubPop[sy] = 0; this.swarmW[sy] = 0; this.geo.sysCov[sy] = 0; }
       this.sysPop[sy] += S[o + F.pop];
       if (stg >= STAGE.HUB) this.hubPop[sy] += S[o + F.pop];
     }
@@ -744,6 +768,7 @@ export class Engine {
       let cov = 2.6e-11 * Math.min(1, (year - sw[sy * 2]) / 50 + 0.1);
       if (sw[sy * 2 + 1] >= 0) cov = Math.max(cov, Math.min(lift, 2.6e-7 * Math.exp((year - sw[sy * 2 + 1]) / 60)));
       this.swarmW[sy] = cov * L_SUN * this.sysLum[sy] * Math.min(1, this.hubPop[sy] / 1e9);
+      this.geo.sysCov[sy] = cov * Math.min(1, this.hubPop[sy] / 1e9);
     }
   }
 
@@ -1357,6 +1382,7 @@ export class Engine {
       ships: st.ships.slice(0, st.g[G.nShips] * NSH), settled: st.settled.slice(0, st.nSettled), nSettled: st.nSettled, rng: st.rng.slice(),
       shipRetry: st.shipRetry.slice(), gen: st.gen.slice(0, st.g[G.nGen] * NGC), ages: st.ages.slice(0, st.nSettled * NAGE), hx: cloneCiv(st.hx),
       swarm: st.swarm.slice(),
+      geo: st.geo.slice(0, (this.geo.nSol + st.nSettled) * NGEO), geoG: st.geoG.slice(), scars: st.scars.slice(), geoRng: st.geoRng.slice(),
     };
   }
 
@@ -1371,6 +1397,8 @@ export class Engine {
       ages: (() => { const a = new Float64Array(nb * NAGE); a.set(s.ages); return a; })(),
       hx: cloneCiv(s.hx),
       swarm: s.swarm.slice(),
+      geo: (() => { const g = new Float64Array((this.geo.nSol + nb) * NGEO); g.set(s.geo); return g; })(),
+      geoG: s.geoG.slice(), scars: s.scars.slice(), geoRng: s.geoRng.slice(),
     };
     this.pos.fill(-1);
     for (let n = 0; n < s.nSettled; n++) this.pos[s.settled[n]] = n;
