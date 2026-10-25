@@ -29,6 +29,7 @@ import { LocalCalendar } from './ui/calendar.ts';
 import { EraBanner, eraRun, eraTitle } from './ui/eraBanner.ts';
 import { wayOfWarHtml } from './ui/wayOfWar.ts';
 import { setWarAnnals } from './view/warLayer.ts';
+import { bodyWars } from './view/warState.ts';
 import { EraMood } from './view/eraMood.ts';
 import { ShipConsole } from './ship/console.ts';
 import { Voyage } from './ship/voyage.ts';
@@ -793,7 +794,7 @@ function streetMood(): void {
   sim.events(ctx.year - 15, ctx.year, b, 40).then((evs) => {
     if (g !== runGen || !ctx.snap) return;
     const has = (n: string) => evs.some((e) => EVENT_NAMES[e.type] === n);
-    const war = era === 'War' || has('War');
+    const war = era === 'War' || has('War') || bodyWars(world, ctx.snap, b, ctx.year).length > 0;
     const plague = era === 'Pandemic' || has('Plague');
     const short = S[o + F.shortage] > 0.15 || has('Famine');
     const happy = S[o + F.happiness], stab = S[o + F.stability];
