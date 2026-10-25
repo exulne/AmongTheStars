@@ -19,7 +19,6 @@
 
 import * as THREE from 'three';
 import { OUTCOME } from '../sim/civ.ts';
-import type { Annals } from '../sim/chronicle.ts';
 import type { StateMsg } from '../sim/client.ts';
 import { F, NF } from '../sim/metrics.ts';
 import type { WarVis } from '../sim/worker.ts';
@@ -30,6 +29,8 @@ import { fmtNum, fmtYear } from '../ui/format.ts';
 import { factionColor } from './colorModes.ts';
 import { pointsMaterial } from './textures.ts';
 import { REDUCED_MOTION } from './timeLook.ts';
+import { frontOf, sideName, targetOf, warAnnals, warName } from './warState.ts';
+export { setWarAnnals } from './warState.ts';
 
 /** How long an ended war stays on the map, fading, years (matches worker.ts WAR_LINGER). */
 const LINGER = 40;
@@ -40,19 +41,6 @@ const SLUG = new THREE.Color(0.75, 0.9, 1), FLASH = new THREE.Color(1, 0.85, 0.6
 const cA = new THREE.Color(), cB = new THREE.Color(), cT = new THREE.Color();
 const hash = (b: number) => ((b * 2654435761) >>> 0) / 4294967296;
 const v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), v3 = new THREE.Vector3();
-
-let annals: Annals | null = null;
-/** The Chronicle's names for wars and polities, once the run is done. */
-export function setWarAnnals(a: Annals | null): void { annals = a; }
-
-const warName = (w: WarVis) => annals?.wars[w.id]?.name ?? (w.kinetic ? 'Kinetic strike' : 'War');
-function sideName(w: WarVis, side: 'a' | 'b', world: World): string {
-  const A = annals?.wars[w.id];
-  const pol = A ? annals!.polities[side === 'a' ? A.polityA : A.polityB] : undefined;
-  if (pol) return pol.name;
-  if (w.kinetic) return world.systems[side === 'a' ? w.from : w.sys].name;
-  return world.bodies[w[side]]?.name ?? '?';
-}
 
 export interface WarLabel { pos: THREE.Vector3; text: string; sub: string; sys: number; prio: number }
 
@@ -261,7 +249,7 @@ export class WarLayer {
       const active = year < w.end || w.outcome === OUTCOME.ONGOING;
       const fade = active ? 1 : Math.max(0, 1 - (year - w.end) / LINGER);
       if (fade <= 0) continue;
-      const front = this.frontOf(w, world, snap), target = this.targetOf(w, world, snap);
+      const front = frontOf(w, world, snap), target = targetOf(w, world, snap);
       const pf = front >= 0 ? I.body(front) : null, pt = target >= 0 ? I.body(target) : null;
       if (!pf || !pt) continue;
       factionColor(w.a, earth, cA); factionColor(w.b, earth, cB);
@@ -303,23 +291,6 @@ export class WarLayer {
     }
   }
 
-  /** Where each side fights from in the contested system: its most populous world there (the war log's front and target are polity-wide). */
-  private sideWorld(f: number, world: World, snap: StateMsg, sys: number): number {
-    let best = -1, top = -1;
-    for (const b of world.systems[sys].bodies) {
-      if (snap.S[b * NF + F.faction] !== f) continue;
-      const p = snap.S[b * NF + F.pop];
-      if (p > top) { top = p; best = b; }
-    }
-    return best >= 0 ? best : world.bodies[f]?.system === sys ? f : -1;
-  }
-  private frontOf(w: WarVis, world: World, snap: StateMsg): number { return this.sideWorld(w.a, world, snap, w.sys); }
-  private targetOf(w: WarVis, world: World, snap: StateMsg): number {
-    const t = this.sideWorld(w.b, world, snap, w.sys);
-    // annexed: the loser's worlds here now fly the winner's flag, so fall back to the loser's capital
-    return t >= 0 ? t : world.bodies[w.b]?.system === w.sys ? w.b : -1;
-  }
-
   /** Labels for the biggest fights under way at this year. */
   labels(world: World, year: number, n = 4): WarLabel[] {
     return this.wars
@@ -336,11 +307,11 @@ export class WarLayer {
 
   private card(id: number, c: ExCtx): Explanation {
     const w = this.wars.find((x) => x.id === id) ?? null;
-    const A = annals?.wars[id];
+    const A = warAnnals()?.wars[id];
     if (!w) return { eyebrow: 'War', title: A?.name ?? 'War', lede: 'This war is no longer on the map at this year.', facts: [] };
     const world = c.world, a = sideName(w, 'a', world), b = sideName(w, 'b', world), place = world.systems[w.sys].name;
     const done = w.outcome !== OUTCOME.ONGOING && c.year >= w.end;
-    const fw = !w.kinetic && c.snap ? this.frontOf(w, world, c.snap) : -1, tw = !w.kinetic && c.snap ? this.targetOf(w, world, c.snap) : -1;
+    const fw = !w.kinetic && c.snap ? frontOf(w, world, c.snap) : -1, tw = !w.kinetic && c.snap ? targetOf(w, world, c.snap) : -1;
     const worlds = fw >= 0 && tw >= 0 && fw !== tw ? `${world.bodies[fw].name} against ${world.bodies[tw].name}` : '';
     const facts: Fact[] = [
       { k: 'Sides', v: `${a} against ${b}`, t: 'P' },
