@@ -12,6 +12,7 @@
 // the same every visit; it rebuilds only when the infrastructure changes.
 
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Infra } from '../sim/infra.ts';
 import { hash01 } from '../sim/rng.ts';
 import type { Style } from './epoch.ts';
@@ -121,6 +122,7 @@ export class StreetInfra {
   // moving things
   private flyers: { lane: number; phase: number; speed: number; alt: number; rx: number; rz: number; tilt: number; straight: boolean }[] = [];
   private flyerMesh: THREE.InstancedMesh | null = null;
+  private flyerLen = 0.4;
   private flyerLights: Dots | null = null;
   private drones: Dots | null = null;
   private droneHomes: THREE.Vector3[] = [];
@@ -399,8 +401,10 @@ export class StreetInfra {
         tilt: h(k, 45) * Math.PI, straight,
       });
     }
-    const len = 0.4 + R * 0.008;
-    this.flyerMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(len, len * 0.22, len * 0.42), new THREE.MeshStandardMaterial({ color: 0x5c6470, metalness: 0.7, roughness: 0.3, emissive: 0x1a2a3a }), n);
+    const len = (0.4 + R * 0.008) * 1.6; // big enough for the Roadster shape to read
+    this.flyerLen = len;
+    this.flyerMesh = new THREE.InstancedMesh(roadster(len), new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.75, roughness: 0.28, emissive: 0x0a0d12 }), n);
+    for (let k = 0; k < n; k++) this.flyerMesh.setColorAt(k, PAINT[Math.floor(h(k, 46) * PAINT.length)]);
     this.flyerMesh.frustumCulled = false;
     this.flyerLights = dots(n * 2, 1.2, 6);
     this.group.add(this.flyerMesh, this.flyerLights.pts);
@@ -607,8 +611,9 @@ export class StreetInfra {
         }
         this.flyerMesh!.setMatrixAt(k, m.compose(p, q, s));
         const L = this.flyerLights!;
-        L.pos.set([p.x + d.x * 0.15, p.y, p.z + d.z * 0.15], k * 6); L.col.set([1, 0.97, 0.9], k * 6); L.size[k * 2] = 0.8 + 0.6 * night;
-        L.pos.set([p.x - d.x * 0.15, p.y, p.z - d.z * 0.15], k * 6 + 3); L.col.set(k % 7 ? [1, 0.22, 0.18] : [0.3, 0.9, 1], k * 6 + 3);
+        const e = this.flyerLen * 0.5; // head and tail lights at the nose and the ducktail
+        L.pos.set([p.x + d.x * e, p.y, p.z + d.z * e], k * 6); L.col.set([1, 0.97, 0.9], k * 6); L.size[k * 2] = 0.8 + 0.6 * night;
+        L.pos.set([p.x - d.x * e, p.y, p.z - d.z * e], k * 6 + 3); L.col.set(k % 7 ? [1, 0.22, 0.18] : [0.3, 0.9, 1], k * 6 + 3);
         L.size[k * 2 + 1] = (k % 7 ? 0.7 : Math.sin(T * 6 + k) > 0.5 ? 1.3 : 0.1) * (0.6 + night);
       });
       this.flyerMesh.instanceMatrix.needsUpdate = true;
@@ -701,4 +706,43 @@ export class StreetInfra {
     this.launches = []; this.launchTrail = null; this.launchHeads = null; this.sky = null; this.skyBase = null; this.swarm = null;
     this.plumes = null; this.stacks = []; this.beams = []; this.rovers = []; this.roverMesh = null; this.roverLights = null; this.cores = [];
   }
+}
+
+// Flying cars are Roadsters: a long, low two-seat wedge with a fastback canopy, nose along +x.
+// Paint comes from the instance colour (body vertices are white); glass, wheels and trim are dark.
+const PAINT = [0xb3121c, 0xb3121c, 0xb3121c, 0xe9ecef, 0x15171a, 0xa7adb5, 0x1f4fa8].map((c) => new THREE.Color(c));
+function roadster(len: number): THREE.BufferGeometry {
+  const tint = (g: THREE.BufferGeometry, f: (x: number, y: number, z: number) => number) => {
+    const P = g.attributes.position, c = new Float32Array(P.count * 3);
+    for (let i = 0; i < P.count; i++) { const k = f(P.getX(i), P.getY(i), P.getZ(i)); c.set([k, k, k], i * 3); }
+    g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+    return g;
+  };
+  // side profile, rear (-0.5) to nose (+0.5): low nose, long hood, raked windscreen, short fastback roof, ducktail
+  const sp = new THREE.Shape();
+  sp.moveTo(-0.5, 0.07);
+  sp.lineTo(0.47, 0.07);
+  sp.quadraticCurveTo(0.53, 0.09, 0.5, 0.14);
+  sp.quadraticCurveTo(0.36, 0.19, 0.16, 0.21);
+  sp.quadraticCurveTo(0.02, 0.31, -0.1, 0.31);
+  sp.quadraticCurveTo(-0.3, 0.29, -0.44, 0.22);
+  sp.lineTo(-0.5, 0.21);
+  sp.lineTo(-0.5, 0.07);
+  const body = new THREE.ExtrudeGeometry(sp, { depth: 0.36, bevelEnabled: true, bevelThickness: 0.04, bevelSize: 0.03, bevelSegments: 2, curveSegments: 8 });
+  body.translate(0, 0, -0.18);
+  // the cabin glass: everything above the beltline between windscreen and tail reads as dark glass
+  tint(body, (x, y) => (y > 0.235 && x < 0.13 && x > -0.36 ? 0.08 : 1));
+  const parts: THREE.BufferGeometry[] = [body.toNonIndexed()];
+  for (const [x, z] of [[0.31, 0.2], [0.31, -0.2], [-0.32, 0.2], [-0.32, -0.2]]) {
+    const w = new THREE.CylinderGeometry(0.078, 0.078, 0.07, 14);
+    w.rotateX(Math.PI / 2);
+    w.translate(x, 0.075, z);
+    parts.push(tint(w, (_x, _y, zz) => (Math.abs(Math.abs(zz) - 0.2) < 0.03 ? 0.3 : 0.06)).toNonIndexed());
+  }
+  for (const g of parts) { g.deleteAttribute('uv'); if (!g.attributes.color) tint(g, () => 1); }
+  const car = mergeGeometries(parts)!;
+  car.translate(0, -0.15, 0);
+  car.scale(len, len, len);
+  car.computeVertexNormals();
+  return car;
 }
