@@ -99,6 +99,8 @@ Status tags used throughout:
 
 **Model:** `launch_cost_LEO(t) = floor + (C0 − floor) × exp(−(t − 2040)/τ)`, with C0 = 100, floor = 15, τ = 25 yr. Then multiply by tech multipliers (§3) and the Kessler multiplier (event E06).
 
+**Implemented** in `src/sim/launchEconomics.ts` as a component-by-component, sourced, uncertain model (formulas, sources and limits in `research/launch-economics.md`). Tanker counts there emerge from the assumptions rather than the fixed 8 below.
+
 **Mars surface delivery cost:** `cost_mars_surface ≈ launch_cost_LEO × (1 + N_tankers) × 1.1 + ops`. 2040: N_tankers ≈ 8 (100–150 t transferred per tanker, about 1,200–1,500 t of propellant per ship), so ≈ **1,500–3,000 cr/kg** to the Mars surface. With Mars ISRU return propellant, that falls to ≈ 500 cr/kg by 2060.
 
 ### 1.3 Vehicle classes (starting catalog and plausible successors)

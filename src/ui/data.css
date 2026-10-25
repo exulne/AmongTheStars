@@ -53,3 +53,46 @@
 /* place history */
 .h-pins { display: flex; flex-wrap: wrap; gap: 0.2rem 1.1rem; }
 .h-pin { white-space: nowrap; }
+/* launch economics */
+.ec-note { font-size: 0.75rem; max-width: 60rem; }
+.ec-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: 0.6rem 1rem; }
+.ec-card { border-top: 1px solid var(--rule); padding-top: 0.25rem; min-width: 0; }
+.ec-card p { margin: 0; font-size: 0.72rem; }
+.ec-card .ec-v { font-size: 1.05rem; color: var(--ink); margin: 0.1rem 0; overflow-wrap: anywhere; }
+.ec-card .ec-s { font-size: 0.68rem; }
+.ec-bar { display: flex; gap: 2px; height: 0.9rem; margin: 0.4rem 0 0.3rem; }
+.ec-seg { display: block; min-width: 2px; flex-basis: 0; }
+.ec-seg:first-child { border-radius: 4px 0 0 4px; }
+.ec-seg:last-child { border-radius: 0 4px 4px 0; }
+.ec-seg:only-child { border-radius: 4px; }
+.ec-legend { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 0.1rem 1.2rem; font-size: 0.75rem; }
+.ec-legend li { display: flex; gap: 0.5rem; align-items: baseline; }
+.ec-legend li i, .ec-dot { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 2px; margin-right: 0.35rem; flex: none; }
+.ec-legend .num { margin-left: auto; }
+.ec-legend .num + .num { margin-left: 0; min-width: 3.2rem; text-align: right; }
+.ec-scen p { font-size: 0.75rem; max-width: 60rem; margin-top: 0.3rem; }
+.ec-adv summary { cursor: pointer; font-size: 0.8125rem; color: var(--quiet); margin-top: 0.3rem; }
+.ec-knobs { display: grid; grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr)); gap: 0.35rem 1.2rem; margin-top: 0.4rem; font-size: 0.75rem; }
+.ec-knob { display: flex; flex-wrap: wrap; gap: 0.1rem 0.5rem; align-items: baseline; }
+.ec-knob > span:first-child { flex: 1 1 100%; }
+.ec-knob input { width: 6.5rem; font: 0.8125rem var(--mono); background: transparent; border: 0; border-bottom: 1px solid var(--rule); color: var(--ink); }
+.ec-knob input.on { border-bottom-color: var(--accent); color: var(--accent); }
+.ec-insp { position: relative; border-top: 1px solid var(--rule); padding-top: 0.4rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.ec-insp[hidden] { display: none; }
+.ec-insp .insp-close { position: absolute; right: 0; top: 0.2rem; }
+.ec-ttl { margin: 0; font-size: 0.95rem; font-weight: 400; padding-right: 2rem; }
+.ec-sub { margin: 0.3rem 0 0; font-size: 0.85rem; font-weight: 400; }
+.ec-insp .run-stamp dd { overflow-wrap: anywhere; }
+.ec-insp .run-stamp dd .muted { font-size: 0.72rem; }
+.ec-tlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem; }
+.ec-tlist li { display: grid; grid-template-columns: minmax(8rem, 16rem) 1fr auto; gap: 0.6rem; align-items: center; }
+.ec-tb { position: relative; height: 0.7rem; }
+.ec-tb i { position: absolute; top: 0; bottom: 0; }
+.ec-tlo { background: #199e70; border-radius: 4px 0 0 4px; }
+.ec-thi { background: #d95926; border-radius: 0 4px 4px 0; }
+.ec-tb b { position: absolute; top: -0.15rem; bottom: -0.15rem; width: 1px; background: var(--ink); }
+.ec-tv { white-space: nowrap; }
+@media (max-width: 40rem) { .ec-tlist li { grid-template-columns: 1fr; gap: 0.1rem; } .ec-knobs { grid-template-columns: 1fr; } }
+/* the pane scrolls as a whole: its tables keep their height instead of shrinking to a few rows */
+.econ .tbl-scroll, .econ .tbl-scroll.short { flex: none; max-height: 55vh; }
+.econ .ec-insp .tbl-scroll { max-height: none; }

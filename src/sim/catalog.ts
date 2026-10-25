@@ -318,6 +318,8 @@ export const EVENT_NAMES = [
   'AI schism', 'Megastructure complete', 'Ship launched', 'Ship arrived', 'Invention', 'No-go theorem',
   // history that remembers (civ.ts)
   'Schism', 'Faith extinct', 'Faith spreads', 'Treaty', 'Kinetic strike', 'Regime change',
+  // crewed missions inside a star system (launchEconomics.ts): body = origin, a = destination (lost: body = destination, a = origin), b = mission id
+  'Mission launched', 'Mission lost',
 ] as const;
 export type EventName = typeof EVENT_NAMES[number];
 export const EV = Object.fromEntries(EVENT_NAMES.map((n, i) => [n, i])) as Record<EventName, number>;

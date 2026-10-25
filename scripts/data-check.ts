@@ -4,6 +4,7 @@
 import { handleData, type DataEnv, type DataReq, type DataRes } from '../src/sim/dataApi.ts';
 import { Engine, type SimState } from '../src/sim/engine.ts';
 import { F, NF } from '../src/sim/metrics.ts';
+import { MC, NMC } from '../src/sim/launchEconomics.ts';
 import { buildWorld } from '../src/sim/world.ts';
 
 const seed = Number(process.argv[2] ?? 7);
@@ -83,6 +84,17 @@ ok(!ph.pending && ph.steps.length === sum.steps.length && ph.rows[(lastRow + 0) 
 ok(Number.isNaN(ph.rows[(0 * 3 + 2) * NF + F.pop]), 'place history: NaN before a place is settled');
 const ph4 = await ask<'place'>({ type: 'place', bodies: [world.mars], stride: 4 });
 ok(ph4.steps.length > ph.steps.length * 4, `place history by replay: ${ph4.steps.length} points`);
+
+// launch economics: the records come back as copies, and asking leaves the engine as it was
+const nBefore = main.missions.n, firstBefore = main.missions.rows[MC.total];
+const ms = await ask<'missions'>({ type: 'missions', year: 10000 });
+ok(ms.rows.length === nBefore * NMC && ms.scenario === 'baseline' && ms.done, `missions: ${ms.rows.length / NMC} records`);
+const mid = await ask<'missions'>({ type: 'missions', year: 200 });
+ok(mid.rows.length < ms.rows.length && Array.from({ length: mid.rows.length / NMC }, (_, i) => mid.rows[i * NMC + MC.year]).every((y) => y <= 200), 'missions up to a year stop at that year');
+const one = await ask<'mission'>({ type: 'mission', mission: ms.rows[MC.id] });
+ok(!!one.row && one.row[MC.total] === ms.rows[MC.total], 'one mission by id matches the list');
+ms.rows.fill(-1);
+ok(main.missions.n === nBefore && main.missions.rows[MC.total] === firstBefore, 'asking for missions does not touch the engine');
 
 console.log(bad ? `${bad} data checks failed` : 'data: all checks ok');
 process.exit(bad ? 1 : 0);

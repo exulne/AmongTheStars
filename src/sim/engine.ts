@@ -11,6 +11,7 @@ import { FLOW, GENERATION, Ledger, NPERIODS, isPeriodBoundary, periodOf } from '
 import { next, seedRng, type RngState } from './rng.ts';
 import type { World } from './world.ts';
 import { Civ, H, HG, cloneCiv, type CivState } from './civ.ts';
+import { CF, EnvelopeCache, MissionLog, baseline, evaluate, interstellarAllowance, leoCostPerKg, packMission, routeFor, stepBudget, type Assumptions, type Economics, type MissionContext, type MissionSpec, type Route } from './launchEconomics.ts';
 
 export const YEAR0 = 2040;
 export const HORIZON = 10000;
@@ -45,8 +46,13 @@ const G = {
   nGen: 20,    // generated inventions so far
   tfp: 21,     // total factor productivity index A (Jones semi-endogenous growth), 1 in 2040
   researchers: 22, // effective research effort S behind TFP: people × research multipliers (last step)
+  // launch economics: launches flown so far (Starship-class learning curve) and all transport spending
+  cumLaunches: 24, transportCum: 25,
+  // this step's transport accounts, reset when a step begins (fully burdened 2024 USD; counts)
+  tSpend: 26, tProp: 27, tHw: 28, tOps: 29, tRisk: 30, tInfra: 31, tMhw: 32, tService: 33,
+  tTankers: 34, tCampaigns: 35, tLaunches: 36, tPayloadKg: 37, tPeople: 38,
 } as const;
-const NG = 24;
+const NG = 40;
 
 export interface SimState {
   step: number;
@@ -99,6 +105,11 @@ const TECH_REQ: number[][] = TECHS.map((t) => t.req.map((r) => TECH_INDEX.get(r)
 // shortest an age lasts, in years (Expansion, Consolidation, Golden Age, Stagnation, War, Pandemic, Collapse, Renaissance)
 const ERA_MIN = [50, 50, 40, 50, 12, 8, 30, 30];
 const TECH_FLOOR = TECHS.map((t) => t.earliest - 0.25 * (t.earliest - 2040));
+/** passengers in the reference shipload a scheduled service is priced for (cost is linear in passengers) */
+const SERVICE_LOAD = 100;
+
+/** Options a run is built with; the same seed and options give the same run. */
+export interface EngineOpts { econ?: Assumptions }
 
 export class Engine {
   world: World;
@@ -148,10 +159,25 @@ export class Engine {
   private gk = new Float64Array(NAGE); private gkB = -1;
   /** per body: this step's mortality law [A, B, b, under-5] for the people ledger (main run only) */
   private mort: Float64Array;
+  /** launch-economics assumptions this run prices transport with (constant for the run) */
+  econ: Assumptions;
+  private env: EnvelopeCache;
+  /** one record per crewed or interstellar mission, launch order (main run; replays log too when logEvents) */
+  missions = new MissionLog();
+  /** per body: transport money its polity spent this step (scratch); product of the polity it seats (scratch) */
+  private spent: Float64Array; private polGdp: Float64Array; private offer: Float64Array;
+  private routes = new Map<number, Route>();
+  private serviceCache = new Map<string, Economics>();
+  private fxStamp = 0;
+  /** generated inventions' share of fx.launch (the named techs are priced explicitly) */
+  private genLaunch = 1;
+  private refShip = { step: -1, cost: 0 };
 
-  constructor(world: World, seed: number) {
+  constructor(world: World, seed: number, opts: EngineOpts = {}) {
     this.world = world;
     this.seed = seed;
+    this.econ = opts.econ ?? baseline();
+    this.env = new EnvelopeCache(this.econ);
     const nb = world.bodies.length, ns = world.systems.length;
     this.bSys = new Int32Array(nb); this.bHab = new Float64Array(nb); this.bFlux = new Float64Array(nb);
     this.bG = new Float64Array(nb); this.bRes = new Float64Array(nb * 5); this.bSettle = new Uint8Array(nb);
@@ -187,6 +213,7 @@ export class Engine {
     });
     this.pos = new Int32Array(nb).fill(-1);
     this.mort = new Float64Array(nb * 4);
+    this.spent = new Float64Array(nb); this.polGdp = new Float64Array(nb); this.offer = new Float64Array(nb);
     this.nbr = neighbours(world);
     this.surveyCursor = this.nbr.start.slice();
 
@@ -288,6 +315,8 @@ export class Engine {
       }
     });
     fx.orbital = this.has('orbitalHabitats') ? 1 : 0;
+    let spineLaunch = 1;
+    TECHS.forEach((t, i) => { if (this.st.techDone[i] >= 0 && t.fx.launch !== undefined) spineLaunch *= t.fx.launch; });
     const gen = this.st.gen;
     for (let k = 0; k < this.st.g[G.nGen]; k++) {
       const key = EFFECTS[gen[k * NGC + GC.key]], size = gen[k * NGC + GC.size];
@@ -297,6 +326,8 @@ export class Engine {
       else fx[key] *= size;
     }
     this.fx = fx;
+    this.genLaunch = fx.launch / spineLaunch;
+    this.fxStamp++;
     this.gkB = -1;
   }
 
@@ -381,36 +412,56 @@ export class Engine {
     let research = 0, researchers = 0;
     // migration inside a system: Earth (launch-limited) and every town or bigger send
     // people to the young settlements around the same star, weighted by free room
-    const migW = this.migW.fill(0), migD = this.migD.fill(0);
-    migD[0] = Math.min(g[G.launchCap] / 8, S[eo + F.pop] * 0.002) * (S[eo + F.stage] === STAGE.HUB ? 1 : 0.2);
-    const earthOffer = migD[0];
+    const migW = this.migW.fill(0), migD = this.migD.fill(0), offer = this.offer;
+    const earthWant = Math.min(g[G.launchCap] / 8, S[eo + F.pop] * 0.002) * (S[eo + F.stage] === STAGE.HUB ? 1 : 0.2);
+    // transport accounts start afresh; budgets are per funding polity
+    for (let k = G.tSpend; k <= G.tPeople; k++) g[k] = 0;
+    this.polityGdp();
+    const receivers = new Map<number, number[]>();
     for (let n = 0; n < st.nSettled; n++) {
       const b = st.settled[n], o = b * NF, stg = S[o + F.stage];
-      if (b === earth || !isAlive(stg)) continue;
-      if (stg <= STAGE.CITY) migW[this.bSys[b]] += Math.max(0, S[o + F.capacity] - S[o + F.pop]) ** 0.5;
-      if (stg >= STAGE.COLONY) migD[this.bSys[b]] += S[o + F.pop] * MIGRATE;
+      if (b === earth || !isAlive(stg) || stg > STAGE.CITY) continue;
+      const room = Math.max(0, S[o + F.capacity] - S[o + F.pop]);
+      migW[this.bSys[b]] += room ** 0.5;
+      if (room > 0) push(receivers, this.bSys[b], b);
     }
-    // People are conserved: receivers take what fits, senders lose exactly that
-    // much in proportion to what they offered, and the ledger records who went where.
-    const recv = this.recv, sent = this.sent;
-    const senders = new Map<number, number[]>(), receivers = new Map<number, number[]>(), got = new Map<number, number>();
-    const contrib = (b: number) => (b === earth ? earthOffer : S[b * NF + F.pop] * MIGRATE);
+    // what each sender offers: Earth (launch-limited) and every colony or bigger, no more than its
+    // polity's transport budget pays for at the dearest reachable destination in its system
+    const senders = new Map<number, number[]>(), left = new Map<number, number>();
     for (let n = 0; n < st.nSettled; n++) {
       const b = st.settled[n], o = b * NF, stg = S[o + F.stage], sy = this.bSys[b];
-      recv[b] = 0; sent[b] = 0;
-      if (!isAlive(stg) || migW[sy] <= 0 || migD[sy] <= 0) continue;
-      if (b === earth || stg >= STAGE.COLONY) push(senders, sy, b);
-      if (b !== earth && stg <= STAGE.CITY) {
-        const room = Math.max(0, S[o + F.capacity] - S[o + F.pop]);
-        recv[b] = Math.min(migD[sy] * room ** 0.5 / migW[sy], room / dt);
-        if (recv[b] > 0) { push(receivers, sy, b); got.set(sy, (got.get(sy) ?? 0) + recv[b]); }
-      }
+      offer[b] = 0;
+      if (!isAlive(stg) || (b !== earth && stg < STAGE.COLONY)) continue;
+      const rs = receivers.get(sy);
+      const want = b === earth ? earthWant : S[o + F.pop] * MIGRATE;
+      if (!rs || want <= 0) continue;
+      let worst = 0;
+      for (const r of rs) { const e = this.service(b, r); if (e) worst = Math.max(worst, e.costPerPassenger); }
+      if (worst <= 0) continue;
+      const f = this.funder(b);
+      const budget = left.get(f) ?? this.budgetLeft(f, dt) * this.econ.budget.serviceShare.base;
+      offer[b] = Math.min(want, budget / (worst * dt));
+      left.set(f, budget - offer[b] * worst * dt);
+      migD[sy] += offer[b];
+      push(senders, sy, b);
     }
+    // People are conserved: each receiver's intake is shared among the senders that can reach it in
+    // proportion to their offers; senders lose exactly what they sent, and the ledger records who went where.
+    const recv = this.recv.fill(0), sent = this.sent.fill(0);
     for (const [sy, list] of senders) {
-      const k = (got.get(sy) ?? 0) / migD[sy];
-      for (const b of list) sent[b] = contrib(b) * k;
-      if (!this.ledger) continue;
-      for (const r of receivers.get(sy) ?? []) for (const b of list) this.ledger.migrate(b, r, recv[r] * contrib(b) / migD[sy] * dt);
+      for (const r of receivers.get(sy) ?? []) {
+        const room = Math.max(0, S[r * NF + F.capacity] - S[r * NF + F.pop]);
+        const take = Math.min(migD[sy] * room ** 0.5 / migW[sy], room / dt);
+        if (!(take > 0)) continue;
+        for (const b of list) {
+          const e = this.service(b, r);
+          if (!e) continue;
+          const flow = take * offer[b] / migD[sy];
+          recv[r] += flow; sent[b] += flow;
+          this.ledger?.migrate(b, r, flow * dt);
+          this.book(this.funder(b), e, flow * dt, flow * dt / SERVICE_LOAD, true);
+        }
+      }
     }
 
     const sysNet = new Map<number, Float64Array>(); // per-system resource pooling
@@ -632,6 +683,9 @@ export class Engine {
     this.globalEvents(dt, year);
     this.civ.step(dt, year);
     g[G.faiths] = 6 + st.hx.hg[HG.living]; // Earth's old faiths plus the living new ones
+    // what each polity spent on transport this step, per year, on its seat
+    // (scratch is left at zero between steps: a place founded mid-step must not inherit a replay's leftovers)
+    for (let n = 0; n < st.nSettled; n++) { const b = st.settled[n]; S[b * NF + F.transport] = this.spent[b] / dt; this.spent[b] = 0; }
 
     // series row k always describes the state at years[k], the same state a snapshot at step k holds
     st.step++;
@@ -691,6 +745,123 @@ export class Engine {
       if (sw[sy * 2 + 1] >= 0) cov = Math.max(cov, Math.min(lift, 2.6e-7 * Math.exp((year - sw[sy * 2 + 1]) / 60)));
       this.swarmW[sy] = cov * L_SUN * this.sysLum[sy] * Math.min(1, this.hubPop[sy] / 1e9);
     }
+  }
+
+  // ---- launch economics (launchEconomics.ts): who pays, what they may spend, what the world charges
+
+  /** The polity that pays for a place's transport: its faction seat while that lives, else itself. */
+  private funder(b: number): number {
+    const f = this.st.S[b * NF + F.faction] | 0;
+    return f >= 0 && isAlive(this.st.S[f * NF + F.stage]) ? f : b;
+  }
+
+  /** Product of every polity, booked to its seat; and this step's spending starts at zero. */
+  private polityGdp(): void {
+    const st = this.st, S = st.S;
+    for (let n = 0; n < st.nSettled; n++) this.polGdp[st.settled[n]] = 0;
+    for (let n = 0; n < st.nSettled; n++) {
+      const b = st.settled[n];
+      if (isAlive(S[b * NF + F.stage])) this.polGdp[this.funder(b)] += S[b * NF + F.gdp];
+    }
+  }
+
+  /** What a polity may still spend on in-system transport this step. */
+  private budgetLeft(f: number, dt: number): number {
+    const S = this.st.S;
+    return Math.max(0, stepBudget(this.econ, this.st.g[G.era], this.polGdp[f], S[f * NF + F.capital], dt) - this.spent[f]);
+  }
+
+  private route(from: number, to: number): Route {
+    const k = from * this.world.bodies.length + to;
+    let r = this.routes.get(k);
+    if (!r) { r = routeFor(this.world, from, to, this.econ.mission.atmosphereLandingDvKmS.base); this.routes.set(k, r); }
+    return r;
+  }
+
+  /** The world a mission from `from` to `to` launches into. Smooth quantities are rounded to a few
+   *  steps per e-fold so prices can be cached; the record keeps exactly what was priced. */
+  private missionCtx(from: number, to: number, shortage: number): MissionContext {
+    const S = this.st.S, g = this.st.g, fx = this.fx, year = g[G.year];
+    const has = (id: string) => this.has(id);
+    const q = (x: number) => Math.exp(Math.round(Math.log(Math.max(x, 1e-9)) * 20) / 20);
+    const isruAt = (b: number) => b >= 0 && S[b * NF + F.stage] >= STAGE.BASE && isAlive(S[b * NF + F.stage]) && has('isru');
+    let flags = 0;
+    if (has('reusable')) flags |= CF.reusable;
+    if (isruAt(to)) flags |= CF.isruDest;
+    if (isruAt(from) || (S[from * NF + F.stage] >= STAGE.OUTPOST && from !== this.world.earth && has('isru'))) flags |= CF.isruOrigin;
+    if (has('asteroidMining')) flags |= CF.asteroidDepot;
+    if (has('spaceElevator')) flags |= CF.elevator;
+    // no catalogue tech is a mass driver: building one takes regolith construction and fusion power (a design mapping)
+    if (has('regolith') && has('fusion')) flags |= CF.massDriver;
+    if (has('ntp')) flags |= CF.ntp;
+    if (has('fusionDrive')) flags |= CF.fusion;
+    // orbital shipyards: metal from the belt and the know-how to build cities in orbit
+    if (has('asteroidMining') && has('orbitalHabitats')) flags |= CF.shipyards;
+    if (year < g[G.kesslerUntil]) flags |= CF.kessler;
+    if (has('seedShips')) flags |= CF.seedShips;
+    if (has('genShip')) flags |= CF.genShip;
+    return {
+      era: g[G.era], flags, shortage: Math.round(Math.max(0, Math.min(1, shortage)) * 20) / 20,
+      productivity: q(fx.productivity), energyFx: q(fx.energy), launchGen: q(this.genLaunch), cumLaunches: g[G.cumLaunches],
+      pLossTransit: 0, shipSpeedC: fx.shipSpeed,
+    };
+  }
+
+  /** A scheduled passenger service, priced per reference shipload (null: no vehicle can fly it). Cached per route and price context. */
+  private service(from: number, to: number): Economics | null {
+    const ctx = this.missionCtx(from, to, 0);
+    const S0 = this.econ.starship;
+    const bucket = Math.floor(Math.log2(1 + ctx.cumLaunches / S0.learningRefLaunches.base) * 8);
+    const key = `${from},${to},${ctx.era},${ctx.flags},${bucket},${ctx.productivity},${ctx.energyFx},${ctx.launchGen}`;
+    let e = this.serviceCache.get(key);
+    if (e === undefined) {
+      const spec: MissionSpec = { kind: 'service', crew: SERVICE_LOAD, cargoKg: 0, route: this.route(from, to) };
+      e = evaluate(spec, ctx, this.econ);
+      if (this.serviceCache.size > 50000) this.serviceCache.clear();
+      this.serviceCache.set(key, e);
+    }
+    return e.feasible && e.total > 0 ? e : null;
+  }
+
+  /** Book transport spending: out of the funder's capital, into this step's accounts. */
+  private book(funder: number, e: Economics, people: number, scale: number, service: boolean): void {
+    const g = this.st.g, c = e.cost, S = this.st.S;
+    const total = e.total * scale;
+    g[G.tSpend] += total; g[G.transportCum] += total;
+    g[G.tProp] += (c.propellantEarth + c.propellantOffEarth) * scale;
+    g[G.tHw] += c.hardware * scale;
+    g[G.tOps] += (c.refurbishment + c.groundOps + c.missionOps + c.rangeRegulatory + c.payloadIntegration + c.inSpaceOps) * scale;
+    g[G.tRisk] += (c.insurance + c.expectedLoss) * scale;
+    g[G.tInfra] += c.infrastructure * scale;
+    g[G.tMhw] += c.missionHardware * scale;
+    if (service) g[G.tService] += total;
+    g[G.tTankers] += e.tankerFlights * scale;
+    g[G.tLaunches] += e.totalLaunches * scale;
+    g[G.tCampaigns] += service ? e.ships * scale : 1;
+    g[G.tPayloadKg] += e.payloadKg * scale;
+    g[G.tPeople] += people;
+    // only rocket launches teach the rocket factories
+    if (e.vehicle === 'starship' || e.vehicle === 'ntp' || e.vehicle === 'fusion') g[G.cumLaunches] += e.totalLaunches * scale;
+    this.spent[funder] += total;
+    S[funder * NF + F.capital] = Math.max(0, S[funder * NF + F.capital] - total);
+  }
+
+  /** Log a mission's economics (main run). */
+  private logMission(id: number, from: number, to: number, funder: number, spec: MissionSpec, ctx: MissionContext, e: Economics): void {
+    if (!this.logEvents) return;
+    const lo = evaluate(spec, ctx, this.env.lo), hi = evaluate(spec, ctx, this.env.hi);
+    const o = this.missions.add(id);
+    packMission(this.missions.rows, o, { id, year: this.st.g[G.year], from, to, funder }, spec, ctx, e, lo, hi);
+  }
+
+  /** What a reference interstellar ship (2,000 colonists, 10 ly) costs this step: the scale ambition is measured against. */
+  private refShipCost(): number {
+    if (this.refShip.step === this.st.step) return this.refShip.cost;
+    const earth = this.world.earth, ctx = this.missionCtx(earth, -1, 0);
+    ctx.pLossTransit = 0.2;
+    const e = evaluate({ kind: 'interstellar', crew: 2000, cargoKg: 0, route: { origin: 0, ascentKmS: 0, outKmS: 0, backKmS: 0, transitYears: 300, distanceLy: 10 } }, ctx, this.econ);
+    this.refShip = { step: this.st.step, cost: e.total };
+    return e.total;
   }
 
   private lagToCapital(b: number): number {
@@ -893,18 +1064,14 @@ export class Engine {
         }
         // nobody can send more people than they have
         const crew = best >= 0 ? Math.min(Math.floor(S[o + F.pop]) - 1, isEarth ? 8 + Math.floor(this.rand() * 30) : 20 + Math.floor(this.rand() * 200)) : 0;
-        if (best >= 0 && crew >= 4) {
-          this.found(st, best, STAGE.OUTPOST, crew, b, year);
-          S[o + F.pop] = Math.max(0, S[o + F.pop] - crew);
-          this.travel(st, b, best, crew, year, year, FLOW.CREW);
-          this.log(EV['Colony founded'], best, b, 0);
-        }
+        if (best >= 0 && crew >= 4) this.crewMission(b, best, crew, year, dt);
       }
       // interstellar: needs a drive, a colony with money, and a stable home
       if (fx.shipSpeed <= 0 || stg < STAGE.CITY) continue;
-      const shipCost = 4e12 / Math.sqrt(fx.productivity);
+      // ambition is measured against what a reference ship costs now (launchEconomics.ts)
+      const shipCost = this.refShipCost();
       const pShip = dt * 0.0008 * this.wanderlust * eraLaunch * this.civ.mul(b, H.mLaunch) * Math.min(4, Math.sqrt(gdp / shipCost)) * (isEarth ? 3 : 1);
-      if (this.rand() < pShip && S[o + F.capital] > shipCost) {
+      if (this.rand() < pShip && S[o + F.capital] > 0.25 * shipCost) {
         let target = -1, ftlTrip = false;
         if (fx.ftl > 0 && stg >= STAGE.HUB && this.rand() < 0.25 * fx.ftl) {
           target = this.pickRemote(fx.ftl2 > 0 && this.rand() < 0.3 ? 3 : 2); ftlTrip = true;
@@ -918,8 +1085,16 @@ export class Engine {
         const d = this.dist(b, target);
         const travel = ftlTrip ? 3 + this.rand() * 10 : d / fx.shipSpeed + 4;
         const colonists = fx.reliability > 0.25 ? 300 + this.rand() * 2000 : 1000 + this.rand() * 5000;
-        if (!this.launch(b, target, year, year + travel, colonists, ftlTrip ? 1 : 0)) continue;
-        S[o + F.capital] -= shipCost;
+        // the ship's own price: built for these colonists, this voyage, this drive; the hub pays, within its means
+        const spec: MissionSpec = { kind: ftlTrip ? 'warp' : 'interstellar', crew: colonists, cargoKg: 0, route: { origin: isEarth ? 0 : 1, ascentKmS: 0, outKmS: 0, backKmS: 0, transitYears: travel, distanceLy: d } };
+        const ctx = this.missionCtx(b, -1, S[o + F.shortage]);
+        ctx.pLossTransit = 1 - shipSurvival(fx.reliability, travel);
+        const e = evaluate(spec, ctx, this.econ);
+        if (e.total > interstellarAllowance(this.econ, st.g[G.era], gdp, S[o + F.capital])) continue;
+        const id = this.launch(b, target, year, year + travel, colonists, ftlTrip ? 1 : 0);
+        if (id < 0) continue;
+        this.book(b, e, colonists, 1, false);
+        this.logMission(id, b, target, b, spec, ctx, e);
         S[o + F.pop] -= colonists;
       }
     }
@@ -967,10 +1142,35 @@ export class Engine {
     return -1;
   }
 
-  private launch(from: number, to: number, depart: number, arrive: number, colonists: number, kind: number): boolean {
+  /** A crew sent to found an outpost elsewhere in the same system: priced, paid for, and flown (or lost). */
+  private crewMission(b: number, to: number, crew: number, year: number, dt: number): void {
+    const st = this.st, S = st.S, o = b * NF;
+    const spec: MissionSpec = { kind: 'crew', crew, cargoKg: crew * this.econ.mission.cargoPerCrewKg.base, route: this.route(b, to) };
+    const ctx = this.missionCtx(b, to, S[o + F.shortage]);
+    const e = evaluate(spec, ctx, this.econ);
+    const f = this.funder(b);
+    // only when some vehicle can fly the route and the polity can pay for the whole campaign
+    if (!e.feasible || e.total > this.budgetLeft(f, dt)) return;
+    const lost = this.rand() < e.pMissionLoss;
+    if (!lost) this.found(st, to, STAGE.OUTPOST, crew, b, year);
+    S[o + F.pop] = Math.max(0, S[o + F.pop] - crew);
+    const id = this.travel(st, b, to, crew, year, year, FLOW.CREW);
+    this.book(f, e, crew, 1, false);
+    this.logMission(id, b, to, f, spec, ctx, e);
+    this.missions.setOutcome(id, lost ? 2 : 1);
+    this.log(EV['Mission launched'], b, to, id);
+    if (lost) {
+      const fi = this.flowIndex.get(id);
+      if (this.ledger && fi !== undefined) this.ledger.flows[fi].lost = true;
+      this.log(EV['Mission lost'], to, b, id);
+    } else this.log(EV['Colony founded'], to, b, 0);
+  }
+
+  /** Returns the ship's mission id, or -1 when no slot is free. */
+  private launch(from: number, to: number, depart: number, arrive: number, colonists: number, kind: number): number {
     const st = this.st;
     const n = st.g[G.nShips];
-    if (n >= MAX_SHIPS) return false;
+    if (n >= MAX_SHIPS) return -1;
     const o = n * NSH;
     st.ships[o + SH.from] = from; st.ships[o + SH.to] = to; st.ships[o + SH.depart] = depart;
     st.ships[o + SH.arrive] = arrive; st.ships[o + SH.colonists] = colonists; st.ships[o + SH.kind] = kind;
@@ -981,7 +1181,7 @@ export class Engine {
     // reserve the target so two ships don't race for it
     if (st.S[to * NF + F.stage] === STAGE.NONE) this.found(st, to, STAGE.SURVEY, 0, from, depart);
     st.S[to * NF + F.inbound]++;
-    return true;
+    return st.ships[o + SH.flow];
   }
 
   private ships(year: number): void {
@@ -994,8 +1194,10 @@ export class Engine {
       const voyage = sh[o + SH.arrive] - sh[o + SH.depart];
       st.S[to * NF + F.inbound]--;
       const seq = sh[o + SH.flow], gen = this.generationShips.has(seq);
-      const pOk = Math.max(0.2, Math.min(0.97, 0.82 + fx.reliability - 0.12 * (voyage / 200)));
-      if (this.rand() < pOk) {
+      const pOk = shipSurvival(fx.reliability, voyage);
+      const ok = this.rand() < pOk;
+      this.missions.setOutcome(seq, ok ? 1 : 2);
+      if (ok) {
         const ts = st.S[to * NF + F.stage];
         // someone got there first (a local crew): the ship just adds people
         const joined = isAlive(ts);
@@ -1119,6 +1321,16 @@ export class Engine {
     row[GM.shipsInTransit] = g[G.nShips]; row[GM.shipsLaunched] = g[G.shipsLaunched]; row[GM.shipsLost] = g[G.shipsLost];
     row[GM.dead] = g[G.dead]; row[GM.wars] = g[G.wars]; row[GM.faiths] = g[G.faiths]; row[GM.era] = g[G.era];
     g[G.prevShortage] = row[GM.shortage]; g[G.prevFactions] = row[GM.factions]; g[G.prevStability] = row[GM.stability];
+    // transport: the step that led here, per year
+    const dtr = step > 0 ? this.years[step] - this.years[step - 1] : 1;
+    row[GM.transportSpend] = g[G.tSpend] / dtr; row[GM.transportCum] = g[G.transportCum];
+    row[GM.transportShare] = row[GM.gdp] > 0 ? (100 * row[GM.transportSpend]) / row[GM.gdp] : 0;
+    row[GM.propellantSpend] = g[G.tProp] / dtr; row[GM.hardwareSpend] = g[G.tHw] / dtr; row[GM.operationsSpend] = g[G.tOps] / dtr;
+    row[GM.riskSpend] = g[G.tRisk] / dtr; row[GM.infraSpend] = g[G.tInfra] / dtr; row[GM.missionHwSpend] = g[G.tMhw] / dtr; row[GM.serviceSpend] = g[G.tService] / dtr;
+    row[GM.launches] = g[G.tLaunches] / dtr; row[GM.tankerFlights] = g[G.tTankers] / dtr; row[GM.campaigns] = g[G.tCampaigns] / dtr;
+    row[GM.payloadDispatched] = g[G.tPayloadKg] / 1000 / dtr; row[GM.peopleTransported] = g[G.tPeople] / dtr;
+    row[GM.costPerKg] = g[G.tPayloadKg] > 0 ? g[G.tSpend] / g[G.tPayloadKg] : 0;
+    row[GM.leoCostPerKg] = leoCostPerKg(this.missionCtx(earth, -1, 0), this.econ);
 
     if (this.logEvents && step % Engine.HIST_EVERY === 0) {
       const w = 2 + HIST_FIELDS.length;
@@ -1162,17 +1374,22 @@ export class Engine {
     };
     this.pos.fill(-1);
     for (let n = 0; n < s.nSettled; n++) this.pos[s.settled[n]] = n;
+    // missions launched from here on will be flown again; ships still in flight have no outcome yet
+    this.missions.truncateFrom(this.years[s.step]);
+    for (let i = 0; i < s.ships.length / NSH; i++) this.missions.setOutcome(s.ships[i * NSH + SH.flow], 0);
+    this.refShip.step = -1;
     this.rebuildPairs();
     this.surveyCursor = this.nbr.start.slice();
     this.recomputeFx();
   }
 
-  shipList(): { from: number; to: number; depart: number; arrive: number; colonists: number; kind: number }[] {
+  /** ships in transit; `mission` is the id their launch event and economics record carry */
+  shipList(): { from: number; to: number; depart: number; arrive: number; colonists: number; kind: number; mission: number }[] {
     const out = [];
     const sh = this.st.ships;
     for (let i = 0; i < this.st.g[G.nShips]; i++) {
       const o = i * NSH;
-      out.push({ from: sh[o], to: sh[o + 1], depart: sh[o + 2], arrive: sh[o + 3], colonists: sh[o + 4], kind: sh[o + 5] });
+      out.push({ from: sh[o], to: sh[o + 1], depart: sh[o + 2], arrive: sh[o + 3], colonists: sh[o + 4], kind: sh[o + 5], mission: sh[o + SH.flow] });
     }
     return out;
   }
@@ -1236,3 +1453,6 @@ function push(m: Map<number, number[]>, k: number, v: number): void {
 }
 
 function clamp01(x: number): number { return x < 0 ? 0 : x > 1 ? 1 : x; }
+
+/** Chance an interstellar ship arrives: better engineering helps, long voyages hurt. */
+function shipSurvival(reliability: number, voyage: number): number { return Math.max(0.2, Math.min(0.97, 0.82 + reliability - 0.12 * (voyage / 200))); }

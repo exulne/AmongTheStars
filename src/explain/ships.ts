@@ -9,6 +9,7 @@ import { GENERATION, periodOf } from '../sim/ledger.ts';
 import type { PersonBrief } from '../sim/lives.ts';
 import type { Seg } from '../sim/chronicle.ts';
 import { fmtNum } from '../ui/format.ts';
+import { MC } from '../sim/launchEconomics.ts';
 import { addCpuSet, addGpuSet, segDist } from './picker.ts';
 import { registerExplainer, type ExCtx, type Explanation, type Fact } from './registry.ts';
 
@@ -37,7 +38,22 @@ const info = new Map<string, ShipInfo | null>();
 const inflight = new Set<string>();
 /** Wire the worker query and a re-render callback; call `resetShips` when the future changes. */
 export function setShipApi(f: Fetch, update: () => void, a?: FetchAboard): void { fetcher = f; onUpdate = update; aboardFetch = a ?? null; }
-export function resetShips(): void { info.clear(); aboard.clear(); ids.clear(); recs.length = 0; }
+export function resetShips(): void { info.clear(); aboard.clear(); ids.clear(); recs.length = 0; econ.clear(); }
+
+// each ship's launch economics record (launchEconomics.ts), fetched once
+type FetchMission = (id: number) => Promise<{ row: Float64Array | null }>;
+let missionFetch: FetchMission | null = null;
+const econ = new Map<number, Float64Array | null>();
+const econAsk = new Set<number>();
+export function setMissionApi(f: FetchMission): void { missionFetch = f; }
+function econFor(id: number): Float64Array | null | undefined {
+  if (econ.has(id)) return econ.get(id);
+  if (missionFetch && !econAsk.has(id)) {
+    econAsk.add(id);
+    missionFetch(id).then((r) => { econAsk.delete(id); econ.set(id, r.row); onUpdate(); });
+  }
+  return undefined;
+}
 
 /** Who is aboard a generation ship this period (fetched once per ship and period). */
 function aboardAt(body: number, year: number): Aboard | undefined {
@@ -115,6 +131,11 @@ export function shipCard(id: number, c: ExCtx): Explanation {
     facts.push({ k: 'Born aboard so far', v: fmtNum(born), t: 'P' });
   }
   if (crew) facts.push({ k: 'Living aboard now', v: fmtNum(crew.total), t: 'P' });
+  const m = econFor(s.mission);
+  if (m) {
+    facts.push({ k: 'Mission cost (fully burdened, 2024 $)', v: `$${fmtNum(m[MC.total])} (envelope $${fmtNum(m[MC.low])}–$${fmtNum(m[MC.high])})`, t: 'E' });
+    facts.push({ k: 'Cost per colonist', v: `$${fmtNum(m[MC.costPerPassenger])}`, t: 'E' });
+  }
   const story: Seg[] = [...(i?.launch?.segs ?? [])];
   if (crew?.people.length) {
     story.push(`${story.length ? ' ' : ''}Aboard in ${yr(c.year)}: `);
@@ -131,7 +152,7 @@ export function shipCard(id: number, c: ExCtx): Explanation {
     facts,
     why: gen ? `A voyage of ${Math.round(years)} years: the people who step off at ${B.name} will be the grandchildren of those who boarded.` : ftl ? 'Folded space makes the galaxy a few years wide; ships like this are how a warp-capable future fills it.' : 'Every settlement beyond its home world began as a ship like this one.',
     story: story.length ? story : undefined,
-    links: [{ label: A.name, act: 'body', id: A.id }, { label: B.name, act: 'body', id: B.id }],
+    links: [{ label: A.name, act: 'body', id: A.id }, { label: B.name, act: 'body', id: B.id }, ...(m ? [{ label: 'Launch economics', act: 'mission' as const, id: s.mission }] : [])],
     pending: i === undefined,
   };
 }

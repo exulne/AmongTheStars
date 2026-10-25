@@ -17,7 +17,7 @@ import { loadWarGens, type WarGens } from '../ml/warGens.ts';
 
 const SNAP_EVERY = 20;
 // event types whose `a` is a second body (source, opponent, old capital); elsewhere it is a stage, tech or era index
-const A_IS_BODY = new Set([EV['Colony founded'], EV.War, EV.Independence, EV['Mutiny in transit'], EV['Ship lost'], EV['Ship launched'], EV['Ship arrived']]);
+const A_IS_BODY = new Set([EV['Colony founded'], EV.War, EV.Independence, EV['Mutiny in transit'], EV['Ship lost'], EV['Ship launched'], EV['Ship arrived'], EV['Mission launched'], EV['Mission lost']]);
 
 export type ToWorker =
   | { type: 'run'; seed: number }

@@ -49,6 +49,24 @@ export const GLOBAL_METRICS: MetricDef[] = [
   { key: 'military', label: 'Military spending', unit: '$/yr', log: true, group: 'Society' },
   { key: 'faiths', label: 'Faiths', unit: '', group: 'Society' },
   { key: 'era', label: 'Era', unit: '', group: 'Society' },
+  // launch and mission economics (launchEconomics.ts): fully burdened cost, 2024 USD, booked when a mission or service departs
+  { key: 'transportSpend', label: 'Transport spending', unit: '$/yr', log: true, group: 'Transport' },
+  { key: 'transportCum', label: 'Transport spending (total)', unit: '$', log: true, group: 'Transport' },
+  { key: 'transportShare', label: 'Transport spending, share of product', unit: '%', group: 'Transport' },
+  { key: 'propellantSpend', label: 'Propellant spending', unit: '$/yr', log: true, group: 'Transport' },
+  { key: 'hardwareSpend', label: 'Vehicle hardware spending', unit: '$/yr', log: true, group: 'Transport' },
+  { key: 'operationsSpend', label: 'Operations spending', unit: '$/yr', log: true, group: 'Transport' },
+  { key: 'riskSpend', label: 'Insurance and expected loss', unit: '$/yr', log: true, group: 'Transport' },
+  { key: 'infraSpend', label: 'Infrastructure amortisation', unit: '$/yr', log: true, group: 'Transport' },
+  { key: 'missionHwSpend', label: 'Mission-specific hardware', unit: '$/yr', log: true, group: 'Transport' },
+  { key: 'serviceSpend', label: 'Scheduled passenger services', unit: '$/yr', log: true, group: 'Transport' },
+  { key: 'launches', label: 'Launches per year', unit: '/yr', log: true, group: 'Transport' },
+  { key: 'tankerFlights', label: 'Tanker flights per year', unit: '/yr', log: true, group: 'Transport' },
+  { key: 'campaigns', label: 'Campaigns per year', unit: '/yr', log: true, group: 'Transport' },
+  { key: 'payloadDispatched', label: 'Payload dispatched', unit: 't/yr', log: true, group: 'Transport' },
+  { key: 'peopleTransported', label: 'People transported', unit: '/yr', log: true, group: 'Transport' },
+  { key: 'costPerKg', label: 'Average cost per kg dispatched', unit: '$/kg', log: true, group: 'Transport' },
+  { key: 'leoCostPerKg', label: 'Earth to orbit, cost per kg', unit: '$/kg', log: true, group: 'Transport' },
 ];
 export const GM = Object.fromEntries(GLOBAL_METRICS.map((m, i) => [m.key, i])) as Record<string, number>;
 export const NGM = GLOBAL_METRICS.length;
@@ -60,6 +78,7 @@ export const SETTLEMENT_FIELDS = [
   'military', 'divergence', 'capacity', 'culture', 'imports', 'exports', 'energyRatio', 'shortage', 'robots',
   'lastEvent', 'terraform', 'inbound',
   'lifeExp', 'tfr', 'orbitalPower', 'heatLoad',
+  'transport',
 ] as const;
 export type SField = typeof SETTLEMENT_FIELDS[number];
 export const F = Object.fromEntries(SETTLEMENT_FIELDS.map((k, i) => [k, i])) as Record<SField, number>;
@@ -73,7 +92,7 @@ export const SETTLEMENT_LABELS: Partial<Record<SField, [string, string]>> = {
   medianAge: ['Median age', 'yr'], military: ['Military', '$/yr'], divergence: ['Genetic divergence', ''],
   capacity: ['Habitat capacity', 'people'], imports: ['Imports', 't/yr'], exports: ['Exports', 't/yr'],
   lifeExp: ['Life expectancy at birth', 'yr'], tfr: ['Children per woman', ''],
-  energyRatio: ['Energy supply ratio', '×'], orbitalPower: ['Power in orbit (habitats, swarm)', 'W'], heatLoad: ['Surface waste heat, share of limit', '×'], shortage: ['Shortage', ''], robots: ['Robots', ''], terraform: ['Terraforming', ''],
+  energyRatio: ['Energy supply ratio', '×'], orbitalPower: ['Power in orbit (habitats, swarm)', 'W'], transport: ['Transport spending it funds', '$/yr'], heatLoad: ['Surface waste heat, share of limit', '×'], shortage: ['Shortage', ''], robots: ['Robots', ''], terraform: ['Terraforming', ''],
 };
 
 // Settlement history columns logged every few steps (for per-settlement charts).

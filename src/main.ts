@@ -36,7 +36,7 @@ import { names as naming } from './ui/names.ts';
 import { StreetView } from './view/street.ts';
 import { Picker } from './explain/picker.ts';
 import { explainLocate, explainName, explainerFor } from './explain/registry.ts';
-import { resetShips, setShipApi } from './explain/ships.ts';
+import { resetShips, setMissionApi, setShipApi } from './explain/ships.ts';
 import { GalaxyView, LocalView, LEVELS, PLANET_SUN, PlanetView, SystemView, UniverseView, alive, cityCount, cityDir, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
 
 // ------------------------------------------------------------------ DOM
@@ -543,7 +543,9 @@ inspector.api = {
 inspector.onAnnals = (a) => { timeline.setAges(a?.ages ?? []); calendar.annals = a; timeline.refresh(); };
 inspector.onSelect = (p) => select(p);
 setShipApi((f, t, d) => sim.ship(f, t, d), () => refreshPanels(), (b, y) => sim.residents(b, y, 0, 6));
+setMissionApi((id) => sim.data<'mission'>({ type: 'mission', mission: id }));
 inspector.onYear = (y) => timeline.set(y, true);
+inspector.onMission = (id) => dataPanel.openMission(id);
 app.querySelector('#chronicle')!.addEventListener('click', () => {
   inspector.chronicleOpen = !inspector.chronicleOpen;
   if (inspector.chronicleOpen) inspector.openPerson(null);
