@@ -1344,9 +1344,8 @@ function showFuture(seed: number, calYear: number, o: { body?: number; system?: 
   pull = null;
   cancelAnimationFrame(pathsWatch);
   if (seed !== sim.seed) { seedInput.value = String(seed); startRun(seed); }
-  const g = runGen, front = sim.done ? 10000 : (sim.years[sim.frontier] ?? 0);
-  pendingYear = from > front ? from : null;
-  timeline.set(Math.min(from, front), true);
+  const g = runGen;
+  seekTo(from);
   if (o.body !== undefined && o.body >= 0) search.onPick({ kind: 'body', id: o.body, name: world.bodies[o.body].name, sub: '' });
   else if (o.system !== undefined) search.onPick({ kind: 'system', id: o.system, name: world.systems[o.system].name, sub: '' });
   if (!o.play) return;
