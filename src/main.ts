@@ -41,6 +41,7 @@ import { explainLocate, explainName, explainerFor } from './explain/registry.ts'
 import { resetShips, setMissionApi, setShipApi, shipId } from './explain/ships.ts';
 import { GalaxyView, LocalView, LEVELS, PLANET_SUN, PlanetView, SystemView, UniverseView, alive, cityCount, cityDir, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
 import type { AppApi } from './app/api.ts';
+import { applyUrlParts, setHashWriter, urlPartTokens } from './app/urlState.ts';
 import { installFollow } from './features/follow.ts';
 
 // ------------------------------------------------------------------ DOM
@@ -1076,11 +1077,12 @@ function writeHash(): void {
     const parts = [`future${sim.seed}`, `y${Math.abs(yy - Math.round(yy)) < 0.005 ? Math.round(yy) : yy.toFixed(2)}`];
     if (sel) parts.push(sel.kind === 'city' ? `c${ctx.body}.${sel.id}` : sel.kind === 'thing' ? `x${sel.ex}.${sel.id}` : `${REF_CODE[sel.kind]}${sel.id}`);
     if (isMicro(level) && micro.pid) parts.push(`p${micro.pid.replace(/-/g, '~')}`, micro.hash());
-    parts.push(`l${level}`, STAMP_CODE);
+    parts.push(...urlPartTokens(), `l${level}`, STAMP_CODE);
     // replaceState so scrubbing doesn't flood the back button
     try { window.history.replaceState(null, '', `#${parts.join('-')}`); } catch { /* sandboxed frames may refuse */ }
   }, 400);
 }
+setHashWriter(writeHash);
 
 function readHash(): { seed: number; year: number | null; sel: Pickable | null; level: Level | null; pid: string | null } {
   const h = location.hash.slice(1);
@@ -1359,6 +1361,7 @@ if (fromHash.sel) {
 }
 setLevel(fromHash.level ?? 'system', null, undefined, false);
 pendingYear = fromHash.year;
+applyUrlParts(location.hash.slice(1));
 
 /** Report a time trip once the state for its year has arrived, so "where are we" reads that year's numbers. */
 function arrived(y: number, done: (y: number) => void, tries = 0): void {
