@@ -1081,35 +1081,6 @@ export function huntLine(z: number, n: number): string {
   return `Found ${z} other ${z === 1 ? 'future' : 'futures'} (from ${n} more simulated).`;
 }
 
-/** Two or three sentences on the whole set of futures, for speech. */
-export function narrateOverview(chain: Chain, rs: FutureResult[], tried: number): string {
-  const label = chainLabel(chain);
-  const got = rs.filter((r) => r.reached && r.year !== undefined);
-  const missed = rs.filter((r) => !r.reached);
-  const near = missed.map((r) => r.progress).filter(Boolean)[0];
-  if (!got.length) return countLine(0, tried, label, { near });
-  const { medianYear, minYear, maxYear, highlights, standouts } = compareFutures(chain, rs);
-  let s = `${countLine(got.length, tried, label)} ${minYear === maxYear ? `All of them in ${minYear}.` : `They got there between ${minYear} and ${maxYear}, the middle one in ${medianYear}.`}`;
-  const star = standouts.length ? got.find((r) => r.seed === standouts[0]) : got.find((r) => highlights.get(r.seed));
-  if (star) s += ` One stands out: future ${star.seed}, where ${highlights.get(star.seed)}.`;
-  if (missed.length) s += ` The others never got there${near ? ` — the closest: ${near}` : ''}.`;
-  return s;
-}
-
-/** Two to four sentences on one future's road. */
-export function narrateFuture(chain: Chain, r: FutureResult, highlight?: string): string {
-  const label = chainLabel(chain);
-  if (!r.reached || r.year === undefined) return `Future ${r.seed} never reaches ${label}.${r.progress ? ` ${r.progress}.` : ''}`;
-  let s = `Future ${r.seed} reaches ${label} in ${r.year}.`;
-  const gotMedian = r.steps.filter((x) => x.kind !== 'goal');
-  if (highlight) s += ` ${highlight.charAt(0).toUpperCase()}${highlight.slice(1)}.`;
-  if (gotMedian.length) {
-    const first = gotMedian[0], last = gotMedian[gotMedian.length - 1];
-    s += ` The road runs from "${first.text}" in ${first.year} to "${last.text}" in ${last.year}.`;
-  }
-  return s;
-}
-
 /** The plain-text answer handed back to the conversational agent. */
 export function toolSummary(chain: Chain, rs: FutureResult[], tried: number): string {
   const got = rs.filter((r) => r.reached && r.year !== undefined).sort((a, b) => a.year! - b.year!);

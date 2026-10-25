@@ -4,7 +4,7 @@
 
 import './paths.css';
 import { Pathfinder } from './pathfinder.ts';
-import { chainFrom, chainLabel, compareFutures, countLine, lineageSeeds, narrateFuture, narrateOverview, parseEvent, shownFutures, tagLabel, type Chain, type FutureResult, type Goal, type Joint, type Step } from '../sim/milestones.ts';
+import { chainFrom, chainLabel, compareFutures, countLine, lineageSeeds, parseEvent, shownFutures, tagLabel, type Chain, type FutureResult, type Goal, type Joint, type Step } from '../sim/milestones.ts';
 import type { World } from '../sim/world.ts';
 import type { Voice } from '../ship/voice.ts';
 import type { OracleAgent } from '../ship/agent.ts';
@@ -37,8 +37,8 @@ export class FuturePaths {
   private transcriptEl: HTMLElement;
   private modeEl: HTMLElement;
   private micBtn: HTMLButtonElement;
-  private speakBox: HTMLInputElement;
   private oracleBtn: HTMLButtonElement;
+  private auxEl: HTMLElement;
   private agent: OracleAgent | null = null;
   private chain: Chain | null = null;
   private tags: { goal: Goal; typed: string; notes?: string[] }[] = [];
@@ -68,8 +68,7 @@ export class FuturePaths {
         <label class="pf-n">Futures to simulate <input type="number" min="1" max="100" step="1" aria-label="Futures to simulate"></label>
       </form>
       <div class="pf-chips">${CHIPS.map((c) => `<button class="link" type="button">${esc(c)}</button>`).join('')}</div>
-      <p class="pf-aux">
-        <label><input class="pf-speak" type="checkbox"${opts.voice.speak ? ' checked' : ''}> Speak answers</label>
+      <p class="pf-aux" hidden>
         <button class="link pf-oracle" type="button" hidden>Talk to the Oracle</button>
       </p>
       <div class="pf-mode" role="status" hidden></div>
@@ -85,8 +84,8 @@ export class FuturePaths {
     this.transcriptEl = this.el.querySelector('.pf-transcript')!;
     this.modeEl = this.el.querySelector('.pf-mode')!;
     this.micBtn = this.el.querySelector('.pf-mic')!;
-    this.speakBox = this.el.querySelector('.pf-speak')!;
     this.oracleBtn = this.el.querySelector('.pf-oracle')!;
+    this.auxEl = this.el.querySelector('.pf-aux')!;
     this.futuresEl = this.el.querySelector('.pf-n input')!;
     this.futuresEl.value = String(this.futures());
     this.futuresEl.addEventListener('change', () => this.readFutures());
@@ -100,7 +99,6 @@ export class FuturePaths {
     });
     this.el.querySelector('.pf-x')!.addEventListener('click', () => this.hide());
     this.micBtn.addEventListener('click', () => void this.listen());
-    this.speakBox.addEventListener('change', () => opts.voice.setSpeak(this.speakBox.checked));
     this.oracleBtn.addEventListener('click', () => this.toggleOracle());
     // typed keys inside the panel are its own, not the sim's shortcuts
     this.el.addEventListener('keydown', (e) => e.stopPropagation());
@@ -111,6 +109,7 @@ export class FuturePaths {
   setAgent(agent: OracleAgent | null): void {
     this.agent = agent;
     this.oracleBtn.hidden = !agent?.available;
+    this.auxEl.hidden = !agent?.available;
   }
 
   /** A transcript line from the Oracle session ("you"/"agent"). */
@@ -162,7 +161,6 @@ export class FuturePaths {
   private async listen(): Promise<void> {
     const v = this.opts.voice;
     if (v.listening) { v.stopListening(); return; }
-    v.stopSpeaking();
     this.micBtn.classList.add('on');
     try {
       const text = await v.listen(() => {});
@@ -172,10 +170,6 @@ export class FuturePaths {
     finally { this.micBtn.classList.remove('on'); }
   }
 
-  /**
-   * Ask "what leads to X": parses the goal, simulates futures until six reach
-   * it, streams the cards in. Resolves for the console/agent with the outcome.
-   */
   /** Parse the box text as one event; on success append it, clear the box and any message. */
   private addTag(text: string): boolean {
     const t = text.trim();
@@ -281,7 +275,6 @@ export class FuturePaths {
         const near = results.filter((r) => !r.reached).map((r) => r.progress).filter(Boolean)[0];
         this.status(countLine(got.length, this.tried, label, { near }));
         this.render(true);
-        if (this.opts.voice.speak && !this.agent?.active) void this.opts.voice.say(narrateOverview(chain, results, this.tried));
         resolve({ chain, results, tried: this.tried });
       });
     });
@@ -331,13 +324,11 @@ export class FuturePaths {
         <div class="pf-steps">${r.steps.map((s, i) => `<div class="pf-step${s.kind === 'goal' ? ' goal' : ''}" role="button" tabindex="0" data-i="${i}"><span class="y num">${s.year}</span><span>${esc(s.text)}</span></div>`).join('')}</div>
         <div class="pf-actions">
           <button class="link pf-watch" type="button">Watch</button>
-          <button class="link pf-hear" type="button">Hear</button>
           <button class="link pf-enter" type="button">Enter</button>
         </div>`;
       card.querySelectorAll<HTMLElement>('.pf-step').forEach((el) => el.addEventListener('click', () => this.seekStep(r, r.steps[Number(el.dataset.i)])));
       card.querySelectorAll<HTMLElement>('.pf-part').forEach((el) => { const p = parts[Number(el.dataset.i)]; el.addEventListener('click', () => this.opts.show(r.seed, p.year!, { body: p.body })); });
       card.querySelector('.pf-watch')!.addEventListener('click', () => this.watch(r.seed));
-      card.querySelector('.pf-hear')!.addEventListener('click', () => { if (!this.agent?.active) void this.opts.voice.say(narrateFuture(c, r, highlights.get(r.seed))); });
       card.querySelector('.pf-enter')!.addEventListener('click', () => this.opts.show(r.seed, r.year!, { body: g.body !== undefined && g.body >= 0 ? g.body : r.steps[r.steps.length - 1]?.body, system: g.system }));
       this.cardsEl.append(card);
       this.spark(card.querySelector('canvas')!, r);
@@ -401,7 +392,6 @@ export class FuturePaths {
     const agent = this.agent;
     if (!agent) return;
     if (agent.active) { agent.stop(); this.agentMode(''); return; }
-    this.opts.voice.stopSpeaking();
     this.status('Summoning the Oracle…');
     try {
       await agent.start({

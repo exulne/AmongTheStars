@@ -10,7 +10,6 @@
 .paths .pf-ask input[type="text"] { flex: 1; min-width: 0; background: transparent; border: 0; border-bottom: 1px solid var(--rule); color: var(--ink); font-size: 0.85rem; border-radius: 0; }
 .paths .pf-chips { display: flex; flex-wrap: wrap; gap: 0.3rem 0.7rem; margin: 0.5rem 0 0; }
 .paths .pf-aux { display: flex; gap: 0.9rem; align-items: baseline; margin: 0.55rem 0 0; color: var(--quiet); font-size: 0.8rem; }
-.paths .pf-aux label { display: flex; gap: 0.3rem; align-items: baseline; }
 .paths .pf-mic.on { color: var(--accent); }
 .paths .pf-n { flex: 1 0 100%; display: flex; gap: 0.3rem; align-items: baseline; justify-content: flex-end; margin: 0.25rem 0 0; color: var(--quiet); font-size: 0.72rem; white-space: nowrap; }
 .paths .pf-n input { width: 3.5em; background: transparent; border: 0; border-bottom: 1px solid var(--rule); color: var(--ink); font-size: 0.8rem; border-radius: 0; text-align: right; }

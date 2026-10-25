@@ -5,7 +5,7 @@ import { Engine, YEAR0 } from '../src/sim/engine.ts';
 import { STAGE, TECHS } from '../src/sim/catalog.ts';
 import { EV } from '../src/sim/catalog.ts';
 import { buildWorld } from '../src/sim/world.ts';
-import { ChainTracker, chainFrom, chainLabel, chainOf, chainParts, compareFutures, countLine, goalYear, huntLine, lineageSeeds, narrateOverview, parseEvent, parseGoal, reached, resultOf, tagLabel, toolSummary, type FutureResult, type Goal } from '../src/sim/milestones.ts';
+import { ChainTracker, chainFrom, chainLabel, chainOf, chainParts, compareFutures, countLine, goalYear, huntLine, lineageSeeds, parseEvent, parseGoal, reached, resultOf, tagLabel, toolSummary, type FutureResult, type Goal } from '../src/sim/milestones.ts';
 
 let fails = 0;
 const fail = (m: string) => { fails++; console.log('  FAIL', m); };
@@ -420,7 +420,6 @@ for (const [goalText, expected] of Object.entries(PROBE)) {
   const cmp = compareFutures(chainOf(goal), results);
   console.log(`  compare: median ${cmp.medianYear} min ${cmp.minYear} max ${cmp.maxYear}`);
   for (const [seed, h] of cmp.highlights) console.log(`    future ${seed}: ${h}`);
-  console.log(`  narrated: ${narrateOverview(chainOf(goal), results, 3)}`);
   console.log('  toolSummary:');
   for (const l of toolSummary(chainOf(goal), results, 3).split('\n')) console.log(`    ${l}`);
 }
