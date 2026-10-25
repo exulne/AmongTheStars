@@ -22,13 +22,12 @@ const DENSITY = [0, 0, 1500, 2500, 4000, 5000, 6000, 8000, 10000, 12000, 12000, 
 
 export function siteCount(pop: number): number { return pop < 1000 ? 1 : Math.min(48, Math.ceil(Math.cbrt(pop / 1000))); }
 
-const dirs = new Map<number, [number, number, number]>();
+// cached per body in a flat list (a Map lookup per site was a hot spot in whole runs)
+const dirs: ([number, number, number] | undefined)[] = [];
 /** Same formula as the view's cityDir: unit vector of site i on body b. */
 export function siteDir(b: number, i: number): [number, number, number] {
   const k = b * 64 + i;
-  let d = dirs.get(k);
-  if (!d) { d = siteDirOf(b, i); dirs.set(k, d); }
-  return d;
+  return dirs[k] ?? (dirs[k] = siteDirOf(b, i));
 }
 function siteDirOf(b: number, i: number): [number, number, number] {
   const u = hash01(b, i, 1) * 2 - 1, th = hash01(b, i, 2) * Math.PI * 2, s = Math.sqrt(1 - u * u);
