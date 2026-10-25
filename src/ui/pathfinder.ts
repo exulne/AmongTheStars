@@ -4,27 +4,32 @@
 
 import PathWorker from '../sim/pathWorker.ts?worker&inline';
 import type { FromPaths, ToPaths } from '../sim/pathWorker.ts';
-import type { Chain, FutureResult } from '../sim/milestones.ts';
+import { lineageSeeds, type Chain, type FutureResult } from '../sim/milestones.ts';
 
 export class Pathfinder {
   private workers: Worker[] = [];
   private idle: Worker[] = [];
   private token = 0;
   private goal: Chain | null = null;
-  private seeds: number[] = [];
-  private nextSeed = 0;
+  private first = 1;
+  private k = 0;
+  private used = new Set<number>();
+  private want = 0;
+  private limit = 0;
+  private found = 0;
   private running = 0;
   private results: FutureResult[] = [];
   private doneSent = false;
   private onResult: (r: FutureResult) => void = () => {};
-  private onDone: (results: FutureResult[]) => void = () => {};
+  private onDone: (results: FutureResult[], t: { found: number; simulated: number; capped: boolean }) => void = () => {};
 
   /**
-   * Play every seed given. `onResult` fires for every finished run (reached or
-   * not); `onDone` fires once at the end with all results — reached futures
-   * first by year, then the misses. A new run() cancels whatever was going.
+   * Simulate futures until `want` reach the chain's goal (then cancel the rest),
+   * or until `limit` futures have run. Seeds are drawn lazily from the lineage.
+   * `onResult` fires for every verdict; `onDone` fires once with all results —
+   * reached futures first by year, then the misses. A new run() cancels the old.
    */
-  run(chain: Chain, seeds: number[], onResult: (r: FutureResult) => void, onDone: (results: FutureResult[]) => void): void {
+  run(chain: Chain, firstSeed: number, want: number, limit: number, onResult: (r: FutureResult) => void, onDone: (results: FutureResult[], t: { found: number; simulated: number; capped: boolean }) => void): void {
     const t = ++this.token;
     this.goal = chain;
     this.onResult = onResult;
@@ -32,8 +37,12 @@ export class Pathfinder {
     this.results = [];
     this.doneSent = false;
     this.running = 0;
-    this.seeds = seeds;
-    this.nextSeed = 0;
+    this.found = 0;
+    this.want = want;
+    this.limit = limit;
+    this.first = firstSeed;
+    this.k = 0;
+    this.used = new Set();
     // any job still running is the old search's: cancel it and take the worker back
     for (const w of this.workers) w.postMessage({ type: 'cancel', token: t } satisfies ToPaths);
     const nWorkers = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 2));
@@ -48,13 +57,15 @@ export class Pathfinder {
 
   private pump(): void {
     if (this.doneSent || !this.goal) return;
-    while (this.idle.length && this.nextSeed < this.seeds.length) {
+    while (this.idle.length && this.found < this.want && this.results.length + this.running < this.limit) {
       const w = this.idle.pop()!;
-      const seed = this.seeds[this.nextSeed++];
+      const b = lineageSeeds(this.first, this.k, 1, this.used);
+      this.k = b.nextK;
+      this.used.add(b.seeds[0]);
       this.running++;
-      w.postMessage({ type: 'find', chain: this.goal, seed, token: this.token } satisfies ToPaths);
+      w.postMessage({ type: 'find', chain: this.goal, seed: b.seeds[0], token: this.token } satisfies ToPaths);
     }
-    if (this.nextSeed >= this.seeds.length && this.running === 0) this.finish();
+    if (this.running === 0 && (this.found >= this.want || this.results.length >= this.limit)) this.finish();
   }
 
   private got(w: Worker, m: FromPaths): void {
@@ -62,7 +73,9 @@ export class Pathfinder {
     this.running--;
     if (!this.idle.includes(w)) this.idle.push(w);
     this.results.push(m.result);
+    if (m.result.reached) this.found++;
     this.onResult(m.result);
+    if (this.found >= this.want) { this.finish(); return; }
     this.pump();
   }
 
@@ -73,7 +86,7 @@ export class Pathfinder {
     this.idle = [...this.workers];
     this.running = 0;
     const rs = [...this.results].sort((a, b) => (b.reached ? 1 : 0) - (a.reached ? 1 : 0) || (a.year ?? 1e9) - (b.year ?? 1e9));
-    this.onDone(rs);
+    this.onDone(rs, { found: this.found, simulated: rs.length, capped: this.found < this.want });
   }
 
   stop(): void {

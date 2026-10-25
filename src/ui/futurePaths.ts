@@ -4,7 +4,7 @@
 
 import './paths.css';
 import { Pathfinder } from './pathfinder.ts';
-import { chainFrom, chainLabel, compareFutures, countLine, lineageSeeds, parseEvent, shownFutures, tagLabel, type Chain, type FutureResult, type Goal, type Joint, type Step } from '../sim/milestones.ts';
+import { chainFrom, chainLabel, compareFutures, countLine, parseEvent, searchLimit, shownFutures, tagLabel, type Chain, type FutureResult, type Goal, type Joint, type Step } from '../sim/milestones.ts';
 import type { World } from '../sim/world.ts';
 import type { Voice } from '../ship/voice.ts';
 import type { OracleAgent } from '../ship/agent.ts';
@@ -50,6 +50,7 @@ export class FuturePaths {
   private seq = 0;
   private tried = 0;
   private showAll = false;
+  private newFind: number | null = null;   // seed of the most recently found future this search
   private futuresEl: HTMLInputElement;
   onToggle: (open: boolean) => void = () => {};
 
@@ -65,7 +66,7 @@ export class FuturePaths {
         <div class="pf-tags" aria-label="Events, read left to right"><input type="text" autocomplete="off" placeholder="A moment in time: colonisation of Mars…" aria-label="Name a moment in the timeline"></div>
         <button class="link pf-go" type="button">Ask</button>
         <button class="link pf-mic" type="button" aria-label="Ask out loud">Speak</button>
-        <label class="pf-n">Futures to simulate <input type="number" min="1" max="100" step="1" aria-label="Futures to simulate"></label>
+        <label class="pf-n">Futures to find <input type="number" min="1" max="100" step="1" aria-label="Futures to find"></label>
       </form>
       <div class="pf-chips">${CHIPS.map((c) => `<button class="link" type="button">${esc(c)}</button>`).join('')}</div>
       <p class="pf-aux" hidden>
@@ -257,23 +258,25 @@ export class FuturePaths {
     this.showAll = false;
     this.cardsEl.innerHTML = '';
     this.footerEl.textContent = '';
-    this.status(`Searching: ${label}…`);
-    const { seeds } = lineageSeeds(this.opts.seed(), 0, this.readFutures());
+    const want = this.readFutures();
+    const limit = searchLimit(want);
+    this.status(`Searching: ${label}… (until ${want} are found, at most ${limit} futures)`);
     return new Promise((resolve) => {
-      this.pathfinder.run(chain, seeds, (r) => {
+      this.pathfinder.run(chain, this.opts.seed(), want, limit, (r) => {
         if (seq !== this.seq) return;
         this.results.push(r);
         this.tried++;
+        if (r.reached) this.newFind = r.seed;
         const got = this.results.filter((x) => x.reached).length;
         this.status(countLine(got, this.tried, label, { live: true }));
         this.render();
-      }, (results) => {
+      }, (results, t) => {
         if (seq !== this.seq) return resolve({ chain, results: [], tried: results.length });
         this.results = results;
-        this.tried = results.length;
-        const got = results.filter((r) => r.reached);
+        this.tried = t.simulated;
+        this.newFind = null;
         const near = results.filter((r) => !r.reached).map((r) => r.progress).filter(Boolean)[0];
-        this.status(countLine(got.length, this.tried, label, { near }));
+        this.status(countLine(t.found, t.simulated, label, { near }) + (t.capped ? ` Stopped at the limit of ${limit} futures.` : ''));
         this.render(true);
         resolve({ chain, results, tried: this.tried });
       });
@@ -305,6 +308,10 @@ export class FuturePaths {
     const { medianYear, highlights, standouts } = compareFutures(c, this.results);
     const medianCard = got.find((r) => r.year === medianYear);
     const shown = this.showAll ? got : shownFutures(got, medianYear, standouts);
+    if (!this.showAll && !final && this.newFind !== null) {
+      const nf = got.find((r) => r.seed === this.newFind);
+      if (nf && !shown.includes(nf)) { shown.push(nf); shown.sort((a, b) => (a.year ?? 0) - (b.year ?? 0)); }
+    }
     this.cardsEl.innerHTML = '';
     for (const r of shown) {
       const card = document.createElement('div');
@@ -317,7 +324,7 @@ export class FuturePaths {
       const hl = highlights.get(r.seed);
       const parts = r.parts.length > 1 ? r.parts.filter((p) => p.year !== undefined) : [];
       card.innerHTML = `
-        <div class="pf-card-head"><b>Future #${r.seed} — ${r.year}</b><span class="pf-delta">${esc(delta)}</span></div>
+        <div class="pf-card-head"><b>Future #${r.seed} — ${r.year}</b>${r.seed === this.newFind && !final ? '<span class="pf-new-find">just found</span>' : ''}<span class="pf-delta">${esc(delta)}</span></div>
         ${hl ? `<p class="pf-hl">${esc(hl)}</p>` : ''}
         ${parts.length ? `<div class="pf-parts">${parts.map((p, i) => `<div class="pf-part" role="button" tabindex="0" data-i="${i}"><span class="y num">${p.year}</span><span>${esc(p.label)}${p.already ? ' (already true)' : ''}</span></div>`).join('')}</div>` : ''}
         <canvas class="pf-spark" aria-hidden="true"></canvas>

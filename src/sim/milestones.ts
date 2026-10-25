@@ -1076,6 +1076,11 @@ export function countLine(x: number, y: number, label: string, o: { live?: boole
   return s;
 }
 
+/** The most futures a search simulates before giving up on finding n. */
+export function searchLimit(n: number): number {
+  return Math.min(400, Math.max(100, 10 * n));
+}
+
 /** An extension's hunt: "Found 3 other futures (from 16 more simulated)." */
 export function huntLine(z: number, n: number): string {
   return `Found ${z} other ${z === 1 ? 'future' : 'futures'} (from ${n} more simulated).`;

@@ -5,7 +5,7 @@ import { Engine, YEAR0 } from '../src/sim/engine.ts';
 import { STAGE, TECHS } from '../src/sim/catalog.ts';
 import { EV } from '../src/sim/catalog.ts';
 import { buildWorld } from '../src/sim/world.ts';
-import { ChainTracker, chainFrom, chainLabel, chainOf, chainParts, compareFutures, countLine, goalYear, huntLine, lineageSeeds, parseEvent, parseGoal, reached, resultOf, tagLabel, toolSummary, type FutureResult, type Goal } from '../src/sim/milestones.ts';
+import { ChainTracker, chainFrom, chainLabel, chainOf, chainParts, compareFutures, countLine, goalYear, huntLine, lineageSeeds, parseEvent, parseGoal, reached, searchLimit, resultOf, tagLabel, toolSummary, type FutureResult, type Goal } from '../src/sim/milestones.ts';
 
 let fails = 0;
 const fail = (m: string) => { fails++; console.log('  FAIL', m); };
@@ -72,6 +72,16 @@ const b3 = lineageSeeds(1, b1.nextK, 40, u);
 if (b3.seeds.length !== 40) fail(`used batch returned ${b3.seeds.length}, want 40`);
 else if (b3.seeds.some((s) => u.has(s))) fail('used batch kept a used seed');
 else ok('used batch skips 3 seeds, still returns 40');
+{
+  eq('searchLimit(1)', searchLimit(1), 100);
+  eq('searchLimit(16)', searchLimit(16), 160);
+  eq('searchLimit(40)', searchLimit(40), 400);
+  eq('searchLimit(100)', searchLimit(100), 400);
+  const batch = lineageSeeds(1, 0, 50).seeds;
+  const lazy: number[] = []; const u = new Set<number>(); let kk = 0;
+  for (let i = 0; i < 50; i++) { const d = lineageSeeds(1, kk, 1, u); lazy.push(d.seeds[0]); u.add(d.seeds[0]); kk = d.nextK; }
+  eq('lazy draws reproduce the batch', lazy, batch);
+}
 
 // ------------------------------------------------------------------ chainFrom / chainParts
 

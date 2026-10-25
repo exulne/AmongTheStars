@@ -50,3 +50,5 @@
 .paths .pf-tag-x { color: var(--quiet); font-size: 0.85rem; line-height: 1; padding: 0; }
 .paths .pf-tag-x:hover { color: var(--ink); }
 .paths .pf-joint { color: var(--accent); border: 0; background: none; font-size: 0.85rem; padding: 0 0.1rem; cursor: pointer; }
+.paths .pf-new-find { margin-left: 0.4rem; border: 1px solid var(--accent); border-radius: 999px; padding: 0 0.4rem; color: var(--accent); font-size: 0.68rem; animation: pf-newfade 2s ease-out forwards; }
+@keyframes pf-newfade { to { border-color: transparent; color: var(--quiet); opacity: 0.45; } }
