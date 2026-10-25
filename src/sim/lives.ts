@@ -60,7 +60,7 @@ export interface Biography extends PersonBrief {
   descendants: { total: number; alive: number; places: { body: number; name: string; n: number }[]; generations: number };
   faith?: string | null;  // raised in, from the birthplace's faith shares at birth
   /** every place they ever were, in order: the pathway of a life, birth to death */
-  path: { body: number | null; name: string; from: number; to: number | null }[];
+  path: { body: number | null; name: string; from: number; to: number | null; ship?: { from: number; to: number; depart: number } }[];
 }
 
 export class Lives {
@@ -451,9 +451,10 @@ export class Lives {
     life.forEach((s, k) => {
       const f = k > 0 ? life[k - 1].flow : undefined;
       const voyageF = f && !isShipBody(s.body) && (f.kind === FLOW.SHIP || f.kind === FLOW.FTL) ? f : undefined;
-      if (voyageF) path.push({ body: null, name: s.end === 'lost' ? `lost aboard the ${this.shipName(voyageF)}, never reaching ${this.bodyName(voyageF.dst)}` : `aboard the ${this.shipName(voyageF)}, bound for ${this.bodyName(voyageF.dst)}`, from: voyageF.depart, to: voyageF.arrive });
-      if (s.end === 'lost') { if (!voyageF) path.push({ body: null, name: `lost aboard the ${s.flow ? this.shipName(s.flow) : 'ship'} in deep space`, from: s.flow?.depart ?? periodStart(s.from), to: s.diedYear ?? null }); return; }
-      path.push({ body: isShipBody(s.body) ? null : s.body, name: this.bodyName(s.body), from: k === 0 ? born : f ? f.arrive : periodStart(s.from), to: s.end === 'alive' ? null : s.end === 'left' ? s.flow?.depart ?? null : s.diedYear ?? null });
+      if (voyageF) path.push({ body: null, name: s.end === 'lost' ? `lost aboard the ${this.shipName(voyageF)}, never reaching ${this.bodyName(voyageF.dst)}` : `aboard the ${this.shipName(voyageF)}, bound for ${this.bodyName(voyageF.dst)}`, from: voyageF.depart, to: voyageF.arrive, ship: { from: voyageF.src, to: voyageF.dst, depart: voyageF.depart } });
+      if (s.end === 'lost') { if (!voyageF) path.push({ body: null, name: `lost aboard the ${s.flow ? this.shipName(s.flow) : 'ship'} in deep space`, from: s.flow?.depart ?? periodStart(s.from), to: s.diedYear ?? null, ship: s.flow ? { from: s.flow.src, to: s.flow.dst, depart: s.flow.depart } : undefined }); return; }
+      const v = isShipBody(s.body) ? this.voyage(s.body - SHIP_BODY) : null;
+      path.push({ body: isShipBody(s.body) ? null : s.body, name: this.bodyName(s.body), from: k === 0 ? born : f ? f.arrive : periodStart(s.from), to: s.end === 'alive' ? null : s.end === 'left' ? s.flow?.depart ?? null : s.diedYear ?? null, ship: v ? { from: v.src, to: v.dst, depart: v.depart } : undefined });
     });
 
     const bodyG = isShipBody(id.b) ? 0.9 : this.e.world.bodies[id.b].g;
