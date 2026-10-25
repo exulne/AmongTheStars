@@ -1359,13 +1359,16 @@ function showFuture(seed: number, calYear: number, o: { body?: number; system?: 
 }
 
 paths.setAgent(new OracleAgent(import.meta.env.VITE_ELEVEN_AGENT_ID || null, {
+  // tool arguments come from the LLM: coerce them before they reach the sim
   find_futures: async ({ goal }) => {
-    const r = await paths.ask(goal);
+    const r = await paths.ask(String(goal ?? ''));
     return 'error' in r ? `${r.error} Try: ${r.suggestions.join(', ')}.` : toolSummary(r.goal, r.results, r.tried);
   },
   watch_future: async ({ future, year }) => {
-    paths.watch(future, year);
-    return year ? `Showing future ${future} in ${year}.` : `Playing future ${future} up to the goal.`;
+    const f = Math.trunc(Number(future)), y = year == null ? undefined : Math.round(Number(year));
+    if (!(f >= 1) || (y !== undefined && !Number.isFinite(y))) throw new Error(`No future ${future}${year == null ? '' : ` at ${year}`}.`);
+    paths.watch(f, y);
+    return y ? `Showing future ${f} in ${y}.` : `Playing future ${f} up to the goal.`;
   },
 }));
 
