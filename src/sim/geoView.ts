@@ -97,7 +97,7 @@ export function worldNow(world: World, snap: GeoStateLike | null, b: number, yea
   } else if (g.rate[b * 16 + GEV.DUST] > 0) {
     for (const ev of g.eventsIn(b, year - 0.6, year, evBuf)) if (ev.cls === GEV.DUST && year - ev.t < 0.2 + 0.3 * ev.m) { storm = true; dust = Math.max(dust, 2 + 4 * ev.j); }
   }
-  if (!live && b !== world.mars) { const c = g.baseIce[b] >= 0.9 ? 90 : Math.min(90, 8 + 60 * g.baseIce[b]); capN = b === world.earth ? 18 : c; capS = b === world.earth ? 26 : c; }
+  if (!live && b !== world.mars) { const c = g.baseIce[b] < 0.005 ? 0 : g.baseIce[b] >= 0.9 ? 90 : Math.min(90, 8 + 60 * g.baseIce[b]); capN = b === world.earth ? 18 : c; capS = b === world.earth ? 26 : c; }
   const season = named(world, b, 'Titan') ? titanSeason(Y) : 0;
   const grs = named(world, b, 'Jupiter') ? grsWidth(seed, Y) : 0;
   const gw = named(world, b, 'Saturn') ? saturnGWS(seed, Y) : { amp: 0, lat: 35 };

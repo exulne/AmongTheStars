@@ -633,7 +633,7 @@ export class Geo {
     geo[o + GF.aeroTau] = 1;
     if (b === this.earth) { geo[o + GF.capN] = 18; geo[o + GF.capS] = 26; }
     else if (b === this.mars) { geo[o + GF.capN] = 10; geo[o + GF.capS] = 4; }
-    else { const c = this.baseIce[b] >= 0.9 ? 90 : Math.min(90, 8 + 60 * this.baseIce[b]); geo[o + GF.capN] = c; geo[o + GF.capS] = c; }
+    else { const c = this.baseIce[b] < 0.005 ? 0 : this.baseIce[b] >= 0.9 ? 90 : Math.min(90, 8 + 60 * this.baseIce[b]); geo[o + GF.capN] = c; geo[o + GF.capS] = c; }
   }
 
   /** Geo row of body b (pos: index in st.settled, -1 if never settled; -1: no row). */

@@ -37,7 +37,9 @@ const r = new Engine(world, seed);
 r.logEvents = false;
 while (r.st.step < step) r.step();
 const settled = Int32Array.from(r.st.settled.slice(0, r.st.nSettled));
-const snap: any = { type: 'state', id: 0, step, S: Float64Array.from(r.st.S), techDone: Float64Array.from(r.st.techDone), techWhere: Float64Array.from(r.st.techWhere), ships: r.shipList(), globals: r.globals(), settled };
+const { NGEO } = await import('../src/sim/geo.ts');
+const geo = { seed, rows: r.st.geo.slice(0, (r.geo.nSol + r.st.nSettled) * NGEO), g: r.st.geoG.slice(), scars: r.st.scars.slice() };
+const snap: any = { type: 'state', id: 0, step, S: Float64Array.from(r.st.S), techDone: Float64Array.from(r.st.techDone), techWhere: Float64Array.from(r.st.techWhere), ships: r.shipList(), globals: r.globals(), settled, geo };
 const year = r.years[step];
 console.log(`seed ${seed}, year ${2040 + Math.round(year)}: ${settled.length} settled bodies, ${snap.ships.length} ships in transit`);
 
@@ -213,6 +215,7 @@ const count = (p: any) => p.geometry.attributes.position.count;
     show(checkCard('orbit', orb[0].id));
     for (const rg of (V.system as any).rings) show(checkCard('pring', rg.body));
     for (let i = 0; i < 9000; i += 450) checkCard('skys', i);
+    if (sys === 0) { const c = checkCard('comet', 0); show(c); if (!(V.system as any).comet) fail("system Sol: no Halley's comet"); }
     if ((V.system as any).swarm) { for (let i = 0; i < 9000; i += 900) checkCard('swarm', i); show(checkCard('swarm', 0)); }
     const star = (V.system as any).star as any;
     star.children.forEach((o: any, slot: number) => { if (o.userData.work) show(checkCard('starw', slot * 10000)); });
@@ -226,11 +229,15 @@ const count = (p: any) => p.geometry.attributes.position.count;
 {
   let best = world.earth, bs = -1;
   for (const b of settled) { const s = snap.S[b * NF + F.stage]; if (s <= STAGE.UPLOADED && s > bs) { bs = s; best = b; } }
-  for (const body of [world.earth, best]) {
+  const sol = (n: string) => world.bodies.findIndex((b: any) => b.name === n && b.system === 0);
+  const featKinds = new Set<string>();
+  for (const body of [world.earth, best, world.mars, sol('Jupiter'), sol('Io'), sol('Titan'), sol('Saturn'), sol('Enceladus')]) {
     ctx.body = body; ctx.system = world.bodies[body].system;
     V.planet.enter(ctx); V.planet.sync(ctx); V.planet.frame(ctx);
     scene.updateMatrixWorld(true);
     const P = V.planet as any;
+    // living worlds: every surface feature drawn has a card
+    for (let i = 0; i < P.feats.length; i++) { const c = checkCard('geof', i); featKinds.add(P.feats[i].kind); if (i === 0 && body === world.mars) show(c); }
     const sat = P.sats ? count(P.sats.pts) : 0;
     for (let i = 0; i < sat; i += Math.ceil(sat / 30)) checkCard('sat', i);
     if (sat) show(checkCard('sat', 0));
@@ -244,8 +251,9 @@ const count = (p: any) => p.geometry.attributes.position.count;
     for (let i = 0; i < P.elevators.length; i++) checkCard('elev', i);
     if (P.elevators.length) show(checkCard('elev', 0));
     for (let i = 0; i < 9000; i += 900) checkCard('skyp', i);
-    console.log(`planet ${world.bodies[body].name} (${STAGE_NAMES[snap.S[body * NF + F.stage]]}): ${sat} satellites, ${P.elevators.length} elevators, works: ${tally.join(', ') || 'none'}`);
+    console.log(`planet ${world.bodies[body].name} (${STAGE_NAMES[snap.S[body * NF + F.stage]] ?? 'never settled'}): ${sat} satellites, ${P.elevators.length} elevators, works: ${tally.join(', ') || 'none'}; features: ${P.feats.map((x: any) => x.kind).join(', ') || 'none'}`);
   }
+  for (const k of ['cap', 'spot', 'lakes', 'plume', 'hotspot']) if (!featKinds.has(k)) fail(`no ${k} feature drawn on the Solar System's worlds`);
 }
 
 // ---- below a person: their body, a cell of every tissue, every organelle's molecule, atoms of each
