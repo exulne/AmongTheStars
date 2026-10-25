@@ -3,6 +3,7 @@
 // state (stage, wealth, stability, era, technologies, independence, distance
 // from Earth, events), so a settlement's society visibly changes over time.
 
+import { techAt } from './diffusion.ts';
 import { EV, STAGE, TECHS } from './catalog.ts';
 import type { Engine } from './engine.ts';
 import { F, NF } from './metrics.ts';
@@ -48,9 +49,10 @@ export class SocietyModel {
   }
 
   /** Society at body b in `year`, given that year's settlement row S (from the state snapshot). */
-  at(b: number, year: number, S: Float64Array, techDone: Float64Array, era: number, hx?: CivState): Society {
+  at(b: number, year: number, S: Float64Array, techDone: Float64Array, era: number, hx?: CivState, techWhere?: Float64Array): Society {
     const v = (f: keyof typeof F) => S[b * NF + F[f]];
-    const has: Has = (id) => { const i = TECHS.findIndex((t) => t.id === id); return i >= 0 && techDone[i] >= 0 && techDone[i] <= year; };
+    // a place lives with what it has heard of: news of an invention arrives at light speed
+    const has: Has = (id) => { const i = TECHS.findIndex((t) => t.id === id); return i >= 0 && (techWhere ? techAt(this.e.world, techDone, techWhere, i, b, year) : techDone[i] >= 0 && techDone[i] <= year); };
     const w = this.e.world, body = w.bodies[b], sys = w.systems[body.system];
     const stage = v('stage'), pop = v('pop'), stab = v('stability'), happy = v('happiness'), gini = v('gini');
     const gdpPc = pop > 0 ? v('gdp') / pop : 0, age = year - v('founded'), div = v('divergence');
@@ -123,7 +125,7 @@ export class SocietyModel {
 
     const name = body.name;
     const sentences = [
-      `${name} in ${Math.round(2040 + year)}: ${government.toLowerCase()} (${why}).`,
+      `${name} in ${Math.round(2040 + year)}: ${government.charAt(0).toLowerCase() + government.slice(1)} (${why}).`,
       `People speak ${language}${faiths.length ? `, and many follow ${faiths[0].name}, which teaches ${faiths[0].tenets}` : ''}. The fashionable art is ${art}.`,
       `They live in ${arch.name}. Work is ${work}; food is ${food}; they wear ${dress} and get around by ${transport}.`,
       `${family[0].toUpperCase() + family.slice(1)}, and ${lifespan}. The mood is ${mood}.`,

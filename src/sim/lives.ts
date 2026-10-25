@@ -52,6 +52,8 @@ export interface Biography extends PersonBrief {
   status: 'unborn' | 'alive' | 'dead' | 'travelling';
   mother: PersonBrief | null; father: PersonBrief | null;
   partners: PersonBrief[]; children: PersonBrief[]; siblings: PersonBrief[];
+  /** year each partner's first child together was born (when the couple is known to be together) */
+  partnerSince: number[];
   ancestors: { gen: number; who: PersonBrief }[];
   story: { year: number; text: string; link?: { kind: 'body' | 'person'; id: string | number } }[];
   height: number; personality: [number, number, number, number, number]; generationsHere: number;
@@ -328,10 +330,13 @@ export class Lives {
     const stay = this.stayAt(life, year);
     const mother = this.D.mother(id), father = this.D.father(id);
     const kids = this.D.children(id);
-    const partners = new Map<string, Id>();
+    const partners = new Map<string, Id>(), since = new Map<string, number>();
     for (const k of kids) {
       const other = this.sexOf(id) === 0 ? this.D.father(k) : this.D.mother(k);
-      if (other) partners.set(idStr(other), other);
+      if (!other) continue;
+      const key = idStr(other), kb = this.brief(k, year).born;
+      partners.set(key, other);
+      since.set(key, Math.min(since.get(key) ?? Infinity, kb));
     }
     const siblings = mother ? this.D.children(mother).filter((x) => idStr(x) !== idStr(id)).slice(0, 16) : [];
     const ancestors: Biography['ancestors'] = [];
@@ -418,6 +423,7 @@ export class Lives {
       where: stay ? { body: stay.body, name: this.bodyName(stay.body) } : null,
       mother: mother && this.brief(mother, year), father: father && this.brief(father, year),
       partners: [...partners.values()].slice(0, 6).map((x) => this.brief(x, year)),
+      partnerSince: [...partners.keys()].slice(0, 6).map((k) => since.get(k)!),
       children: kids.slice(0, 24).map((x) => this.brief(x, year)),
       siblings: siblings.map((x) => this.brief(x, year)),
       ancestors, story,

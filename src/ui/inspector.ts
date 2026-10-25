@@ -8,14 +8,17 @@ import { STAGE_CSS } from '../view/textures.ts';
 import { alive, cityCount, citySplit, systemSummary, type Pickable } from '../view/views.ts';
 import { fmtNum, fmtUnit, fmtYear, parseCount } from './format.ts';
 import { periodOf } from '../sim/ledger.ts';
+import { techArrival } from '../sim/diffusion.ts';
 import { names } from './names.ts';
 import type { Biography, PersonBrief } from '../sim/lives.ts';
 import { biographyHtml, residentsHtml } from './peoplePanel.ts';
 import { explainHtml, galaxyFactsHtml, starFactsHtml } from '../explain/card.ts';
 import { explain } from '../explain/registry.ts';
+import type { Annals } from '../sim/chronicle.ts';
+import { ageAt, humanityAnnalsHtml, polityAt, polityCardHtml, polityLink } from './annals.ts';
 
 type Residents = { total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] };
-type SocietyView = { government: string; governmentWhy: string; language: string; faith: string | null; art: string; architecture: { name: string; materials: string }; daily: Record<string, string>; mood: string; sentences: string[] };
+type SocietyView = { polity: { id: number; name: string; regime: string; since: number } | null; government: string; governmentWhy: string; language: string; faith: string | null; art: string; architecture: { name: string; materials: string }; daily: Record<string, string>; mood: string; sentences: string[] };
 type Seg = string | { t: string; kind: 'person' | 'body'; id: string | number };
 type Entry = { year: number; type: number; segs: Seg[]; weight: number };
 export function segsHtml(segs: Seg[]): string {
@@ -30,6 +33,7 @@ export interface PeopleApi {
   residents(body: number, year: number, offset: number, count: number): Promise<Residents & { pending?: boolean }>;
   person(id: string, year: number): Promise<{ bio: Biography | null; pending?: boolean }>;
   residentAt(body: number, year: number, k: number): Promise<{ person: string | null; pending?: boolean }>;
+  annals(): Promise<{ annals: Annals | null; pending?: boolean }>;
 }
 const PER_PAGE = 12;
 
@@ -55,6 +59,12 @@ export class Inspector {
 
   onSelect: (p: Pickable) => void = () => {};
   onDive: (p: Pickable) => void = () => {};
+  /** "Look closer" on a biography: into their body, cells, molecules and atoms */
+  onLookCloser: (pid: string, bio: Biography | null) => void = () => {};
+  /** a card's "Look inside" / "Enter this future" */
+  onEnter: () => void = () => {};
+  /** a card's "Their life": back to the person whose body is shown */
+  onBio: () => void = () => {};
   onClose: () => void = () => {};
   private last: InspectorCtx | null = null;
   private revealPerson = false;
@@ -67,13 +77,23 @@ export class Inspector {
   private lastBio: Biography | null = null;
   private inflight = new Set<string>();
   /** drop everything cached for the previous future */
-  resetPeople(): void { this.socCache.clear(); this.residentsCache.clear(); this.bioCache.clear(); this.chronCache.clear(); this.inv = null; this.lastBio = null; this.personId = null; }
+  resetPeople(): void { this.socCache.clear(); this.residentsCache.clear(); this.bioCache.clear(); this.chronCache.clear(); this.inv = null; this.ann = null; this.polityOpen = null; this.lastBio = null; this.personId = null; }
   chronicleOpen = false;
   private chronQuery = '';
   private chronBig = true;
   private chronCache = new Map<string, Entry[]>();
   private inv: Map<number, Entry | null> | null = null;
   private socCache = new Map<string, SocietyView | null>();
+  private ann: Annals | null = null;
+  /** the open polity card, if any */
+  polityOpen: number | null = null;
+
+  /** The ages, peoples, wars and faiths of this future (once the run is done). */
+  annals(): Annals | null {
+    if (!this.ann) this.fetch('annals', () => this.api!.annals(), (v: { annals: Annals | null }) => { this.ann = v.annals; this.onAnnals(this.ann); });
+    return this.ann;
+  }
+  onAnnals: (a: Annals | null) => void = () => {};
 
   private society(c: InspectorCtx, body: number): string {
     const key = `${body}:${Math.floor(c.year / 4)}`;
@@ -84,7 +104,7 @@ export class Inspector {
     });
     if (!soc) return '<p class="muted">Asking around…</p>';
     return `<p class="society-portrait">${soc.sentences.map(esc).join(' ')}</p>
-      <dl class="kv"><dt>Government</dt><dd>${esc(soc.government)}</dd><dt>Language</dt><dd>${esc(soc.language)}</dd>${soc.faith ? `<dt>Faith</dt><dd>${esc(soc.faith)}</dd>` : ''}<dt>Art</dt><dd>${esc(soc.art)}</dd><dt>Buildings</dt><dd>${esc(soc.architecture.materials)}</dd><dt>Mood</dt><dd>${esc(soc.mood)}</dd></dl>`;
+      <dl class="kv">${soc.polity && this.ann?.polities[soc.polity.id] ? `<dt>Ruled by</dt><dd>${polityLink(this.ann, soc.polity.id, true)}</dd>` : ''}<dt>Government</dt><dd>${esc(soc.government)}</dd><dt>Language</dt><dd>${esc(soc.language)}</dd>${soc.faith ? `<dt>Faith</dt><dd>${esc(soc.faith)}</dd>` : ''}<dt>Art</dt><dd>${esc(soc.art)}</dd><dt>Buildings</dt><dd>${esc(soc.architecture.materials)}</dd><dt>Mood</dt><dd>${esc(soc.mood)}</dd></dl>`;
   }
   onYear: (y: number) => void = () => {};
 
@@ -139,16 +159,23 @@ export class Inspector {
       const t = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
       if (!t || !this.last) return;
       const act = t.dataset.act!, id = Number(t.dataset.id);
+      if (/^(body|system|dive-body|dive-system|goto-body|close)$/.test(act)) this.polityOpen = null;
       if (act === 'close') this.onClose();
       if (act === 'techs') { this.allTechs = !this.allTechs; this.render(this.last); }
       if (act === 'system') this.onSelect({ kind: 'system', id, name: this.last.world.systems[id].name, pos: null! });
       if (act === 'body') this.onSelect({ kind: 'body', id, name: this.last.world.bodies[id].name, pos: null! });
       if (act === 'dive-body') this.onDive({ kind: 'body', id, name: this.last.world.bodies[id].name, pos: null! });
+      if (act === 'dive-city') this.onDive({ kind: 'city', id, name: this.last.selected?.name ?? '', pos: null! });
       if (act === 'dive-system') this.onDive({ kind: 'system', id, name: this.last.world.systems[id].name, pos: null! });
       if (act === 'page') { this.peoplePage = Math.max(0, this.peoplePage + id); this.render(this.last); }
       if (act === 'open-person') this.openPerson(t.dataset.pid!);
       if (act === 'close-person') this.openPerson(null);
+      if (act === 'look-closer') this.onLookCloser(t.dataset.pid!, this.lastBio?.id === t.dataset.pid ? this.lastBio : null);
+      if (act === 'enter') this.onEnter();
+      if (act === 'bio') this.onBio();
       if (act === 'close-chronicle') { this.chronicleOpen = false; this.render(this.last); }
+      if (act === 'polity') { this.polityOpen = id; this.personId = null; this.toTop(); this.render(this.last); }
+      if (act === 'close-polity') { this.polityOpen = null; this.render(this.last); }
       if (act === 'year') this.onYear(Number(t.dataset.id));
       if (act === 'goto-body') { this.openPerson(null); this.onSelect({ kind: 'body', id, name: this.last.world.bodies[id].name, pos: null! }); }
     });
@@ -188,6 +215,10 @@ export class Inspector {
     let html = '';
     if (this.personId) html = `<button class="insp-close" type="button" data-act="close-person" aria-label="Close this person">×</button>${this.person(c, this.personId)}`;
     else if (this.chronicleOpen) html = `<button class="insp-close" type="button" data-act="close-chronicle" aria-label="Close the chronicle">×</button>${this.chronicle(c)}`;
+    else if (this.polityOpen !== null) {
+      const A = this.annals();
+      html = `<button class="insp-close" type="button" data-act="close-polity" aria-label="Close this polity">×</button>${A ? polityCardHtml(A, this.polityOpen, c.world, c.year, (b) => names.place(c.world, b)) : '<p class="muted">Reading the record…</p>'}`;
+    }
     else if (!s || s.kind === 'humanspace') html = this.global(c);
     else if (s.kind === 'galaxy') html = this.galaxy(c, s);
     else if (s.kind === 'system') html = this.system(c, s.id);
@@ -197,7 +228,7 @@ export class Inspector {
       const e = s.ex ? explain(s.ex, s.id, { world: c.world, snap: c.snap, year: c.year }) : null;
       html = e ? explainHtml(e, segsHtml) : `<h2>${esc(s.name)}</h2><p class="muted">Not drawn in this view.</p>`;
     }
-    if (s && !this.personId) html = `<button class="insp-close" type="button" data-act="close" aria-label="Close and show all of humanity">×</button>${html}`;
+    if (s && !this.personId && !this.chronicleOpen && this.polityOpen === null) html = `<button class="insp-close" type="button" data-act="close" aria-label="Close and show all of humanity">×</button>${html}`;
     const scroll = this.el.scrollTop;
     this.body.innerHTML = html;
     this.el.scrollTop = scroll;
@@ -229,13 +260,15 @@ export class Inspector {
     const def = (k: string) => GLOBAL_METRICS[GM[k]];
     const row = (k: string): [string, string] => [def(k).label, fmtUnit(g(k), def(k).unit)];
     const done = c.snap ? TECHS.map((t, i) => ({ t, y: c.snap!.techDone[i] })).filter((x) => x.y >= 0).sort((a, b) => b.y - a.y) : [];
+    const A = this.annals(), age = A ? ageAt(A, c.year) : null;
     const next = c.snap ? TECHS.filter((t, i) => c.snap!.techDone[i] < 0 && t.req.every((r) => c.snap!.techDone[TECHS.findIndex((x) => x.id === r)] >= 0)) : [];
     return `
       <h2>Humanity in ${fmtYear(c.year)}</h2>
-      <p class="lede">${esc(c.snap?.globals.era ?? '')} era. ${fmtNum(g('pop'))} people in ${fmtNum(g('settlements'))} settlements across ${fmtNum(g('systems'))} star system${g('systems') === 1 ? '' : 's'}.</p>
+      <p class="lede">${esc(c.snap?.globals.era ?? '')} era${age ? `, ${esc(age.name)}` : ''}. ${fmtNum(g('pop'))} people in ${fmtNum(g('settlements'))} settlements across ${fmtNum(g('systems'))} star system${g('systems') === 1 ? '' : 's'}.</p>
       ${this.kv(['pop', 'offEarth', 'interstellarPop', 'energy', 'kardashev', 'gdp', 'knowledge', 'research', 'stability', 'factions', 'wars', 'shipsInTransit', 'reach', 'shortage'].map(row))}
       ${c.forecast ? `<h3>Psychohistory forecast</h3>${c.forecast}` : ''}
       <h3>Largest places</h3>${this.largest(c)}
+      ${A ? humanityAnnalsHtml(A, c.world, c.year, (b) => names.place(c.world, b)) : ''}
       <h3>Technology <span class="muted num">${done.length} / ${TECHS.length}</span></h3>
       ${this.techList(c, done, next)}
       <h3>Recent events</h3>
@@ -338,7 +371,7 @@ export class Inspector {
     const v = (f: SField) => (S ? S[id * NF + F[f]] : 0);
     const st = S ? v('stage') : -1;
     const pop = v('pop');
-    const fly = `<p class="act"><button class="link" data-act="dive-body" data-id="${id}" type="button">Fly to ${esc(b.name)}</button></p>`;
+    const fly = `<p class="act">${city === undefined ? '' : `<button class="link" data-act="dive-city" data-id="${city}" type="button">Walk its streets</button> · `}<button class="link" data-act="dive-body" data-id="${id}" type="button">Fly to ${esc(b.name)}</button></p>`;
     const own = names.local(id), shown = own ?? b.name; // a world by its own name, the catalogue's underneath
     const header = `<h2>${esc(city === undefined ? shown : city === 0 ? `${shown} capital` : `${shown} settlement ${city}`)}</h2>${own ? `<p class="muted catalogue-id">${esc(b.name)} in the catalogue</p>` : ''}
       <p class="lede">${st >= 0 ? `<span class="pill" style="--c:${STAGE_CSS[st]}">${STAGE_NAMES[st]}</span> ` : ''}${b.kind} world in ${esc(sys.name)}${st >= 0 && v('founded') >= 0 && st !== STAGE.SURVEY ? `, settled ${fmtYear(v('founded'))}` : ''}${v('parent') >= 0 && st > STAGE.SURVEY ? ` from ${esc(c.world.bodies[v('parent')]?.name ?? '')}` : ''}.</p>`;
@@ -352,6 +385,8 @@ export class Inspector {
     }
     const factionId = v('faction');
     const faction = factionId === id ? 'Independent' : `Loyal to ${c.world.bodies[factionId] ? names.place(c.world, factionId) : '?'}`;
+    const A = this.ann, pol = A ? polityAt(A, factionId, c.year) : null;
+    const allegiance = pol && A ? polityLink(A, pol.id, true) + (factionId === id ? ' <span class="muted">(its capital)</span>' : '') : esc(faction);
     const metrics = (Object.keys(SETTLEMENT_LABELS) as SField[]).map((f) => {
       const [label, unit] = SETTLEMENT_LABELS[f]!;
       return [label, fmtUnit(v(f), unit)] as [string, string];
@@ -359,15 +394,30 @@ export class Inspector {
     const split = city === undefined ? { count: Math.floor(pop), offset: 0 } : citySplit(pop, cityCount(st, pop), city);
     const cityPop = split.count, offset = split.offset;
     return `${header}${fly}
-      ${this.kv([...(city === undefined ? [] : [['People in this settlement', fmtNum(cityPop)] as [string, string]]), [city === undefined ? 'Population' : 'Whole world', fmtNum(pop)], ['Allegiance', esc(faction)], ['Faith', esc(names.faith(v('culture')))]])}
+      ${this.kv([...(city === undefined ? [] : [['People in this settlement', fmtNum(cityPop)] as [string, string]]), [city === undefined ? 'Population' : 'Whole world', fmtNum(pop)], ['Allegiance', allegiance], ['Faith', esc(names.faith(v('culture')))]])}
       ${this.historyChart(c)}
       <h3>Society in ${fmtYear(c.year)}</h3>${this.society(c, id)}
+      ${this.news(c, id)}
       <h3>Residents</h3>${this.people(c, id, cityPop, offset)}
       <h3>All metrics</h3>${this.kv(metrics)}
       <h3>World</h3>${phys}
       <h3>Resources</h3>${res}
       <h3>History</h3>${this.chronicle(c, id)}
       <h3>Events here</h3>${this.eventsList(c, 10)}`;
+  }
+
+  /** Inventions already made elsewhere whose news is still crossing space toward this place. */
+  private news(c: InspectorCtx, b: number): string {
+    const snap = c.snap;
+    if (!snap?.techWhere) return '';
+    const rows = TECHS.map((t, i) => ({ t, i, at: techArrival(c.world, snap.techDone, snap.techWhere, i, b) }))
+      .filter((r) => r.at > c.year && snap.techDone[r.i] <= c.year).sort((a, z) => a.at - z.at);
+    if (!rows.length) return '';
+    return `<h3>News on its way</h3><p class="muted">Invented elsewhere, but word travels at the speed of light. Until it arrives, nobody here can build with it.</p>
+      <ul class="techs">${rows.slice(0, 8).map((r) => {
+        const from = snap.techWhere[r.i];
+        return `<li><span class="num">${fmtYear(r.at)}</span> ${esc(r.t.name)}<span class="blurb">invented ${fmtYear(snap.techDone[r.i])}${from >= 0 ? ` on <button class="link" data-act="body" data-id="${from}" type="button">${esc(names.place(c.world, from))}</button>, ${Math.round(r.at - snap.techDone[r.i])} light years away` : ''}</span></li>`;
+      }).join('')}</ul>${rows.length > 8 ? `<p class="muted">and ${rows.length - 8} more</p>` : ''}`;
   }
 
   private historyChart(c: InspectorCtx): string {

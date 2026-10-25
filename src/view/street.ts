@@ -14,6 +14,7 @@ import { Rng, hash01 } from '../sim/rng.ts';
 import { ARCH_NAME, changes, styleOf, type History, type Style } from './epoch.ts';
 import { CALM, makeAgent, place, type Agent, type Dest, type Mood, type Places } from './life.ts';
 import { glowTex, pointsMaterial, specColor } from './textures.ts';
+import { cultureLight, societyLook } from './societyLook.ts';
 import { alive, cityCount, citySplit, makeSky, popOf, stageOf, type Ctx, type Label, type Level, type Pickable, type Ref, type View } from './views.ts';
 
 export type ResidentsFetch = (body: number, year: number, offset: number, count: number) => Promise<{ pending?: boolean; people: PersonBrief[]; total: number }>;
@@ -31,42 +32,158 @@ const MAX_AGENTS = matchMedia('(max-width: 40rem)').matches ? 700 : 1600, BATCH 
 /** Seconds of real time per day in the street. */
 export const DAY_SECONDS = 60;
 
+/** Shared by every block material of a settlement: how many windows are lit, how dark it is, the windows' colour. */
+interface BlockUniforms { lit: { value: number }; night: { value: number }; warm: { value: THREE.Color } }
+
 /**
- * Block material with lit windows: floors and columns come from world position,
- * so every building gets the same panes whatever its scale. Instance colour
- * codes: a red cast marks works (sodium light, fewer windows); a green channel
- * near zero marks a ruin (dark). uLit follows the time of day, uWarm the culture.
+ * Block material with a facade: floors and columns come from world position,
+ * so every building gets the same panes whatever its scale. By day the panes
+ * are dark glass in lighter frames over floor slabs; after dusk a share of
+ * them light up in the society's colour (a few cold blue screens among them),
+ * and the shopfronts along the street glow. Instance colour codes: a red cast
+ * marks works (sodium light, fewer windows); a green channel near zero marks a
+ * ruin (dark, unlit).
  */
-function blockMaterial(warm: THREE.Color): THREE.MeshStandardMaterial {
-  const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8, metalness: 0.2 });
-  m.userData.lit = { value: 0.5 };
+function blockMaterial(u: BlockUniforms): THREE.MeshStandardMaterial {
+  const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.78, metalness: 0.15 });
   m.onBeforeCompile = (sh) => {
-    sh.uniforms.uLit = m.userData.lit;
-    sh.uniforms.uWarm = { value: warm };
+    sh.uniforms.uLit = u.lit;
+    sh.uniforms.uNight = u.night;
+    sh.uniforms.uWarm = u.warm;
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vWorld; varying vec3 vWN;')
       .replace('#include <project_vertex>', `#include <project_vertex>
         vec4 wp4 = vec4(transformed, 1.0);
         mat3 nm = mat3(modelMatrix);
+        vec3 on4 = objectNormal;
         #ifdef USE_INSTANCING
-          wp4 = instanceMatrix * wp4; nm = nm * mat3(instanceMatrix);
+          // tall, thin instances: scale the normal by the inverse scale, or a tapered spire's walls read as roofs
+          mat3 im4 = mat3(instanceMatrix);
+          on4 = im4 * (on4 / vec3(dot(im4[0], im4[0]), dot(im4[1], im4[1]), dot(im4[2], im4[2])));
+          wp4 = instanceMatrix * wp4;
         #endif
-        vWorld = (modelMatrix * wp4).xyz; vWN = normalize(nm * objectNormal);`);
+        vWorld = (modelMatrix * wp4).xyz; vWN = normalize(nm * on4);`);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWorld; varying vec3 vWN; uniform float uLit; uniform vec3 uWarm;')
+      .replace('#include <common>', `#include <common>
+        varying vec3 vWorld; varying vec3 vWN; uniform float uLit, uNight; uniform vec3 uWarm;
+        float fHash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        #if defined(USE_INSTANCING_COLOR) || defined(USE_COLOR)
+          vec3 tag = vColor.rgb;
+        #else
+          vec3 tag = vec3(0.2);
+        #endif
+        float works = step(0.2, tag.r) * step(tag.b * 3.0, tag.r);
+        float ruin = 1.0 - step(0.004, tag.g);
+        float side = 1.0 - step(0.5, abs(vWN.y));
+        float along = abs(vWN.x) > abs(vWN.z) ? vWorld.z : vWorld.x;
+        vec2 g = vec2(along * 7.0, vWorld.y * 9.0);
+        vec2 f = fract(g);
+        float pane = step(0.18, f.x) * step(f.x, 0.82) * step(0.28, f.y) * step(f.y, 0.86) * step(0.12, vWorld.y) * (1.0 - works * 0.6);
+        float slab = (1.0 - step(0.1, f.y)) * side;
+        float wh = fHash(vec3(floor(g), floor(vWorld.x * 0.37 + vWorld.z * 0.53)));
+        // the street's own albedo: skins are dark in the style palette, so lift them; ruins stay soot-black
+        diffuseColor.rgb *= mix(2.3, 1.0, ruin);
+        diffuseColor.rgb *= 0.93 + 0.14 * fract(wh * 13.1);              // weathering, pane by pane
+        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.32 + vec3(0.012, 0.016, 0.022), pane * side * (1.0 - ruin)); // glass
+        diffuseColor.rgb *= 1.0 + slab * 0.35;                            // floor slabs
+        diffuseColor.rgb *= mix(0.5, 1.0, smoothstep(0.0, 0.4, vWorld.y)); // street-level grime and shade
+        float roof = step(0.5, vWN.y);
+        diffuseColor.rgb *= 1.0 - roof * 0.25;`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+        roughnessFactor = mix(roughnessFactor, 0.12, pane * side * (1.0 - ruin));`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         {
-          float side = 1.0 - step(0.5, abs(vWN.y));
-          float along = abs(vWN.x) > abs(vWN.z) ? vWorld.z : vWorld.x;
-          vec2 g = vec2(along * 7.0, vWorld.y * 9.0);
-          vec2 f = fract(g);
-          float pane = step(0.25, f.x) * step(f.x, 0.75) * step(0.3, f.y) * step(f.y, 0.8);
-          float h = fract(sin(dot(floor(vec3(g, vWorld.x * 0.37 + vWorld.z * 0.53)), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
-          float works = step(0.5, vColor.r - vColor.b);
-          float ruin = 1.0 - step(0.004, vColor.g);
-          float on = step(1.0 - uLit * (1.0 - works * 0.6), h) * step(0.12, vWorld.y) * (1.0 - ruin);
-          vec3 warm = mix(uWarm, vec3(0.75, 0.88, 1.0), step(0.85, fract(h * 7.0)));
-          totalEmissiveRadiance += mix(warm, vec3(1.0, 0.55, 0.2), works) * pane * on * side * 0.45;
+          float on = step(1.0 - uLit * (1.0 - works * 0.6), wh) * (1.0 - ruin);
+          // most windows the society's warm colour, some cooler, a few blue with a screen
+          float k = fract(wh * 7.0);
+          vec3 wc = mix(uWarm, vec3(0.75, 0.86, 1.0), step(0.8, k));
+          wc = mix(wc, vec3(0.35, 0.55, 1.0), step(0.95, k));
+          wc = mix(wc, vec3(1.0, 0.55, 0.2), works);
+          float bright = (0.1 + 0.55 * uNight) * (0.6 + 0.8 * fract(wh * 31.0));
+          totalEmissiveRadiance += wc * pane * on * side * bright;
+          // shopfronts: a lit band along the ground floor after dusk
+          float shop = step(0.025, vWorld.y) * (1.0 - step(0.1, vWorld.y)) * side * (1.0 - ruin) * (1.0 - works);
+          totalEmissiveRadiance += uWarm * shop * uNight * 0.55 * step(0.35, fract(wh * 3.7 + floor(along * 2.0) * 0.37));
+        }`);
+  };
+  return m;
+}
+
+/** Paving inside the settlement: lots, the street grid (asphalt, kerbs, dashed centre lines), ring roads and a tiled plaza. */
+function pavingMaterial(color: THREE.Color, cell: number, G: number, R: number, night: { value: number }, warm: { value: THREE.Color }): THREE.MeshStandardMaterial {
+  const m = new THREE.MeshStandardMaterial({ color, roughness: 0.92, metalness: 0.0 });
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uCell = { value: cell }; sh.uniforms.uG = { value: G }; sh.uniforms.uR = { value: R };
+    sh.uniforms.uNight = night; sh.uniforms.uWarm = warm;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vLocal;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLocal = vec2(position.x, -position.y);');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec2 vLocal; uniform float uCell, uG, uR, uNight; uniform vec3 uWarm;
+        float pHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float pNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(pHash(i), pHash(i + vec2(1, 0)), f.x), mix(pHash(i + vec2(0, 1)), pHash(i + vec2(1, 1)), f.x), f.y); }`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          vec2 x = vLocal;
+          float rr = length(x), span = uCell * uG;
+          vec2 dg = abs(x - floor(x / span + 0.5) * span);
+          float dRoad = min(dg.x, dg.y);
+          float dRing = min(min(abs(rr - uR * 0.2), abs(rr - uR * 0.62)), abs(rr - uR));
+          float d = min(dRoad, dRing);
+          float half_ = uCell * 0.5;
+          float road = 1.0 - smoothstep(half_ * 0.72, half_ * 0.78, d);
+          float kerb = (1.0 - smoothstep(half_ * 0.9, half_ * 1.0, d)) - road;
+          // centre line, dashed along the street
+          float along = dg.x < dg.y ? x.y : x.x;
+          float dash = (1.0 - smoothstep(0.012, 0.02, dRoad)) * step(0.5, fract(along * 2.5)) * step(dRing, dRoad + 1.0) * (1.0 - step(dRing, half_));
+          float grime = pNoise(x * 3.0) * 0.6 + pNoise(x * 11.0) * 0.4;
+          vec3 c = diffuseColor.rgb * (0.85 + 0.3 * grime);
+          // lots: slabs with joints
+          vec2 lot = abs(fract(x / (uCell * 0.5)) - 0.5);
+          c *= 1.0 - (1.0 - smoothstep(0.0, 0.03, min(lot.x, lot.y))) * 0.18;
+          // the plaza: light tiles
+          float plaza = 1.0 - smoothstep(uR * 0.17, uR * 0.19, rr);
+          vec2 tile = abs(fract(x * 3.0) - 0.5);
+          vec3 pl = vec3(0.16, 0.155, 0.15) * (0.9 + 0.2 * pHash(floor(x * 3.0))) * (1.0 - (1.0 - smoothstep(0.0, 0.04, min(tile.x, tile.y))) * 0.3);
+          c = mix(c, pl, plaza);
+          c = mix(c, vec3(0.022, 0.024, 0.028) * (0.85 + 0.3 * grime), road);
+          c = mix(c, vec3(0.12, 0.12, 0.125), kerb);
+          c = mix(c, vec3(0.32, 0.3, 0.24), dash * road);
+          diffuseColor.rgb = c;
+        }`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        {
+          // pools of lamplight at the crossings after dark
+          float span = uCell * uG;
+          vec2 cr = abs(vLocal - floor(vLocal / span + 0.5) * span);
+          float pool = exp(-dot(cr, cr) / (uCell * uCell * 0.35));
+          totalEmissiveRadiance += uWarm * pool * uNight * 0.06;
+        }`);
+  };
+  return m;
+}
+
+/** Ground outside the settlement: patchy regolith, soil or sea, never one flat colour. */
+function groundMaterial(color: number, water: boolean): THREE.MeshStandardMaterial {
+  const m = new THREE.MeshStandardMaterial({ color, roughness: water ? 0.25 : 0.95, metalness: water ? 0.4 : 0 });
+  m.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vGround;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGround = position.xy;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec2 vGround;
+        float gHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float gNoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(gHash(i), gHash(i + vec2(1, 0)), f.x), mix(gHash(i + vec2(0, 1)), gHash(i + vec2(1, 1)), f.x), f.y); }`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          float n = gNoise(vGround * 0.15) * 0.5 + gNoise(vGround * 0.6) * 0.3 + gNoise(vGround * 2.7) * 0.2;
+          float rocks = step(0.93, gHash(floor(vGround * 4.0))) * 0.4;
+          diffuseColor.rgb *= ${water ? '0.8 + 0.4 * n' : '0.6 + 0.8 * n + rocks'};
         }`);
   };
   return m;
@@ -104,7 +221,7 @@ function personGeometry(): THREE.BufferGeometry {
 
 /** Instanced people that walk: limbs swing by a per-instance phase and pace; heads get a skin tone. */
 function personMaterial(): THREE.MeshStandardMaterial {
-  const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.65, emissive: 0x1c1712 });
+  const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.65, emissive: 0x2a231a });
   m.userData.time = { value: 0 };
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uTime = m.userData.time;
@@ -175,11 +292,14 @@ export class StreetView implements View {
   private hemi: THREE.HemisphereLight | null = null;
   private star: THREE.Sprite | null = null;
   private blockMats: THREE.MeshStandardMaterial[] = [];
+  private blockU: BlockUniforms = { lit: { value: 0.5 }, night: { value: 0 }, warm: { value: new THREE.Color() } };
+  private body = -1;
   private lampMat: THREE.ShaderMaterial | null = null;
   private vehicles: Vehicle[] = [];
   private cars: THREE.InstancedMesh | null = null;
   private carLights: ReturnType<typeof dotCloud> | null = null;
   private hour = 7;
+  private sunCol = new THREE.Color();
   focus = -1;  // resident whose biography is open
   follow = -1; // resident the camera is following
 
@@ -194,7 +314,9 @@ export class StreetView implements View {
   private frameCamera(ctx: Ctx): void {
     const R = (this.framedR = this.R);
     ctx.controls.target.set(0, 0, 0);
-    ctx.camera.position.set(R * 0.5, R * 0.95, R * 1.1);
+    // low and close enough that the residents read as people, with the skyline behind them
+    const d = Math.max(7, R * 0.62) / R;
+    ctx.camera.position.set(R * 0.36 * d, R * 0.58 * d, R * 0.72 * d);
     this.limits = [0.6, R * 3.2];
     ctx.controls.minDistance = this.limits[0];
     ctx.controls.maxDistance = this.limits[1];
@@ -251,6 +373,8 @@ export class StreetView implements View {
     this.city.rotation.y = st.twist;
     this.group.add(this.city);
     this.blockMats = []; this.lampMat = null;
+    this.body = pl.body;
+    this.blockU = { lit: { value: 0.5 }, night: { value: 0 }, warm: { value: windowColour(st, pl.body) } };
     const keepPeople = this.agents.length > 0 && this.fetchedFor.startsWith(placeKey + ':');
     if (!keepPeople) { this.agents = []; this.pool = []; this.fetchedFor = ''; this.focus = -1; this.follow = -1; }
     this.figures = null; this.glows = null; this.cars = null; this.carLights = null; this.vehicles = [];
@@ -264,13 +388,14 @@ export class StreetView implements View {
     const small = pl.st <= STAGE.BASE || pl.count < 3000;
 
     const sys = ctx.world.systems[b.system];
-    this.sun = new THREE.DirectionalLight(specColor(sys.spec), 2.4);
+    this.sunCol.copy(specColor(sys.spec));
+    this.sun = new THREE.DirectionalLight(this.sunCol, 2.4);
     this.hemi = new THREE.HemisphereLight(st.open ? 0x7a96b8 : 0x5a6a88, 0x101014, 1.1);
-    this.star = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: specColor(sys.spec), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.8 }));
-    this.star.scale.setScalar(R * 1.6);
+    this.star = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: specColor(sys.spec), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.35 }));
+    this.star.scale.setScalar(R * 0.9);
     this.group.add(this.sun, this.hemi, this.star, makeSky(pl.body + 11, 9000, 'skyst', () => ({ name: this.cityName, x: sys.x, y: sys.y, z: sys.z, sol: sys.id === 0 })));
 
-    const ground = new THREE.Mesh(new THREE.CircleGeometry(R * 6, 96), new THREE.MeshStandardMaterial({ color: gnd.ground, roughness: gnd.water ? 0.25 : 0.95, metalness: gnd.water ? 0.4 : 0 }));
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(R * 6, 96), groundMaterial(gnd.ground, gnd.water));
     ground.rotation.x = -Math.PI / 2;
     this.group.add(ground);
     if (gnd.water) {
@@ -370,7 +495,7 @@ export class StreetView implements View {
     // each lot remembers its height; on a change, buildings move from old to new height, the centre first
     const instanced = (geo: THREE.BufferGeometry, ms: THREE.Matrix4[], cs: THREE.Color[], keys: string[], centred: boolean) => {
       if (!ms.length) return;
-      const mat = blockMaterial(st.glow);
+      const mat = blockMaterial(this.blockU);
       this.blockMats.push(mat);
       const im = new THREE.InstancedMesh(geo, mat, ms.length);
       const n = ms.length, gr: Grow = { mesh: im, x: new Float32Array(n), z: new Float32Array(n), sx: new Float32Array(n), sz: new Float32Array(n), from: new Float32Array(n), to: new Float32Array(n), delay: new Float32Array(n), q: [], centred };
@@ -393,7 +518,7 @@ export class StreetView implements View {
     instanced(new THREE.CylinderGeometry(0.28, 0.5, 1, 10), spires, spireCol, spireKey, true);
     if (glass.length) {
       const farmMat = st.mirrors
-        ? new THREE.MeshStandardMaterial({ color: 0x5a4a20, emissive: 0xffd27a, emissiveIntensity: 0.35, roughness: 0.2, metalness: 0.8 })
+        ? new THREE.MeshStandardMaterial({ color: 0x5a4a20, emissive: 0xffd27a, emissiveIntensity: 0.1, roughness: 0.3, metalness: 0.6 })
         : new THREE.MeshStandardMaterial({ color: 0x1e3a28, emissive: 0x2c6a3c, emissiveIntensity: 0.22, roughness: 0.3, transparent: true, opacity: 0.85 });
       const farms = new THREE.InstancedMesh(boxGeo, farmMat, glass.length);
       glass.forEach((mm, k) => farms.setMatrixAt(k, mm));
@@ -407,7 +532,7 @@ export class StreetView implements View {
     // the civic heart: a dome, an arcology, or a data-temple
     if (st.arcology && big) {
       // a stepped arcology: each tier narrower, its roof a green terrace
-      const arc = new THREE.Group(), mat = blockMaterial(st.glow);
+      const arc = new THREE.Group(), mat = blockMaterial(this.blockU);
       this.blockMats.push(mat);
       const terrace = new THREE.MeshStandardMaterial({ color: 0x2c4a30, emissive: 0x1d3a22, emissiveIntensity: 0.4, roughness: 0.9 });
       let y = 0;
@@ -494,18 +619,10 @@ export class StreetView implements View {
       this.lampMat = lamps.material as THREE.ShaderMaterial;
       this.city.add(lamps);
     }
-    const roads: number[] = [];
-    for (let i = -n; i <= n; i += G) {
-      const L = Math.sqrt(Math.max(0, R * R - (i * cell) ** 2));
-      roads.push(i * cell, 0.03, -L, i * cell, 0.03, L, -L, 0.03, i * cell, L, 0.03, i * cell);
-    }
-    for (const rr of [R * 0.2, R * 0.62, R]) for (let k = 0; k < 96; k++) {
-      const t0 = (k / 96) * Math.PI * 2, t1 = ((k + 1) / 96) * Math.PI * 2;
-      roads.push(Math.cos(t0) * rr, 0.03, Math.sin(t0) * rr, Math.cos(t1) * rr, 0.03, Math.sin(t1) * rr);
-    }
-    const rg = new THREE.BufferGeometry();
-    rg.setAttribute('position', new THREE.Float32BufferAttribute(roads, 3));
-    this.city.add(new THREE.LineSegments(rg, new THREE.LineBasicMaterial({ color: 0x4a6078, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false })));
+    // paved streets, kerbs and a tiled plaza, turned with the culture's grid
+    const pave = new THREE.Mesh(new THREE.CircleGeometry(R * 1.04, 160), pavingMaterial(new THREE.Color(gnd.ground).lerp(new THREE.Color(0x4c4a48), 0.6), cell, G, R, this.blockU.night, this.blockU.warm));
+    pave.rotation.x = -Math.PI / 2; pave.position.y = gnd.water ? 0.026 : 0.006;
+    this.city.add(pave);
 
     if (gnd.dome) {
       this.group.add(new THREE.LineSegments(new THREE.WireframeGeometry(new THREE.SphereGeometry(R * 1.04, 36, 10, 0, Math.PI * 2, 0, Math.PI / 2)),
@@ -585,7 +702,7 @@ export class StreetView implements View {
       if (a && b) this.vehicles.push({ ring: 0, phase: hash01(k, 22), speed: 0.012 + hash01(k, 23) * 0.01, hop: 0, path: [a, b] });
     }
     if (!this.vehicles.length) return;
-    this.cars = new THREE.InstancedMesh(new THREE.BoxGeometry(hopper ? 0.22 : 0.4, 0.11, 0.13), new THREE.MeshStandardMaterial({ color: 0x3a4554, roughness: 0.5, metalness: 0.5, emissive: 0x6a8cae, emissiveIntensity: 0.35 }), this.vehicles.length);
+    this.cars = new THREE.InstancedMesh(new THREE.BoxGeometry(hopper ? 0.26 : 0.46, 0.13, 0.15), new THREE.MeshStandardMaterial({ color: 0x5a6676, roughness: 0.35, metalness: 0.4, emissive: 0x6a8cae, emissiveIntensity: 0.18 }), this.vehicles.length);
     this.cars.frustumCulled = false;
     this.carLights = dotCloud(this.vehicles.length, 1.6, 8);
     this.city.add(this.cars, this.carLights.pts);
@@ -602,6 +719,7 @@ export class StreetView implements View {
     this.walk.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('aWalk', this.walk);
     this.figures = new THREE.InstancedMesh(geo, personMaterial(), MAX_AGENTS);
+    this.figures.castShadow = false;
     this.prevX = new Float32Array(MAX_AGENTS); this.prevZ = new Float32Array(MAX_AGENTS); this.heading = new Float32Array(MAX_AGENTS);
     this.figures.count = 0;
     this.figures.frustumCulled = false;
@@ -611,6 +729,7 @@ export class StreetView implements View {
 
   sync(ctx: Ctx): void {
     this.build(ctx);
+    if (this.style && this.body >= 0) this.blockU.warm.value.copy(windowColour(this.style, this.body));
     if (Math.abs(this.R - this.framedR) > this.framedR * 0.3) this.frameCamera(ctx);
     const pl = this.where(ctx);
     if (!alive(pl.st)) return;
@@ -649,13 +768,16 @@ export class StreetView implements View {
     if (this.sun) {
       const az = ((this.hour - 6) / 12) * Math.PI;
       this.sun.position.set(Math.cos(az) * this.R * 2, Math.max(0.05, sunUp) * this.R * 2, -this.R * 0.8);
-      this.sun.intensity = 0.08 + day * 1.5;
-      this.hemi!.intensity = 0.2 + day * 0.55;
+      this.sun.intensity = 0.08 + day * 1.6;
+      // the light warms toward dawn and dusk
+      this.sun.color.copy(this.sunCol).lerp(DUSK, Math.max(0, 1 - sunUp * 2.2) * 0.7);
+      this.hemi!.intensity = 0.25 + day * 0.6;
       this.star!.position.copy(this.sun.position).setLength(this.R * 9);
       this.star!.visible = sunUp > -0.1;
     }
-    const lit = (0.15 + 0.6 * night) * (this.style?.quiet ? 0.6 : 1) * (0.6 + 0.4 * (this.style?.wealth ?? 0.5));
-    for (const m of this.blockMats) m.userData.lit.value = lit;
+    const lit = (0.12 + 0.45 * night) * (this.style?.quiet ? 0.6 : 1) * (0.6 + 0.4 * (this.style?.wealth ?? 0.5));
+    this.blockU.lit.value = lit;
+    this.blockU.night.value = Math.min(1, night * 2.2);
     if (this.lampMat) this.lampMat.uniforms.uOpacity.value = 0.15 + 0.85 * night;
 
     if (this.cars && this.carLights) {
@@ -682,9 +804,10 @@ export class StreetView implements View {
     }
 
     if (this.figures && this.glows) {
-      const near = ctx.camera.position.distanceTo(ctx.controls.target) < Math.max(10, this.R * 0.6);
+      const near = ctx.camera.position.distanceTo(ctx.controls.target) < Math.max(14, this.R * 1.05);
       const st = this.style;
-      const tall = st?.figure.tall ?? 1, slim = st?.figure.slim ?? 1;
+      // drawn nearly twice life size against the blocks, so a resident reads as a person from the street view
+      const tall = (st?.figure.tall ?? 1) * FIGURE, slim = (st?.figure.slim ?? 1) * FIGURE;
       const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(slim, tall, slim), kidS = new THREE.Vector3(slim * 0.75, tall * 0.7, slim * 0.75), zero = new THREE.Vector3(0, 0, 0), p = new THREE.Vector3(), c = new THREE.Color(), upv = new THREE.Vector3(0, 1, 0);
       (this.figures.material as THREE.MeshStandardMaterial).userData.time.value = ctx.t;
       const walk = this.walk!.array as Float32Array;
@@ -720,7 +843,7 @@ export class StreetView implements View {
         this.figures.setColorAt(k, c);
         this.glows.pos.set([a.x, 0.09, a.z], k * 3);
         this.glows.col.set([c.r, c.g, c.b], k * 3);
-        this.glows.size[k] = a.vis ? (k === this.focus ? 2.6 + 0.6 * Math.sin(ctx.t * 4) : near ? 0.45 : 0.9) : 0;
+        this.glows.size[k] = a.vis ? (k === this.focus ? 2.6 + 0.6 * Math.sin(ctx.t * 4) : near ? 0.3 : 0.9) : 0;
       }
       this.figures.count = n;
       this.walk!.needsUpdate = true;
@@ -745,7 +868,7 @@ export class StreetView implements View {
     const out: Pickable[] = [];
     this.agents.forEach((a, k) => {
       if (!a.vis) return;
-      out.push({ pos: this.w(new THREE.Vector3(a.x, 0.08, a.z)), kind: 'person', id: k, name: `${a.p.name}, ${a.p.age}, ${a.p.job} · ${a.doing}`, weight: k === this.focus ? 4 : 0 });
+      out.push({ pos: this.w(new THREE.Vector3(a.x, 0.08, a.z)), kind: 'person', id: k, name: `${a.p.name}, ${Math.floor(a.p.age)}, ${a.p.job} · ${a.doing}`, weight: k === this.focus ? 4 : 0 });
     });
     return out;
   }
@@ -773,6 +896,17 @@ export class StreetView implements View {
     if (f) out.push({ pos: this.w(new THREE.Vector3(f.x, 0.35, f.z)), text: f.p.name, sub: f.doing, strong: true, prio: 12 });
     return out;
   }
+}
+
+const FIGURE = 1.8;
+const DUSK = new THREE.Color(1, 0.55, 0.3);
+const cultC = new THREE.Color();
+/** Lit-window colour: the era's lamp colour, pulled toward the society's own light once the worker has sent its look. */
+function windowColour(st: Style, body: number): THREE.Color {
+  const out = st.glow.clone();
+  const look = societyLook(body);
+  if (look) out.lerp(cultureLight(look, cultC), 0.55);
+  return out;
 }
 
 const gm = new THREE.Matrix4(), gp = new THREE.Vector3(), gs = new THREE.Vector3();

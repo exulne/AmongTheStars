@@ -10,7 +10,7 @@ import { Lives, type Biography, type PersonBrief } from './lives.ts';
 import { SocietyModel, type Society } from './society.ts';
 import { buildWorld } from './world.ts';
 import { HG, NWC, OUTCOME, WAR_KIND, WC } from './civ.ts';
-import { periodOf } from './ledger.ts';
+import { SHIP_BODY, periodOf, periodStart } from './ledger.ts';
 import { handleData, isDataReq, type DataReq, type DataRes } from './dataApi.ts';
 import { NetMind } from '../ml/netMind.ts';
 import { loadWarGens, type WarGens } from '../ml/warGens.ts';
@@ -38,7 +38,7 @@ export type ToWorker =
 
 export type FromWorker =
   | { type: 'progress'; seed: number; step: number; years: number[]; series: Float64Array; done: boolean; ms: number }
-  | { type: 'state'; id: number; step: number; S: Float64Array; techDone: Float64Array; ships: ReturnType<Engine['shipList']>; globals: ReturnType<Engine['globals']>; settled: Int32Array }
+  | { type: 'state'; id: number; step: number; S: Float64Array; techDone: Float64Array; techWhere: Float64Array; ships: ReturnType<Engine['shipList']>; globals: ReturnType<Engine['globals']>; settled: Int32Array }
   | { type: 'history'; id: number; body: number; steps: number[]; cols: Record<string, number[]> }
   | { type: 'events'; id: number; events: Engine['events'] }
   | { type: 'residents'; id: number; pending?: boolean; total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] }
@@ -60,7 +60,7 @@ export interface WarSpan { wars: number; kinetic: number; killed: number; annex:
 export interface WayOfWar { run: string; gen: number; gens: number; now: WarSpan; before: WarSpan }
 
 /** A ship in transit, as the people model knows it: its name, who boarded, and the Chronicle's launch entry (with its captain). */
-export interface ShipInfo { name: string; n: number; generation: boolean; launch: Entry | null }
+export interface ShipInfo { name: string; n: number; generation: boolean; launch: Entry | null; body: number; born: [number, number][] }
 
 const world = buildWorld();
 let main: Engine | null = null;
@@ -176,9 +176,9 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
   else if (m.type === 'state') {
     const e = stateAt(m.step);
     const S = e.st.S.slice();
-    const techDone = e.st.techDone.slice();
+    const techDone = e.st.techDone.slice(), techWhere = e.st.techWhere.slice();
     const settled = e.st.settled.slice(0, e.st.nSettled);
-    post({ type: 'state', id: m.id, step: e.st.step, S, techDone, ships: e.shipList(), globals: e.globals(), settled }, [S.buffer, techDone.buffer, settled.buffer]);
+    post({ type: 'state', id: m.id, step: e.st.step, S, techDone, techWhere, ships: e.shipList(), globals: e.globals(), settled }, [S.buffer, techDone.buffer, techWhere.buffer, settled.buffer]);
   } else if (m.type === 'history' && main) {
     const w = 2 + HIST_FIELDS.length;
     const steps: number[] = [];
@@ -207,7 +207,7 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
     if (!ok) post({ type: 'society', id: m.id, pending: true, society: null });
     else {
       const e = stateAt(m.step);
-      post({ type: 'society', id: m.id, society: society!.at(m.body, e.years[e.st.step], e.st.S, e.st.techDone, e.st.g[1], e.st.hx) });
+      post({ type: 'society', id: m.id, society: society!.at(m.body, e.years[e.st.step], e.st.S, e.st.techDone, e.st.g[1], e.st.hx, e.st.techWhere) });
     }
   } else if (m.type === 'placeNames') {
     const L = people(), names: [number, string][] = [];
@@ -247,7 +247,11 @@ function shipInfo(L: Lives, from: number, to: number, depart: number): ShipInfo 
     const v = L.voyage(e.b);
     if (!v || main.ledger === null) return null;
     const fl = main.ledger.flows[v.flow];
-    return { name: L.shipName(fl), n: v.n, generation: v.generation, launch: chron ? chron.entry(i) : null };
+    // a generation ship is a place: its own residents, and children born aboard period by period
+    const body = v.generation ? SHIP_BODY + e.b : -1, born: [number, number][] = [];
+    const br = body >= 0 ? main.ledger.births.get(body) : undefined;
+    if (br) for (let p = periodOf(v.depart), sum = 0; p < br.length && periodStart(p) <= v.arrive; p++) { sum += Math.max(0, br[p]); born.push([Math.min(periodStart(p + 1), v.arrive), Math.round(sum)]); }
+    return { name: L.shipName(fl), n: v.n, generation: v.generation, launch: chron ? chron.entry(i) : null, body, born };
   }
   return null;
 }

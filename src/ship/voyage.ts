@@ -34,7 +34,7 @@ export class Voyage {
   private bank = 0;
   private yaw = 0;
   private haveprev = false;
-  private sun = new THREE.DirectionalLight(0xfff1d6, 2.4);
+  private sun = new THREE.DirectionalLight(0xfff1d6, 1.6);
 
   constructor(renderer: THREE.WebGLRenderer) {
     const pmrem = new THREE.PMREMGenerator(renderer);

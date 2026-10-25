@@ -5,7 +5,9 @@
 import * as THREE from 'three';
 import type { StateMsg } from '../sim/client.ts';
 import type { ShipInfo } from '../sim/worker.ts';
-import { GENERATION } from '../sim/ledger.ts';
+import { GENERATION, periodOf } from '../sim/ledger.ts';
+import type { PersonBrief } from '../sim/lives.ts';
+import type { Seg } from '../sim/chronicle.ts';
 import { fmtNum } from '../ui/format.ts';
 import { addCpuSet, addGpuSet, segDist } from './picker.ts';
 import { registerExplainer, type ExCtx, type Explanation, type Fact } from './registry.ts';
@@ -26,13 +28,32 @@ export function shipId(s: ShipRec): number {
 export function shipRec(id: number): ShipRec | undefined { return recs[id]; }
 
 type Fetch = (from: number, to: number, depart: number) => Promise<{ pending?: boolean; ship: ShipInfo | null }>;
-let fetcher: Fetch | null = null;
+type Aboard = { total: number; people: PersonBrief[] };
+type FetchAboard = (body: number, year: number) => Promise<Aboard & { pending?: boolean }>;
+let fetcher: Fetch | null = null, aboardFetch: FetchAboard | null = null;
+const aboard = new Map<string, Aboard>();
 let onUpdate: () => void = () => {};
 const info = new Map<string, ShipInfo | null>();
 const inflight = new Set<string>();
 /** Wire the worker query and a re-render callback; call `resetShips` when the future changes. */
-export function setShipApi(f: Fetch, update: () => void): void { fetcher = f; onUpdate = update; }
-export function resetShips(): void { info.clear(); ids.clear(); recs.length = 0; }
+export function setShipApi(f: Fetch, update: () => void, a?: FetchAboard): void { fetcher = f; onUpdate = update; aboardFetch = a ?? null; }
+export function resetShips(): void { info.clear(); aboard.clear(); ids.clear(); recs.length = 0; }
+
+/** Who is aboard a generation ship this period (fetched once per ship and period). */
+function aboardAt(body: number, year: number): Aboard | undefined {
+  const k = `${body}:${periodOf(year)}`;
+  const got = aboard.get(k);
+  if (got || !aboardFetch || inflight.has(k)) return got;
+  inflight.add(k);
+  aboardFetch(body, year).then((r) => {
+    inflight.delete(k);
+    if (r.pending) return;
+    if (aboard.size > 200) aboard.clear();
+    aboard.set(k, r);
+    onUpdate();
+  });
+  return undefined;
+}
 
 function infoFor(s: ShipRec): ShipInfo | null | undefined {
   const k = keyOf(s);
@@ -85,13 +106,31 @@ export function shipCard(id: number, c: ExCtx): Explanation {
     { k: 'Voyage so far', v: c.year >= s.arrive ? 'over' : `${Math.round(f * 100)}%, ${Math.max(0, Math.round(s.arrive - c.year))} years to go`, t: 'P' },
   ];
   if (gen) facts.push({ k: 'Generations aboard', v: `about ${Math.max(1, Math.round(years / 28))}`, t: 'E' });
+  // the ship's log: children born aboard so far, and the people living aboard now
+  const sailing = c.year >= s.depart && c.year < s.arrive;
+  const crew = i && i.body >= 0 && sailing ? aboardAt(i.body, c.year) : undefined;
+  if (i && i.born.length && c.year >= s.depart) {
+    let born = 0;
+    for (const [y, n] of i.born) { if (y > c.year) break; born = n; }
+    facts.push({ k: 'Born aboard so far', v: fmtNum(born), t: 'P' });
+  }
+  if (crew) facts.push({ k: 'Living aboard now', v: fmtNum(crew.total), t: 'P' });
+  const story: Seg[] = [...(i?.launch?.segs ?? [])];
+  if (crew?.people.length) {
+    story.push(`${story.length ? ' ' : ''}Aboard in ${yr(c.year)}: `);
+    crew.people.slice(0, 6).forEach((p, k) => {
+      if (k) story.push(k === Math.min(6, crew.people.length) - 1 ? ' and ' : ', ');
+      story.push({ t: p.name, kind: 'person', id: p.id }, ` (${Math.floor(p.age)}, ${p.job})`);
+    });
+    story.push(crew.total > 6 ? `, among ${fmtNum(crew.total)}.` : '.');
+  }
   return {
     eyebrow: ftl ? 'Warp ship in transit' : gen ? 'Generation ship in transit' : 'Colony ship in transit',
     title: i ? `The ${i.name}` : ftl ? 'Warp ship' : 'Colony ship',
     lede: `Carrying ${fmtNum(i?.n ?? s.colonists)} people from ${A.name} to ${B.name}, ${dist < 10 ? dist.toFixed(1) : Math.round(dist).toLocaleString('en-US')} light years, launched in ${yr(s.depart)}.`,
     facts,
     why: gen ? `A voyage of ${Math.round(years)} years: the people who step off at ${B.name} will be the grandchildren of those who boarded.` : ftl ? 'Folded space makes the galaxy a few years wide; ships like this are how a warp-capable future fills it.' : 'Every settlement beyond its home world began as a ship like this one.',
-    story: i?.launch?.segs,
+    story: story.length ? story : undefined,
     links: [{ label: A.name, act: 'body', id: A.id }, { label: B.name, act: 'body', id: B.id }],
     pending: i === undefined,
   };

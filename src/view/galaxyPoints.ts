@@ -18,6 +18,7 @@ export interface GalaxyParams {
   brightness?: number;
   maxPx?: number;      // stars stay points, not discs, when the camera dives in
   dust?: number;       // dust particles per star
+  core?: number;       // light of each bulge star relative to the arms; the bulge is dense, so it stacks up fast
 }
 
 const CORE = [new THREE.Color(0xffe2b0), new THREE.Color(0xffc488), new THREE.Color(0xffb070)];
@@ -52,6 +53,9 @@ export function makeGalaxy(p: GalaxyParams): THREE.Group {
   const k = 1 / Math.tan((p.pitch * Math.PI) / 180);
   const R = p.radius;
   const bright = p.brightness ?? 1;
+  // tens of thousands of additive bulge stars overlap in a few pixels: each one must be faint,
+  // or the centre clips to a white disc and swallows its label
+  const coreK = p.core ?? 0.42, innerK = 0.5 + 0.5 * coreK;
   const c = new THREE.Color();
   const meta = new Uint16Array(n), bri = new Uint8Array(n);
 
@@ -68,7 +72,7 @@ export function makeGalaxy(p: GalaxyParams): THREE.Group {
       y = along * Math.sin(ang) + across * Math.cos(ang);
       z = r.gauss() * R * 0.035;
       const pi = r.int(0, 2), m = 0.35 + r.next() * 0.45;
-      c.copy(CORE[pi]).multiplyScalar(m);
+      c.copy(CORE[pi]).multiplyScalar(m * coreK);
       meta[i] = META.BULGE | (pi << 8); bri[i] = Math.round(m * 200);
       size[i] = (0.7 + r.next() * 1.2) * p.sizeScale;
     } else if (u < 0.96) {
@@ -84,7 +88,7 @@ export function makeGalaxy(p: GalaxyParams): THREE.Group {
       z = r.gauss() * R * p.thickness * (1 - 0.5 * rr / R);
       const inner = rr < R * 0.25;
       const pi = inner ? r.int(0, 2) : 3 + r.int(0, 3), m = 0.35 + r.next() * 0.75;
-      c.copy(PALETTE[pi]).multiplyScalar(m);
+      c.copy(PALETTE[pi]).multiplyScalar(inner ? m * innerK : m);
       meta[i] = META.ARM | (arm << 2) | (stray ? META.STRAY : 0) | (inner ? META.INNER : 0) | (pi << 8); bri[i] = Math.round(m * 200);
       size[i] = (0.6 + Math.pow(r.next(), 3) * 3) * p.sizeScale;
       // star-forming knots sit on the arm's spine and tint rather than dot it
@@ -132,9 +136,12 @@ export function makeGalaxy(p: GalaxyParams): THREE.Group {
   dust.frustumCulled = false;
   group.add(dust);
 
-  // haze: big soft sprites, core glow and arm nebulae
-  const core = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffc98a, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.6 * bright }));
-  core.scale.setScalar(R * 0.32);
+  // haze: a broad dim warm glow over the bulge, a small nucleus, and arm nebulae
+  const haze = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffb877, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.16 * bright }));
+  haze.scale.setScalar(R * 0.42);
+  group.add(haze);
+  const core = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffd9a8, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.3 * bright }));
+  core.scale.setScalar(R * 0.1);
   group.add(core);
   const nebulae: THREE.Sprite[] = [], nebKind: number[] = [];
   const neb = [nebulaTex(p.seed + 1, [255, 90, 130]), nebulaTex(p.seed + 2, [120, 160, 255]), nebulaTex(p.seed + 3, [255, 190, 140])];

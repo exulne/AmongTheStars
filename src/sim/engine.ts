@@ -2,6 +2,7 @@
 // All mutable state lives in typed arrays inside `SimState` so that a snapshot
 // is a handful of array copies, and replaying from a snapshot is exact.
 
+import { techAt } from './diffusion.ts';
 import { ERA_FX, ERA_MATRIX, ERAS, EV, STAGE, STAGE_CAP, STAGE_TECH, TECHS, isAlive, type Tech } from './catalog.ts';
 import { F, GM, HIST_FIELDS, NF, NGM } from './metrics.ts';
 import { AGE_W, A_MIN, CREW_AGES, FERT_SHARE, GM_A0, GM_B0, GM_b0, MIGRANT_AGES, WORK_SHARE, deployed, NAGE, binHazard, earthBins, infantHazard, lifeExpectancyBins, medianAge, tfrTransition } from './ages.ts';
@@ -53,6 +54,7 @@ export interface SimState {
   g: Float64Array;         // globals
   techProg: Float64Array;  // knowledge spent per tech
   techDone: Float64Array;  // year unlocked, or -1
+  techWhere: Float64Array; // body where it was invented, or -1 (known from the start)
   ships: Float64Array;     // MAX_SHIPS × NSH
   settled: Int32Array;     // body ids with a settlement, in founding order
   shipRetry: Float64Array; // per system: year before which a failed ship search is not retried
@@ -217,7 +219,7 @@ export class Engine {
     for (let i = 0; i < nb; i++) S[i * NF + F.stage] = STAGE.NONE;
     const st: SimState = {
       step: 0, S, g: new Float64Array(NG), techProg: new Float64Array(TECHS.length),
-      techDone: new Float64Array(TECHS.length).fill(-1), ships: new Float64Array(MAX_SHIPS * NSH),
+      techDone: new Float64Array(TECHS.length).fill(-1), techWhere: new Float64Array(TECHS.length).fill(-1), ships: new Float64Array(MAX_SHIPS * NSH),
       settled: new Int32Array(nb), nSettled: 0, rng, shipRetry: new Float64Array(this.world.systems.length),
       gen: new Float64Array(MAX_GEN * NGC), ages: new Float64Array(nb * NAGE), hx: this.civ.init(nb),
       swarm: new Float64Array(this.world.systems.length * 2).fill(-1),
@@ -699,8 +701,9 @@ export class Engine {
   }
 
   private stageUp(b: number, o: number, stg: number, pop: number, cap: number, short: number, dt: number): void {
-    const S = this.st.S, fx = this.fx, done = this.st.techDone;
-    const has = (id: string) => done[TECH_INDEX.get(id)!] >= 0;
+    const S = this.st.S, fx = this.fx, st = this.st, year = st.g[G.year];
+    // a place builds only with what it has heard of: news of an invention crosses space at light speed
+    const has = (id: string) => techAt(this.world, st.techDone, st.techWhere, TECH_INDEX.get(id)!, b, year);
     if (short > 0.25 || S[o + F.stability] < 0.35) {
       // collapse: a bad stage can fall
       const pc = dt * (0.0008 + 0.04 * short * short + (S[o + F.stability] < 0.2 ? 0.02 : 0)) * (1 - fx.reliability);
@@ -787,6 +790,7 @@ export class Engine {
       // an invention happens somewhere: a lab picked in proportion to its research,
       // and now and then a second, independent one at the same time (Merton's multiples)
       const where = this.pickLab(-1), twin = this.rand() < 0.12 ? this.pickLab(where) : -1;
+      st.techWhere[i] = where;
       this.log(EV.Technology, where, i, twin);
     }
     if (this.invent(amount, year)) changed = true;
@@ -1137,7 +1141,7 @@ export class Engine {
   snapshot(): SimState {
     const st = this.st;
     return {
-      step: st.step, S: st.S.slice(), g: st.g.slice(), techProg: st.techProg.slice(), techDone: st.techDone.slice(),
+      step: st.step, S: st.S.slice(), g: st.g.slice(), techProg: st.techProg.slice(), techDone: st.techDone.slice(), techWhere: st.techWhere.slice(),
       ships: st.ships.slice(0, st.g[G.nShips] * NSH), settled: st.settled.slice(0, st.nSettled), nSettled: st.nSettled, rng: st.rng.slice(),
       shipRetry: st.shipRetry.slice(), gen: st.gen.slice(0, st.g[G.nGen] * NGC), ages: st.ages.slice(0, st.nSettled * NAGE), hx: cloneCiv(st.hx),
       swarm: st.swarm.slice(),
@@ -1149,7 +1153,7 @@ export class Engine {
     const ships = new Float64Array(MAX_SHIPS * NSH); ships.set(s.ships);
     const settled = new Int32Array(nb); settled.set(s.settled);
     this.st = {
-      step: s.step, S: s.S.slice(), g: s.g.slice(), techProg: s.techProg.slice(), techDone: s.techDone.slice(),
+      step: s.step, S: s.S.slice(), g: s.g.slice(), techProg: s.techProg.slice(), techDone: s.techDone.slice(), techWhere: s.techWhere.slice(),
       ships, settled, nSettled: s.nSettled, rng: s.rng.slice(), shipRetry: s.shipRetry.slice(),
       gen: (() => { const g = new Float64Array(MAX_GEN * NGC); g.set(s.gen); return g; })(),
       ages: (() => { const a = new Float64Array(nb * NAGE); a.set(s.ages); return a; })(),

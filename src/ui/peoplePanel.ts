@@ -58,6 +58,9 @@ export function biographyHtml(b: Biography | null, year: number, loading: boolea
     const linked = s.link?.kind === 'person' ? `<button class="link" data-act="open-person" data-pid="${s.link.id}" type="button">${t}</button>` : t;
     return `<li><span class="num ev-year">${yr(s.year)}</span> ${linked}</li>`;
   }).join('');
+  // people who only enter this life later are listed faintly, so a teenager's future family reads as future
+  const later = (label: string, list: PersonBrief[], note: (p: PersonBrief, i: number) => string, future: (p: PersonBrief, i: number) => boolean) => list.length
+    ? `<dt>${label}</dt><dd>${list.map((p, i) => `<span class="${future(p, i) ? 'future' : ''}">${briefLine(p, year)}${note(p, i)}</span>`).join('<br>')}</dd>` : '';
   const fam = (label: string, list: PersonBrief[], more = 0) => list.length ? `<dt>${label}</dt><dd>${list.map((p) => briefLine(p, year)).join('<br>')}${more > list.length ? `<br><span class="muted">and ${more - list.length} more</span>` : ''}</dd>` : '';
   const anc = b.ancestors.length
     ? `<ol class="lineage">${b.ancestors.slice(0, 12).map((a) => `<li><span class="muted num">${a.gen === 1 ? 'parent' : a.gen === 2 ? 'grandparent' : `${a.gen - 2}× great`}</span> ${briefLine(a.who, year)}</li>`).join('')}</ol>
@@ -65,7 +68,7 @@ export function biographyHtml(b: Biography | null, year: number, loading: boolea
     : '<p class="muted">No known parents: one of the people already on Earth at the Landing.</p>';
   const d = b.descendants;
   const blood = d.total
-    ? `<p>${fmtNum(d.total)} descendants over ${d.generations} generation${d.generations === 1 ? '' : 's'} by ${yr(year)}${d.total >= 1500 ? ' (counting stops at 1,500)' : ''}; ${fmtNum(d.alive)} alive.</p>
+    ? `<p>${fmtNum(d.total)} descendant${d.total === 1 ? '' : 's'} over ${d.generations} generation${d.generations === 1 ? '' : 's'} by ${yr(year)}${d.total >= 1500 ? ' (counting stops at 1,500)' : ''}; ${fmtNum(d.alive)} alive.</p>
       ${d.places.length ? `<p class="muted">Living in ${d.places.map((p) => `<button class="link" data-act="goto-body" data-id="${p.body}" type="button">${esc(p.name)}</button> (${fmtNum(p.n)})`).join(', ')}.</p>` : ''}`
     : '<p class="muted">No descendants yet.</p>';
   const traits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Steadiness'];
@@ -74,14 +77,15 @@ export function biographyHtml(b: Biography | null, year: number, loading: boolea
     <h2>${esc(b.name)}</h2>
     <p class="lede">${status}</p>
     ${where}
+    ${b.status !== 'unborn' ? `<p class="act"><button class="link" data-act="look-closer" data-pid="${b.id}" type="button">Look closer: ${b.body === 'uploaded' ? 'the substrate their mind runs on' : 'their body'}, its cells, molecules and atoms</button></p>` : ''}
     <p class="muted">This person stays open as you move through time. Drag the slider to see them younger, older, or not yet born.</p>
     <h3>Life</h3><ol class="events story">${story || '<li class="muted">Nothing yet.</li>'}</ol>
     <h3>Family</h3>
     <dl class="family">
       <dt>Mother</dt><dd>${b.mother ? briefLine(b.mother, year) : '<span class="muted">unknown</span>'}</dd>
       <dt>Father</dt><dd>${b.father ? briefLine(b.father, year) : '<span class="muted">unknown</span>'}</dd>
-      ${fam('Partners', b.partners)}
-      ${fam('Children', b.children)}
+      ${later('Partners', b.partners, (p, i) => (b.partnerSince?.[i] ?? -Infinity) > year ? ` <span class="muted">(together from about ${yr(b.partnerSince![i] - 1)})</span>` : '', (p, i) => (b.partnerSince?.[i] ?? -Infinity) > year)}
+      ${later('Children', b.children, () => '', (p) => p.born > year)}
       ${fam('Siblings', b.siblings)}
     </dl>
     <h3>Ancestry</h3>${anc}

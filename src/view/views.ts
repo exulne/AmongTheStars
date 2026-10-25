@@ -13,9 +13,10 @@ import { fmtNum } from '../ui/format.ts';
 import { ageColor, factionColor, faithColor, heatColor, type ColorMode } from './colorModes.ts';
 import { styleOf } from './epoch.ts';
 import { makeGalaxy } from './galaxyPoints.ts';
-import { atmosphereMaterial, planetMaterial } from './planetShader.ts';
+import { atmosphereMaterial, planetMaterial, setCityLights } from './planetShader.ts';
 import { Orbitals, StarWorks, tierRank } from './orbitals.ts';
 import { BEAM, SCOOP, shipStyle } from './shipStyles.ts';
+import { applyCultureLights, cultureLight, cultureSkin, lookKey, societyLook } from './societyLook.ts';
 import { REDUCED_MOTION, applyPlanetLook } from './timeLook.ts';
 import { STAGE_COLORS, flareTex, galaxySpriteTex, glowTex, pointsMaterial, specColor } from './textures.ts';
 import { explainGalaxy } from '../explain/galaxy.ts';
@@ -28,8 +29,9 @@ import { explainBelt, type BeltInfo, explainElevators, explainOrbits, explainRin
 import { explainLocalRings } from '../explain/local.ts';
 import { explainWorks } from '../explain/orbitals.ts';
 
-export type Level = 'universe' | 'galaxy' | 'local' | 'system' | 'planet' | 'street';
-export const LEVELS: Level[] = ['universe', 'galaxy', 'local', 'system', 'planet', 'street'];
+// 'multiverse' sits above the Local Group (src/view/multiverse.ts); person, cell, molecule and atom below the street (src/view/micro.ts)
+export type Level = 'multiverse' | 'universe' | 'galaxy' | 'local' | 'system' | 'planet' | 'street' | 'person' | 'cell' | 'molecule' | 'atom';
+export const LEVELS: Level[] = ['multiverse', 'universe', 'galaxy', 'local', 'system', 'planet', 'street', 'person', 'cell', 'molecule', 'atom'];
 
 export interface Ctx {
   world: World;
@@ -73,7 +75,7 @@ export interface View {
 
 // ---------------------------------------------------------------- helpers
 
-const tmpC = new THREE.Color();
+const tmpC = new THREE.Color(), cultC = new THREE.Color();
 
 /** galactic (Sun-centred, ly) → scene axes with y up */
 export function toScene(x: number, y: number, z: number, scale = 1, ox = 0): THREE.Vector3 {
@@ -110,6 +112,16 @@ export function citySplit(pop: number, n: number, i: number): { count: number; o
   const cap = Math.floor(pop * 0.3), rest = (pop - cap) / (n - 1);
   return i === 0 ? { count: cap, offset: 0 } : { count: Math.floor(cap + rest * i) - Math.floor(cap + rest * (i - 1)), offset: Math.floor(cap + rest * (i - 1)) };
 }
+
+/** Night lights of body b's settlements: where each one is and how big (0..1), for the planet shader. */
+export function lightCities(mat: THREE.ShaderMaterial, b: number, stage: number, pop: number): void {
+  const n = cityCount(stage, pop), dirs: THREE.Vector3[] = [];
+  for (let i = 0; i < n; i++) dirs.push(cityDir(b, i));
+  setCityLights(mat, dirs, (i) => (Math.log10(1 + citySplit(pop, n, i).count) - 3) / 7 + 0.15);
+}
+
+/** Where the star sits in the planet view: off to the side and a little behind, so the night side and its lights show. */
+export const PLANET_SUN = new THREE.Vector3(380, 90, -120);
 
 export interface SystemSum { stage: number; pop: number; n: number; faction: number; founded: number; culture: number }
 
@@ -258,12 +270,14 @@ export class UniverseView implements View {
       let obj: THREE.Object3D;
       if (gal.kind === 'spiral') {
         const R = gal.radius * U * G;
-        obj = makeGalaxy({ seed: gal.name.length * 31, count: gal.name === 'Milky Way' ? 90000 : gal.name === 'Andromeda' ? 120000 : 30000, radius: R, arms: gal.name === 'Triangulum' ? 2 : 4, pitch: gal.name === 'Andromeda' ? 9 : 13, bar: gal.name === 'Milky Way' ? 0.25 : 0.1, thickness: 0.03, sizeScale: R * 0.006 });
+        // seen whole, each galaxy's stars pile up into a few hundred pixels (Andromeda nearly edge-on): keep each one faint
+        const bright = gal.name === 'Andromeda' ? 0.5 : gal.name === 'Milky Way' ? 0.55 : 0.65;
+        obj = makeGalaxy({ seed: gal.name.length * 31, count: gal.name === 'Milky Way' ? 90000 : gal.name === 'Andromeda' ? 120000 : 30000, radius: R, arms: gal.name === 'Triangulum' ? 2 : 4, pitch: gal.name === 'Andromeda' ? 9 : 13, bar: gal.name === 'Milky Way' ? 0.25 : 0.1, thickness: 0.03, sizeScale: R * 0.006, brightness: bright, core: 0.5 });
         if (gal.name === 'Andromeda') obj.rotation.set(1.35, 0.6, 0.2);
         if (gal.name === 'Triangulum') obj.rotation.set(0.9, -0.4, 0);
       } else {
         const R = gal.radius * U * G;
-        obj = makeGalaxy({ seed: gal.name.length * 7, count: 12000, radius: R, arms: 1, pitch: 30, bar: 0.4, thickness: 0.2, sizeScale: R * 0.012, brightness: 0.8, dust: 0.05 });
+        obj = makeGalaxy({ seed: gal.name.length * 7, count: 12000, radius: R, arms: 1, pitch: 30, bar: 0.4, thickness: 0.2, sizeScale: R * 0.012, brightness: 0.5, dust: 0.05 });
         obj.rotation.set(0.7, 0.3, 0.4);
       }
       obj.position.copy(pos);
@@ -295,7 +309,7 @@ export class UniverseView implements View {
       const p = a.clone().lerp(b, t).add(new THREE.Vector3(r.gauss(), r.gauss(), r.gauss()).multiplyScalar(90));
       if (p.length() < 400) p.setLength(400 + r.next() * 300);
       const tex = r.pick(texes);
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.5 + r.next() * 0.5, rotation: r.range(0, 6.28) }));
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.35 + r.next() * 0.45, rotation: r.range(0, 6.28) }));
       s.position.copy(p);
       s.scale.setScalar(6 + Math.pow(r.next(), 3) * 30);
       this.group.add(s);
@@ -309,7 +323,7 @@ export class UniverseView implements View {
     const m31 = this.centres.find((c) => c.name === 'Andromeda')!.pos;
     const mid = m31.clone().multiplyScalar(0.5);
     ctx.controls.target.copy(mid);
-    ctx.camera.position.copy(mid).add(new THREE.Vector3(-m31.z, 0, m31.x).normalize().multiplyScalar(200)).add(new THREE.Vector3(0, 40, 0));
+    ctx.camera.position.copy(mid).add(new THREE.Vector3(-m31.z, 0, m31.x).normalize().multiplyScalar(330)).add(new THREE.Vector3(0, 60, 0));
   }
 
   sync(ctx: Ctx): void {
@@ -323,7 +337,7 @@ export class UniverseView implements View {
     }
     for (const c of this.centres) {
       const n = this.colonies.get(c.name) ?? 0;
-      (c.glow.material as THREE.SpriteMaterial).opacity = c.name === 'Milky Way' ? Math.min(0.5, n / 2000) : n > 0 ? 0.6 : 0;
+      (c.glow.material as THREE.SpriteMaterial).opacity = c.name === 'Milky Way' ? Math.min(0.22, n / 4000) : n > 0 ? 0.3 : 0;
     }
   }
 
@@ -370,7 +384,7 @@ export class GalaxyView implements View {
   private glow: THREE.Sprite;
 
   constructor(world: World) {
-    const mw = makeGalaxy({ seed: 2040, count: 420000, radius: 500, arms: 4, pitch: 12, bar: 0.22, thickness: 0.018, sizeScale: 2.1, brightness: 1, dust: 0.3 });
+    const mw = makeGalaxy({ seed: 2040, count: 420000, radius: 500, arms: 4, pitch: 12, bar: 0.22, thickness: 0.018, sizeScale: 2.1, brightness: 0.82, dust: 0.3, core: 0.4 });
     this.group.add(mw);
     explainGalaxy(world, { key: 'g', seed: 1, name: 'Milky Way', data: mw.userData.galaxy, obj: mw, scaleLy: 100, centre: [GALACTIC_CENTRE[0], 0, 0], starsPer: 2.5e11 / 420000 });
     this.sol = toScene(0, 0, 0, this.U, GALACTIC_CENTRE[0]);
@@ -512,7 +526,8 @@ export class GalaxyView implements View {
   labels(): Label[] {
     return [
       { pos: this.sol, text: 'Human space', sub: this.reach > 0 ? `${fmtNum(this.reach)} ly across the dark` : 'one star system', strong: true, ref: { kind: 'humanspace', id: 0 }, prio: 10 },
-      { pos: new THREE.Vector3(0, 18, 0), text: 'Sagittarius A*', sub: '26,000 ly', ref: { kind: 'thing', id: 0, ex: 'coreg', name: 'Sagittarius A*' } },
+      // lifted clear of the bulge so it reads against the dark, not the core
+      { pos: new THREE.Vector3(0, 75, 0), text: 'Sagittarius A*', sub: '26,000 ly', ref: { kind: 'thing', id: 0, ex: 'coreg', name: 'Sagittarius A*' } },
     ];
   }
 }
@@ -619,7 +634,7 @@ export class LocalView implements View {
         // route and ship look follow the drive known when it left; generation ships trail amber
         const st = shipStyle(snap, sh), tc = st.trail, hc = st.head;
         pos.set([pa.x, pa.y, pa.z, pb.x, pb.y, pb.z], n * 6);
-        col.set([tc.r * 0.2, tc.g * 0.2, tc.b * 0.2, tc.r * 0.8, tc.g * 0.8, tc.b * 0.8], n * 6);
+        col.set([tc.r * 0.15, tc.g * 0.15, tc.b * 0.15, tc.r * 0.6, tc.g * 0.6, tc.b * 0.6], n * 6);
         this.shipIds[n] = id;
         n++;
         const f = Math.min(1, Math.max(0, (ctx.year - sh.depart) / (sh.arrive - sh.depart)));
@@ -628,13 +643,13 @@ export class LocalView implements View {
         if (st.plume > 0) {
           const tail = tv1.lerpVectors(pa, pb, Math.max(0, f - 0.12));
           pos.set([tail.x, tail.y, tail.z, hp.x, hp.y, hp.z], n * 6);
-          col.set([0, 0, 0, hc.r * 2 * st.plume, hc.g * 2 * st.plume, hc.b * 2 * st.plume], n * 6);
+          col.set([0, 0, 0, hc.r * 1.3 * st.plume, hc.g * 1.3 * st.plume, hc.b * 1.3 * st.plume], n * 6);
           this.shipIds[n] = id;
           n++;
         }
         if (st.beam) {
           pos.set([pa.x, pa.y, pa.z, hp.x, hp.y, hp.z], n * 6);
-          col.set([BEAM.r * 1.6, BEAM.g * 1.6, BEAM.b * 1.6, BEAM.r * 0.3, BEAM.g * 0.3, BEAM.b * 0.3], n * 6);
+          col.set([BEAM.r * 0.9, BEAM.g * 0.9, BEAM.b * 0.9, BEAM.r * 0.2, BEAM.g * 0.2, BEAM.b * 0.2], n * 6);
           this.shipIds[n] = id;
           n++;
         }
@@ -747,8 +762,8 @@ export class SystemView implements View {
     this.starR = Math.max(0.6, lumR);
     const core = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.6, lumR), 48, 24), new THREE.MeshBasicMaterial({ color: sc.clone().multiplyScalar(2.2) }));
     this.star.add(core);
-    this.star.add(glowSprite(sc.getHex(), lumR * 9, 0.9));
-    this.star.add(glowSprite(sc.getHex(), lumR * 26, 0.35, flareTex));
+    this.star.add(glowSprite(sc.getHex(), lumR * 9, 0.6));
+    this.star.add(glowSprite(sc.getHex(), lumR * 26, 0.25, flareTex));
     this.group.add(this.star);
     this.works.reset();
     this.group.add(makeSky(sys.id + 3, 9000, 'skys', () => ({ name: sys.name, x: sys.x, y: sys.y, z: sys.z, sol: sys.id === 0 })));
@@ -835,6 +850,7 @@ export class SystemView implements View {
         if (tierRank(st) > tierRank(top)) top = st;
       } else m.opacity = st === STAGE.SURVEY ? 0.15 : 0;
       applyPlanetLook(v.mesh, ctx.snap, v.id, ctx.year, alive(st) ? cityLights(popOf(ctx.snap, v.id)) : 0);
+      lightCities(v.mesh.material as THREE.ShaderMaterial, v.id, st, popOf(ctx.snap, v.id));
     }
     // Dyson swarm: shimmer of collectors around a star with a megastructure
     if (mega && !this.swarm) {
@@ -868,6 +884,7 @@ export class SystemView implements View {
       v.mesh.rotation.y = ctx.tm * 0.1;
       const sun = v.mesh.position.clone().negate().normalize();
       (v.mesh.material as THREE.ShaderMaterial).uniforms.uSun.value.copy(sun);
+      for (const c of v.mesh.children) { const u = ((c as THREE.Mesh).material as THREE.ShaderMaterial).uniforms; if (u?.uSun) u.uSun.value.copy(sun); }
       (v.mesh.material as THREE.ShaderMaterial).uniforms.uTime.value = ctx.t;
       v.marker.position.copy(v.mesh.position);
     }
@@ -1003,7 +1020,7 @@ export class PlanetView implements View {
     const sys = ctx.world.systems[b.system];
     const sun = (this.sun = glowSprite(specColor(sys.spec).getHex(), 60, 0.9, flareTex));
     this.starCol.copy(specColor(sys.spec));
-    sun.position.set(400, 80, 120);
+    sun.position.copy(PLANET_SUN);
     this.group.add(sun);
     // the star in this world's sky is its system
     registerExplainer('sunp', {
@@ -1014,8 +1031,9 @@ export class PlanetView implements View {
     });
     addCpuSet({ kind: 'sunp', obj: sun, prio: 3, hit: (p) => nearestPoint(1, (_i, out) => sun.getWorldPosition(out), p, () => 26) });
     mat.uniforms.uSun.value.copy(sun.position).normalize();
+    for (const c of this.planet.children) { const u = ((c as THREE.Mesh).material as THREE.ShaderMaterial).uniforms; if (u?.uSun) u.uSun.value.copy(sun.position).normalize(); }
     // habitats and the ring world are lit by the star; the planet itself uses its own shader
-    const light = new THREE.DirectionalLight(specColor(sys.spec), 2.4);
+    const light = new THREE.DirectionalLight(specColor(sys.spec), 2.0);
     light.position.copy(sun.position);
     this.group.add(light, new THREE.AmbientLight(0x404a5a, 0.35));
     this.orbit = new THREE.Group();
@@ -1031,10 +1049,14 @@ export class PlanetView implements View {
     const b = ctx.body;
     const st = stageOf(ctx.snap, b), pop = popOf(ctx.snap, b);
     applyPlanetLook(this.planet, ctx.snap, b, ctx.year, alive(st) ? cityLights(pop) : 0);
+    lightCities(this.planet.material as THREE.ShaderMaterial, b, st, pop);
+    // the society's architecture (from the worker, when it has one): its colour, height, curves, crowding and glow
+    const look = alive(st) ? societyLook(b) : null;
+    applyCultureLights(this.planet, look);
     // cities: one marker per ~stage, positions stable per body
     const nCities = cityCount(st, pop);
-    if (this.cityKey !== `${b}:${nCities}:${st}`) {
-      this.cityKey = `${b}:${nCities}:${st}`;
+    if (this.cityKey !== `${b}:${nCities}:${st}:${lookKey(look)}`) {
+      this.cityKey = `${b}:${nCities}:${st}:${lookKey(look)}`;
       if (this.cities) { this.pivot.remove(this.cities.pts); this.cities.pts.geometry.dispose(); }
       this.cities = pointCloud(Math.max(nCities, 1), pointsMaterial({ minPx: 2 }));
       this.cityPos = [];
@@ -1043,8 +1065,11 @@ export class PlanetView implements View {
         this.cityPos.push(p);
         this.cities.pos.set([p.x, p.y, p.z], i * 3);
         tmpC.set(STAGE_COLORS[Math.max(1, st)]);
+        if (look) tmpC.lerp(cultureLight(look, cultC), 0.6);
+        tmpC.multiplyScalar(0.75);
         this.cities.col.set([tmpC.r, tmpC.g, tmpC.b], i * 3);
-        this.cities.size[i] = i === 0 ? 1.3 : 0.6 + hash01(b, i, 3) * 0.5;
+        // a pin to click, not a flare: the city's light is drawn by the planet's own night side
+        this.cities.size[i] = (i === 0 ? 0.42 : 0.2 + hash01(b, i, 3) * 0.12) * (look ? 0.85 + 0.3 * look.glow : 1);
       }
       dirty(this.cities.pts);
       this.pivot.add(this.cities.pts);
@@ -1052,16 +1077,22 @@ export class PlanetView implements View {
     const on = alive(st);
     // the cities' buildings, seen from orbit: domes early, towers and spires later, in the culture's colours
     const style = on ? styleOf(ctx.world, ctx.snap, b, ctx.year, { independence: false, speciation: false, collapse: false }) : null;
-    const archKey = style ? `${this.cityKey}:${style.arch}:${style.body.getHexString()}:${Math.round(style.height * 4)}` : '';
+    const archKey = style ? `${this.cityKey}:${style.arch}:${style.body.getHexString()}:${Math.round(style.height * 4)}` : ''; // cityKey carries the society's look
     if (archKey !== this.archKey) {
       this.archKey = archKey;
       if (this.arch) { this.pivot.remove(this.arch); this.arch.geometry.dispose(); }
       this.arch = null;
       if (style && this.cityPos.length) {
         const domes = style.arch === 'huts' || style.arch === 'warrens';
-        const per = Math.min(40, 6 + Math.round(Math.log10(1 + pop / this.cityPos.length) * 4));
-        const geo = domes ? new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2) : new THREE.CylinderGeometry(0.35, 0.5, 1, 6).translate(0, 0.5, 0);
-        const mat = new THREE.MeshStandardMaterial({ color: style.body.clone().multiplyScalar(2.4), roughness: 0.6, metalness: 0.3, emissive: style.glow, emissiveIntensity: 0.04 });
+        // a dense culture packs more, closer; a curved one builds rounder, tapering towers; a tall one, taller
+        const dens = look ? look.density : 0.5, curve = look ? look.curvature : 0.4;
+        const per = Math.min(64, Math.round((6 + Math.round(Math.log10(1 + pop / this.cityPos.length) * 4)) * (0.5 + dens)));
+        const spread = 1.25 - 0.5 * dens, tall = look ? 0.6 + 0.8 * look.height : 1;
+        const geo = domes ? new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2)
+          : new THREE.CylinderGeometry(0.5 * (1 - 0.75 * curve), 0.5, 1, curve > 0.55 ? 10 : curve > 0.35 ? 6 : 4).translate(0, 0.5, 0);
+        const skin = style.body.clone();
+        if (look) skin.lerp(cultureSkin(look, cultC), 0.6);
+        const mat = new THREE.MeshStandardMaterial({ color: skin.multiplyScalar(1.6), roughness: 0.55, metalness: 0.25, emissive: look ? cultureLight(look, cultC).clone() : style.glow, emissiveIntensity: look ? 0.01 + 0.03 * look.glow : 0.01 }); // the night side's own lights carry the glow
         const im = new THREE.InstancedMesh(geo, mat, this.cityPos.length * per);
         const m4 = new THREE.Matrix4(), qq = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), n = new THREE.Vector3(), p = new THREE.Vector3(), sc = new THREE.Vector3();
         let k = 0;
@@ -1069,10 +1100,10 @@ export class PlanetView implements View {
           n.copy(c).normalize();
           const t1 = new THREE.Vector3().crossVectors(n, up).normalize(), t2 = new THREE.Vector3().crossVectors(n, t1);
           for (let j = 0; j < per; j++) {
-            const a = hash01(b, ci, j) * Math.PI * 2, r = Math.sqrt(hash01(b, ci, j, 2)) * (ci === 0 ? 0.45 : 0.25);
+            const a = hash01(b, ci, j) * Math.PI * 2, r = Math.sqrt(hash01(b, ci, j, 2)) * (ci === 0 ? 0.45 : 0.25) * spread;
             p.copy(n).multiplyScalar(10).addScaledVector(t1, Math.cos(a) * r).addScaledVector(t2, Math.sin(a) * r).normalize().multiplyScalar(10);
             qq.setFromUnitVectors(up, p.clone().normalize());
-            const h = domes ? 0.025 + hash01(b, ci, j, 3) * 0.02 : (0.04 + Math.pow(hash01(b, ci, j, 3), 2) * 0.25) * style.height;
+            const h = domes ? 0.025 + hash01(b, ci, j, 3) * 0.02 : (0.03 + Math.pow(hash01(b, ci, j, 3), 2) * 0.17) * style.height * tall;
             const wd = domes ? 0.03 : 0.018;
             m4.compose(p, qq, sc.set(wd, h, wd));
             im.setMatrixAt(k++, m4);
@@ -1144,7 +1175,7 @@ export class PlanetView implements View {
       const u = (ctx.t * 0.05 + g.id * 0.37) % 1;
       c.position.copy(c.userData.dir as THREE.Vector3).multiplyScalar(10.2 + (TETHER - 10.4) * (0.5 - 0.5 * Math.cos(u * Math.PI * 2)));
     }
-    if (this.cities) (this.cities.pts.material as THREE.ShaderMaterial).uniforms.uOpacity.value = 0.7 + 0.3 * Math.sin(ctx.t * 1.5);
+    if (this.cities) (this.cities.pts.material as THREE.ShaderMaterial).uniforms.uOpacity.value = 0.75 + 0.25 * Math.sin(ctx.t * 1.5);
   }
 
   pickables(ctx: Ctx): Pickable[] {

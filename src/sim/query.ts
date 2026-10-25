@@ -214,11 +214,11 @@ export function tryCompile<R>(src: string, bind: Binder<R>): Compiled<R> | Query
 /** One settlement (body b) at one moment: its fields are S[o], S[o + 1], ... (o = b * NF in a full state). */
 export interface PlaceRow { S: Float64Array; b: number; o: number; year: number }
 
-const ALIASES: Record<string, string> = { faith: 'culture', population: 'pop', people: 'pop' };
+const ALIASES: Record<string, string> = { faith: 'culture', population: 'pop', people: 'pop', loyal: 'allegiance', ruler: 'allegiance' };
 
 /** Extra per-place columns beyond SETTLEMENT_FIELDS, with what they mean. */
 export const PLACE_EXTRAS: [string, string][] = [
-  ['name', 'name of the world'], ['system', 'star system name'], ['capital', 'name of its faction\'s capital'], ['stageName', 'stage as a word'],
+  ['name', 'name of the world'], ['system', 'star system name'], ['allegiance', 'name of the capital it answers to (capital is its capital stock in $)'], ['stageName', 'stage as a word'],
   ['kind', 'kind of world'], ['dist', 'light years from the Sun'], ['sys', 'star system id'], ['id', 'body id'],
   ['age', 'years since founded'], ['independent', '1 if it is its own capital'], ['hab', 'habitability 0–1'], ['g', 'surface gravity'],
   ['temp', 'temperature (K)'], ['faith', 'same as culture'], ['year', 'years after 2040'],
@@ -233,7 +233,7 @@ export function placeBinder(world: World): Binder<PlaceRow> {
     switch (name) {
       case 'name': return (r) => B[r.b].name;
       case 'system': return (r) => Sy[B[r.b].system].name;
-      case 'capital': return (r) => B[r.S[r.o + F.faction]]?.name ?? '';
+      case 'allegiance': return (r) => B[r.S[r.o + F.faction]]?.name ?? '';
       case 'stageName': return (r) => STAGE_NAMES[r.S[r.o + F.stage]] ?? '';
       case 'kind': return (r) => B[r.b].kind;
       case 'dist': return (r) => Sy[B[r.b].system].dist;
