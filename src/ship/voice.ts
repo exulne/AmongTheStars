@@ -11,7 +11,7 @@ const LS_VOICE = 'starship.elevenlabs.voice';
 const LS_SPEAK = 'starship.speak';
 const LS_STT = 'starship.stt';
 
-export const DEFAULT_VOICE = 'JBFqnCBsd6RMkjVDRZzb';   // "George", a stock ElevenLabs voice
+export const DEFAULT_VOICE = 'EXAVITQu4vr4xnSDxMaL';   // "Sarah", a stock ElevenLabs voice (the ship computer is a woman's voice)
 const TTS_MODEL = 'eleven_flash_v2_5';                // cheapest and fastest model
 
 function ls(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
@@ -110,7 +110,8 @@ export class Voice {
     }
     if ('speechSynthesis' in window) {
       const u = new SpeechSynthesisUtterance(text);
-      const v = speechSynthesis.getVoices().find((x) => /Daniel|Google UK English Male|Alex|Samantha/.test(x.name));
+      // the ship computer is a woman's voice (the GPT assistant speaks as Marin)
+      const v = speechSynthesis.getVoices().find((x) => /Samantha|Google UK English Female|Karen|Moira|Serena|Zira|Victoria/.test(x.name));
       if (v) u.voice = v;
       u.rate = 1.05;
       speechSynthesis.speak(u);

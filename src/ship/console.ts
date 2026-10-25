@@ -27,6 +27,20 @@ export interface Helm {
   first: number; last: number; // calendar years the record covers
 }
 
+/** The GPT assistant (src/assistant), when there is one: it becomes the ship computer's mind and voice. */
+export interface ShipBrain {
+  /** a dev server with a key is there */
+  ready(): boolean;
+  /** the voice line is open: everything said or typed goes to it */
+  live(): boolean;
+  ask(text: string): void;
+  /** the Talk button: open or close the voice line */
+  talk(): void;
+}
+
+/** Questions (rather than orders) go to the assistant when it is there. */
+const QUESTION = /\?\s*$|^(what|who|whom|whose|why|how|when|which|is|are|was|were|do|does|did|can|could|should|would|will|tell|explain|describe|compare|list|show me (the|a|all)|give me)\b/i;
+
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 const CHIPS = ['Mars', 'Tau Ceti in 3400', 'Random planet', 'Year 2500', 'Proxima b', 'Andromeda', 'Cockpit view', 'Where are we?'];
 // words that wrap a place name in an order: "take me to", "fly to", "visit"…
@@ -43,6 +57,9 @@ export class ShipConsole {
   private queue: Action[] = [];
   private busy = false;
   view: ShipView = 'chase';
+  brain: ShipBrain | null = null;
+  private lastText = '';
+  private keyed = new Map<string, HTMLElement>();
 
   constructor(private helm: Helm) {
     this.el = document.createElement('aside');
@@ -88,17 +105,34 @@ export class ShipConsole {
     this.el.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === v)));
   }
 
-  private add(who: 'you' | 'ship' | 'sys', text: string): void {
-    const d = document.createElement('p');
-    d.className = `msg ${who}`;
+  private add(who: 'you' | 'ship' | 'sys', text: string, key?: string): void {
+    let d = key ? this.keyed.get(key) : undefined;
+    if (!d) {
+      d = document.createElement('p');
+      d.className = `msg ${who}`;
+      this.log.append(d);
+      if (key) this.keyed.set(key, d);
+    }
     d.textContent = text;
-    this.log.append(d);
-    while (this.log.childElementCount > 60) this.log.firstElementChild!.remove();
+    while (this.log.childElementCount > 60) { const f = this.log.firstElementChild!; for (const [k, v] of this.keyed) if (v === f) this.keyed.delete(k); f.remove(); }
     this.log.scrollTop = this.log.scrollHeight;
   }
+
+  /** A line of the assistant's conversation (streamed lines update in place by key). */
+  hear(who: 'you' | 'ship' | 'sys', text: string, key?: string): void { this.add(who, text, key); }
+  /** Say something in the ship's own (browser) voice: the assistant's text answers while the voice line is closed. */
+  speak(text: string): void { if (this.heard && !this.el.hidden) void this.voice.say(text); }
+  /** The assistant's voice line opened or closed. */
+  setLive(on: boolean): void {
+    this.mic.classList.toggle('on', on);
+    this.mic.textContent = on ? 'End talk' : 'Talk';
+    this.input.placeholder = on ? 'Talk, or type: where, when, or anything' : 'Where to? Or when? Or ask anything';
+  }
+  focus(): void { this.input.focus(); }
   private reply(text: string): void { this.add('ship', text); if (this.heard) void this.voice.say(text); }
 
   private async listen(): Promise<void> {
+    if (this.brain?.ready()) { this.voice.stopSpeaking(); this.brain.talk(); return; }
     if (this.voice.listening) { this.voice.stopListening(); return; }
     this.voice.stopSpeaking();
     this.mic.classList.add('on');
@@ -112,7 +146,11 @@ export class ShipConsole {
   command(text: string): void {
     text = text.trim();
     if (!text) return;
+    const b = this.brain;
+    // with the voice line open the assistant hears everything; otherwise it takes the questions
+    if (b?.live() || (b?.ready() && QUESTION.test(text))) { this.add('you', text); b.ask(text); return; }
     this.add('you', text);
+    this.lastText = text;
     const h = this.helm;
     // a resident is found by the sim's own search ("resident 12 of Titan", "#2.5B of Mars")
     if (/^(resident|person|citizen)\b/i.test(text) || /#\s*\d/.test(text)) {
@@ -179,7 +217,7 @@ export class ShipConsole {
       case 'status': this.reply(h.status()); break;
       case 'help': this.reply('Tell me where or when. "Take me to Tau Ceti." "Mars in the year 3000." "Random planet." "Resident 12 of Titan." "Cockpit view."'); break;
       case 'stop': this.queue.length = 0; this.reply('Holding here.'); break;
-      case 'unknown': this.reply('I didn\'t find a place or a year in that. Try a star, a world, a year between ' + `${h.first} and ${h.last}, or "random planet".`); break;
+      case 'unknown': if (this.brain?.ready()) { this.brain.ask(this.lastText); break; } this.reply('I didn\'t find a place or a year in that. Try a star, a world, a year between ' + `${h.first} and ${h.last}, or "random planet".`); break;
     }
   }
 }
