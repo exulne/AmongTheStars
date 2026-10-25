@@ -8,11 +8,15 @@ import { F, GM, HIST_FIELDS, NF, NGM } from './metrics.ts';
 import { AGE_W, A_MIN, CREW_AGES, FERT_SHARE, GM_A0, GM_B0, GM_b0, MIGRANT_AGES, WORK_SHARE, deployed, NAGE, binHazard, earthBins, infantHazard, lifeExpectancyBins, medianAge, tfrTransition } from './ages.ts';
 import { EFFECTS, compat, effectFor, effectSize, isAdd, isDown, spineField, FIELDS, type Field } from './invent.ts';
 import { FLOW, GENERATION, Ledger, NPERIODS, isPeriodBoundary, periodOf } from './ledger.ts';
-import { next, seedRng, type RngState } from './rng.ts';
+import { hash01, next, seedRng, type RngState } from './rng.ts';
 import type { World } from './world.ts';
 import { Civ, H, HG, cloneCiv, type CivState } from './civ.ts';
 import { GF, GG, Geo, NGEO, type GeoHost } from './geo.ts';
 import { CF, EnvelopeCache, MissionLog, baseline, evaluate, interstellarAllowance, leoCostPerKg, packMission, routeFor, stepBudget, type Assumptions, type Economics, type MissionContext, type MissionSpec, type Route } from './launchEconomics.ts';
+import { SPACE_WEATHER } from '../data/snapshotCore.ts';
+import { SolarActivity } from '../orbit/spaceWeather.ts';
+import { fleetStep } from '../orbit/shells.ts';
+import { ImpactLog, bodyImpactInfo, catalogImpactors, packImpact, rollImpact, type BodyImpactInfo, type CatalogImpactor } from '../impact/engineImpacts.ts';
 
 export const YEAR0 = 2040;
 export const HORIZON = 10000;
@@ -52,8 +56,12 @@ const G = {
   // this step's transport accounts, reset when a step begins (fully burdened 2024 USD; counts)
   tSpend: 26, tProp: 27, tHw: 28, tOps: 29, tRisk: 30, tInfra: 31, tMhw: 32, tService: 33,
   tTankers: 34, tCampaigns: 35, tLaunches: 36, tPayloadKg: 37, tPeople: 38,
+  // Earth's satellite fleet this step (orbit/shells.ts) and the seeded Sun (orbit/spaceWeather.ts)
+  oSats: 40, oRepl: 41, oSpend: 42, oStormLost: 43, oAvail: 44, oProp: 45, oF107: 46, oAp: 47, oStormDays: 48, oSsn: 49,
+  // impacts (impact/engineImpacts.ts): totals so far
+  impacts: 50, impactDeaths: 51, impactsAverted: 52, impactSeq: 53,
 } as const;
-const NG = 40;
+const NG = 56;
 
 export interface SimState {
   step: number;
@@ -171,6 +179,14 @@ export class Engine {
   private env: EnvelopeCache;
   /** one record per crewed or interstellar mission, launch order (main run; replays log too when logEvents) */
   missions = new MissionLog();
+  /** one record per damaging (or notable, or averted) impact, in time order (main run) */
+  impacts = new ImpactLog();
+  /** this seed's Sun: solar cycles and storms from the observed statistics (null if the snapshot lacks them) */
+  sun: SolarActivity | null;
+  /** per body, built lazily: its impact profile and rate */
+  private impactInfo = new Map<number, BodyImpactInfo>();
+  /** Sentry virtual impactors inside the run, each rolled once with its official probability */
+  private catalog: CatalogImpactor[];
   /** per body: transport money its polity spent this step (scratch); product of the polity it seats (scratch) */
   private spent: Float64Array; private polGdp: Float64Array; private offer: Float64Array;
   private routes = new Map<number, Route>();
@@ -250,6 +266,9 @@ export class Engine {
       disaster: (b, t, k) => this.civ.onDisaster(b, t, k, this.year),
       kill: (b) => { const o = b * NF; this.st.S[o + F.stage] = STAGE.DEAD; this.st.S[o + F.pop] = 0; this.st.g[G.dead]++; },
     };
+    // pure functions of the seed: they draw nothing from the engine's stream
+    this.sun = SPACE_WEATHER ? new SolarActivity(SPACE_WEATHER.stats, seed) : null;
+    this.catalog = catalogImpactors(YEAR0);
     this.st = this.initialState(rng);
     this.recomputeFx();
     this.record(0);
@@ -419,6 +438,7 @@ export class Engine {
     const earth = this.world.earth, eo = earth * NF;
     const kessler = year < g[G.kesslerUntil] ? 0.3 : 1;
     g[G.launchCap] = 5000 * (1 / fx.launch) * E.launch * kessler * Math.pow(Math.max(S[eo + F.gdp], 1e13) / 1.6e14, 0.8) * (1 + year / 40);
+    this.fleet(year, dt);
 
     // ---- per settlement
     this.longevity(year);
@@ -947,7 +967,12 @@ export class Engine {
       // a lost module: a few people, or up to 2% of a bigger place
       const k = Math.min(0.5, r() * 0.02 + (2 + r() * 8) / Math.max(pop, 1)); S[o + F.pop] *= 1 - k; S[o + F.stability] -= 0.03; this.log(EV['Habitat breach'], b, k); this.civ.onDisaster(b, EV['Habitat breach'], k, this.year);
     }
-    // solar storms and asteroid strikes are physics now: geo.ts rolls them at their real rates
+    // solar storms are physics now (geo.ts); impacts come at the body's own rate (impact/flux.ts):
+    // one draw from the stream decides whether one happens this step, and the impact model does the rest
+    const info = this.impactAt(b);
+    if (info.rate > 0 && r() < 1 - Math.exp(-info.rate * dt)) {
+      if (this.impact(b, o, stg, info, null, -1)) return;
+    }
     if (pop > 1e5 && r() < dt * 0.0015 * ERA_FX[this.st.g[G.era]].death) {
       const k = 0.02 + r() * 0.15; S[o + F.pop] *= 1 - k; this.log(EV.Plague, b, k); this.civ.onDisaster(b, EV.Plague, k, this.year);
     }
@@ -960,6 +985,60 @@ export class Engine {
     if (fx.fission && !fx.fusion && r() < dt * 0.0008) { S[o + F.pop] *= 0.98; this.log(EV['Reactor accident'], b); }
     if (S[o + F.happiness] > 0.7 && S[o + F.pop] < S[o + F.capacity] && r() < dt * 0.001) { this.ledger?.addBirths(b, S[o + F.pop] * 0.03); S[o + F.pop] *= 1.03; this.log(EV['Baby boom'], b); }
     if (pop > 1e7 && S[o + F.research] > 0 && r() < dt * 0.0012) { this.st.g[G.knowledge] += S[o + F.research] * 30; this.log(EV.Breakthrough, b); }
+  }
+
+  /** Earth's satellite fleet for this step: drag under the seeded Sun sets stationkeeping, life and replacements, paid at the step's Earth-to-orbit price. */
+  private fleet(year: number, dt: number): void {
+    const S = this.st.S, g = this.st.g, earth = this.world.earth, eo = earth * NF;
+    for (let k = G.oSats; k <= G.oSsn; k++) g[k] = 0;
+    if (!this.sun) return;
+    const cal = YEAR0 + year;
+    g[G.oSsn] = this.sun.ssn(cal + dt / 2);
+    if (!isAlive(S[eo + F.stage])) return;
+    const f = fleetStep(this.sun, cal, dt, S[eo + F.gdp] / 1.6e14, leoCostPerKg(this.missionCtx(earth, -1, 0), this.econ), year < g[G.kesslerUntil]);
+    g[G.oSats] = f.sats; g[G.oRepl] = f.replacementsPerYear; g[G.oSpend] = f.spendPerYear; g[G.oStormLost] = f.stormLostSats / dt;
+    g[G.oAvail] = f.availability; g[G.oProp] = f.propellantTPerYear; g[G.oF107] = f.f107a; g[G.oAp] = f.apMean; g[G.oStormDays] = f.stormDays / dt;
+    S[eo + F.capital] = Math.max(0, S[eo + F.capital] - f.spendPerYear * dt);
+  }
+
+  private impactAt(b: number): BodyImpactInfo {
+    let i = this.impactInfo.get(b);
+    if (!i) { i = bodyImpactInfo(this.world, b); this.impactInfo.set(b, i); }
+    return i;
+  }
+
+  /** One impact on settlement b (background, or a catalogued object). Returns true if the settlement died. */
+  private impact(b: number, o: number, stg: number, info: BodyImpactInfo, cat: CatalogImpactor | null, source: number): boolean {
+    const st = this.st, S = st.S, g = st.g, year = g[G.year];
+    const has = (id: string) => techAt(this.world, st.techDone, st.techWhere, TECH_INDEX.get(id)!, b, year);
+    const pop = S[o + F.pop], cap = S[o + F.capital];
+    const orbitalShare = S[o + F.energy] > 0 ? Math.min(0.9, S[o + F.orbitalPower] / S[o + F.energy]) : 0;
+    const roll = rollImpact(info, b, this.seed, cat ? 1e6 + cat.index : st.step, YEAR0 + year, stg, pop, cap, orbitalShare, has, cat ? { diameterM: cat.diameterM, vImpKms: cat.vImpKms } : null);
+    if (!roll || (!roll.logged && !roll.defense.deflected)) return false;
+    const id = g[G.impactSeq]++;
+    if (roll.defense.deflected) {
+      g[G.impactsAverted]++;
+      if (this.logEvents) packImpact(this.impacts, id, year, b, roll, pop, source);
+      this.log(EV['Impact averted'], b, Math.round(roll.diameterM));
+      return false;
+    }
+    const k = pop > 0 ? roll.deaths / pop : 0;
+    S[o + F.pop] = Math.max(0, pop - roll.deaths);
+    S[o + F.capital] = Math.max(0, cap - roll.capitalLost);
+    if (k > 0) S[o + F.stability] = Math.max(0, S[o + F.stability] - Math.min(0.3, k));
+    g[G.impacts]++; g[G.impactDeaths] += roll.deaths;
+    if (this.logEvents) packImpact(this.impacts, id, year, b, roll, pop, source);
+    // the world's own aftermath (geo.ts): impact-winter haze on worlds with air, a lasting scar, the tallies
+    const d = roll.draw!, row = b < this.geo.nSol ? b : this.geo.nSol + this.pos[b];
+    const cool = this.geo.impactAftermath(st, b, row, roll.point, roll.diameterM, year);
+    const D = Math.round(roll.diameterM), out = d.fx.entry.outcome;
+    const type = cool > 0 && roll.diameterM >= 500 ? EV['Impact winter'] : out === 'airburst' ? EV.Airburst : EV['Asteroid strike'];
+    if (type === EV['Impact winter']) this.log(type, b, Math.round(roll.diameterM / 100) / 10, cool);
+    else if (type === EV.Airburst) this.log(type, b, D, k);
+    else this.log(type, b, k, D);
+    if (k > 0) this.civ.onDisaster(b, type, k, this.year);
+    if (k > 0.9 && stg <= STAGE.COLONY && b !== this.world.earth) { S[o + F.stage] = STAGE.DEAD; S[o + F.pop] = 0; g[G.dead]++; return true; }
+    return false;
   }
 
   private research(amount: number, year: number): void {
@@ -1260,6 +1339,14 @@ export class Engine {
 
   private globalEvents(dt: number, year: number): void {
     const st = this.st, S = st.S, g = st.g;
+    // catalogued objects: each Sentry virtual impactor in this step's span, rolled once with its official probability
+    const earth = this.world.earth, cal0 = YEAR0 + year, cal1 = cal0 + dt;
+    for (const c of this.catalog) {
+      if (c.year < cal0) continue;
+      if (c.year >= cal1) break;
+      if (!isAlive(S[earth * NF + F.stage]) || hash01(this.seed, c.index, 7177) >= c.ip) continue;
+      this.impact(earth, earth * NF, S[earth * NF + F.stage], this.impactAt(earth), c, c.index);
+    }
     if (year < 300 && year > g[G.kesslerUntil] && this.rand() < dt * 0.003) {
       g[G.kesslerUntil] = year + 15 + this.rand() * 25; this.log(EV['Kessler cascade'], this.world.earth);
     }
@@ -1343,6 +1430,10 @@ export class Engine {
     const eg = earth * NGEO, geo = st.geo, gg = st.geoG;
     row[GM.earthTemp] = geo[eg + GF.tAnom] - geo[eg + GF.avgCool]; row[GM.seaLevel] = geo[eg + GF.sea]; row[GM.aerosol] = geo[eg + GF.avgAero];
     row[GM.impacts] = gg[GG.impacts]; row[GM.eruptions] = gg[GG.eruptions]; row[GM.stellarStorms] = gg[GG.solar]; row[GM.terraformed] = gg[GG.terraformed];
+    row[GM.orbitSats] = g[G.oSats]; row[GM.orbitReplacements] = g[G.oRepl]; row[GM.orbitSpend] = g[G.oSpend]; row[GM.orbitStormLoss] = g[G.oStormLost];
+    row[GM.orbitAvailability] = 100 * g[G.oAvail]; row[GM.orbitPropellant] = g[G.oProp];
+    row[GM.solarF107] = g[G.oF107]; row[GM.solarSsn] = g[G.oSsn]; row[GM.apMean] = g[G.oAp]; row[GM.stormDays] = g[G.oStormDays];
+    row[GM.impactDeaths] = g[G.impactDeaths]; row[GM.impactsAverted] = g[G.impactsAverted];
 
     if (this.logEvents && step % Engine.HIST_EVERY === 0) {
       const w = 2 + HIST_FIELDS.length;
@@ -1391,6 +1482,7 @@ export class Engine {
     for (let n = 0; n < s.nSettled; n++) this.pos[s.settled[n]] = n;
     // missions launched from here on will be flown again; ships still in flight have no outcome yet
     this.missions.truncateFrom(this.years[s.step]);
+    this.impacts.truncateFrom(this.years[s.step]);
     for (let i = 0; i < s.ships.length / NSH; i++) this.missions.setOutcome(s.ships[i * NSH + SH.flow], 0);
     this.refShip.step = -1;
     this.rebuildPairs();

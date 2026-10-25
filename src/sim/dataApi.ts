@@ -9,6 +9,7 @@ import { Engine, type SimState } from './engine.ts';
 import { F, NF } from './metrics.ts';
 import { NMC } from './launchEconomics.ts';
 import { compile, placeBinder, QueryError, type PlaceRow } from './query.ts';
+import { LAB_TYPES, handleLab, type LabReq, type LabRes } from './labData.ts';
 import type { World } from './world.ts';
 
 export type Agg = 'count' | 'sum' | 'mean' | 'min' | 'max';
@@ -25,7 +26,9 @@ export type DataReq =
   /** mission economics records launched up to a year (launchEconomics.ts MC columns) */
   | { type: 'missions'; id: number; year: number }
   /** one mission's record by its id (the ship's flow id, or a crewed mission's) */
-  | { type: 'mission'; id: number; mission: number };
+  | { type: 'mission'; id: number; mission: number }
+  /** the Orbits desk and the Impact Lab (labData.ts) */
+  | LabReq;
 
 export type DataRes =
   | { type: 'table'; id: number; step: number; year: number; bodies: Int32Array; rows: Float64Array }
@@ -40,7 +43,8 @@ export type DataRes =
   | { type: 'place'; id: number; pending?: boolean; bodies: number[]; steps: Int32Array; rows: Float64Array }
   /** rows[i * NMC + c]: column c of mission i, launch order; the run's seed and the assumption scenario it was priced with */
   | { type: 'missions'; id: number; seed: number; scenario: string; done: boolean; rows: Float64Array }
-  | { type: 'mission'; id: number; row: Float64Array | null };
+  | { type: 'mission'; id: number; row: Float64Array | null }
+  | LabRes;
 
 export type PlaceRes = Extract<DataRes, { type: 'place' }>;
 export type GroupBy = 'faction' | 'culture' | 'system' | 'stage';
@@ -57,7 +61,7 @@ export interface DataEnv {
   minds?: (e: Engine) => void;
 }
 
-const DATA_TYPES = new Set(['table', 'scan', 'runinfo', 'groups', 'faiths', 'place', 'missions', 'mission']);
+const DATA_TYPES = new Set(['table', 'scan', 'runinfo', 'groups', 'faiths', 'place', 'missions', 'mission', ...LAB_TYPES]);
 export function isDataReq(m: { type: string }): m is DataReq { return DATA_TYPES.has(m.type); }
 
 export const living = isAlive;
@@ -116,6 +120,7 @@ function pump(env: DataEnv): void {
 // ---------------------------------------------------------------- handlers
 
 export function handleData(m: DataReq, env: DataEnv): void {
+  if (LAB_TYPES.has(m.type)) { handleLab(m as LabReq, { world: env.world, main: env.main, stateAt: env.stateAt, post: (r, t) => env.post(r, t) }); return; }
   if (m.type === 'runinfo') {
     const e = env.main();
     if (!e) { env.post({ type: 'runinfo', id: m.id, seed: 0, done: false, feasible: [], costMult: [], wanderlust: 1, techDone: [] }); return; }

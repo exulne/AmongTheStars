@@ -14,6 +14,8 @@ import { GroupsTab } from './dataGroups.ts';
 import { ChartsTab } from './dataCharts.ts';
 import { HistoryTab } from './dataHistory.ts';
 import { EconTab } from './dataEcon.ts';
+import { OrbitTab } from './dataOrbits.ts';
+import { ImpactTab } from './dataImpact.ts';
 import { esc } from './dataPanel.ts';
 import { installStamp, stampLine } from './stamp.ts';
 
@@ -38,6 +40,7 @@ export function installDataDesk(o: DeskOpts): DataPanel {
     setHighlight: (ids) => hl.set(ids),
     showSeries: o.showSeries,
     pickYear: o.pickYear,
+    snap: () => o.ctx.snap,
   });
   desk.add(new ChartsTab(desk.hostApi));
   desk.add(new GroupsTab(desk.hostApi, desk));
@@ -46,6 +49,11 @@ export function installDataDesk(o: DeskOpts): DataPanel {
   const econ = new EconTab(desk.hostApi);
   desk.add(econ);
   desk.openMission = (id) => { if (!desk.open) btn?.click(); desk.show('econ'); econ.open(id); };
+  const orbits = new OrbitTab(desk.hostApi), impact = new ImpactTab(desk.hostApi);
+  desk.add(orbits);
+  desk.add(impact);
+  desk.openSat = (n) => { if (!desk.open) btn?.click(); desk.show('orbits'); orbits.openSat(n); };
+  desk.openImpact = (id) => { if (!desk.open) btn?.click(); desk.show('impact'); impact.openImpact(id); };
   desk.add(new RunTab(desk.hostApi));
   const btn = o.app.querySelector<HTMLButtonElement>('#data');
   installStamp({ app: o.app, seed: () => o.sim.seed, year: () => o.ctx.year });

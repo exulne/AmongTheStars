@@ -110,6 +110,8 @@ export class Inspector {
   onYear: (y: number) => void = () => {};
   /** open a mission's launch economics in the data desk */
   onMission: (id: number) => void = () => {};
+  onSat: (norad: number) => void = () => {};
+  onImpact: (id: number) => void = () => {};
 
   private inventions(): Map<number, Entry | null> | null {
     if (!this.inv) this.fetch('inventions', () => this.api!.inventions(), (v: { list: { tech: number; entry: Entry | null }[] }) => { this.inv = new Map(v.list.map((x) => [x.tech, x.entry])); });
@@ -181,6 +183,8 @@ export class Inspector {
       if (act === 'close-polity') { this.polityOpen = null; this.render(this.last); }
       if (act === 'year') this.onYear(Number(t.dataset.id));
       if (act === 'mission') this.onMission(id);
+      if (act === 'orbitsat') this.onSat(id);
+      if (act === 'impact') this.onImpact(id);
       if (act === 'goto-body') { this.openPerson(null); this.onSelect({ kind: 'body', id, name: this.last.world.bodies[id].name, pos: null! }); }
     });
     this.el.addEventListener('change', (e) => {

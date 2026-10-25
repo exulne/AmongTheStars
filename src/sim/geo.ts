@@ -504,8 +504,10 @@ export class Geo {
       const area = (b.radius / 6371) ** 2;
       let loc = b.system !== 0 ? 0.3 + 2.7 * hash01(b.system, 0, 913) : i === this.earth ? 1 : b.name === 'Mars' || parent === 'Mars' ? 2 : b.name === 'Mercury' ? 1.5 : b.name === 'Moon' ? 0.7 : b.name === 'Venus' ? 1 : parent === 'Jupiter' ? 3 : parent === 'Saturn' ? 1.5 : parent === 'Uranus' || parent === 'Neptune' ? 1 : b.a >= 2 && b.a <= 3.6 ? 300 : 0.3;
       if (b.system !== 0 && b.kind === 'asteroid') loc *= 100;
-      // (a Chelyabinsk-class airburst matters only over Earth's crowded cities; elsewhere it is not simulated)
-      for (const c of [GEV.AIR20, GEV.TUNG, GEV.R140, GEV.KM1, GEV.KM10]) if (c !== GEV.AIR20 || i === this.earth) R[o + c] = cat(c) * area * loc / (i === this.earth ? 1 : 1.4);
+      // Impacts on settled worlds are rolled by the impact model (src/impact/engineImpacts.ts) at body-specific rates, with entry,
+      // crater and blast physics and spatial exposure; it hands each one back here (impactAftermath) for the haze, scar and tallies.
+      // The catalogue rows stay as the Earth reference. Rolling them here too would count every impact twice.
+      void area; void loc;
       if (i === this.earth) for (const c of [GEV.VEI6, GEV.VEI7, GEV.VEI8, GEV.QUAKE]) R[o + c] = cat(c);
       else if (b.system !== 0 && (b.kind === 'rocky' || b.kind === 'superearth' || b.kind === 'ocean')) {
         const act = area * (0.3 + 2 * this.baseVol[i]);
@@ -817,6 +819,29 @@ export class Geo {
     }
     const target = stab > 0.3 ? -Math.max(0, T - 1) : 0;
     geo[o + GF.shade] += (target - geo[o + GF.shade]) * (1 - Math.exp(-dt / 40));
+  }
+
+  /**
+   * The aftermath of an impact the impact model rolled on body b (row r): stratospheric haze on a world with air (the
+   * impact-winter pulse of the nearest size class), a lasting crater scar for 100 m and up, and the tallies.
+   * Returns the peak cooling (K).
+   */
+  impactAftermath(st: GeoState, b: number, r: number, dir: [number, number, number], diameterM: number, t: number): number {
+    const c = diameterM >= 5000 ? GEV.KM10 : diameterM >= 500 ? GEV.KM1 : diameterM >= 100 ? GEV.R140 : -1;
+    if (c < 0) return 0;
+    const geo = st.geo, o = r * NGEO, f = FX[c], air = this.baseP[b] > 0.05 || geo[o + GF.pAtm] > 0.05;
+    const ev: GeoEvent = { cls: c, t, x: dir[0], y: dir[1], z: dir[2], m: 0.5, d: 1, j: 0.5 };
+    let tau = 0;
+    if (air && f.aero[1] > 0) {
+      tau = f.aero[0] + (f.aero[1] - f.aero[0]) * ev.m;
+      const now = aeroAt(geo, o, t);
+      geo[o + GF.aeroTau] = now > tau ? (geo[o + GF.aeroTau] * now + f.aeroTau * tau) / (now + tau) : f.aeroTau;
+      geo[o + GF.aero0] = now + tau; geo[o + GF.aeroT] = t;
+    }
+    const rad = c === GEV.R140 ? 0.012 : c === GEV.KM1 ? 0.03 : 0.08;
+    this.scar(st, b, ev, rad, SCAR.CRATER, b === this.earth ? 400 : air ? 3000 : 1e9);
+    st.geoG[GG.impacts]++; geo[o + GF.nImp]++;
+    return Math.round(aeroCooling(tau) * 10) / 10;
   }
 
   /** Apply one natural event on body b (row r). Returns the years of this step a dust storm darkened the sky. */

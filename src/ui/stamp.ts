@@ -4,6 +4,7 @@
 // build with other rules says so when it is opened.
 
 import { setExportHeader } from './exporter.ts';
+import { SNAPSHOT_ID } from '../data/snapshotCore.ts';
 
 declare const __BUILD__: { sha: string; rules: string; trainedAt: string; built: string } | undefined;
 
@@ -27,7 +28,7 @@ export function installStamp(o: StampOpts): void {
   setExportHeader(() => {
     let link = '';
     try { link = location.href; } catch { /* sandboxed */ }
-    return [stampLine(), `future #${o.seed()} · viewed at year ${Math.round(2040 + o.year())}`, ...(link ? [`link: ${link}`] : [])];
+    return [stampLine(), `future #${o.seed()} · simulation seed ${o.seed()} · observed-data snapshot ${SNAPSHOT_ID} · viewed at year ${Math.round(2040 + o.year())}`, 'Educational and strategic simulation; not an operational spaceflight, collision-avoidance, reentry-safety or planetary-defense tool.', ...(link ? [`link: ${link}`] : [])];
   });
   const s = LINK_STAMP;
   if (!s || (s.sha === BUILD.sha && s.rules === BUILD.rules)) return;

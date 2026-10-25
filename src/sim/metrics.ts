@@ -75,6 +75,20 @@ export const GLOBAL_METRICS: MetricDef[] = [
   { key: 'eruptions', label: 'Eruptions of VEI 7 or more, all worlds (total)', unit: '', group: 'Planet' },
   { key: 'stellarStorms', label: 'Miyake-class stellar storms (total)', unit: '', group: 'Planet' },
   { key: 'terraformed', label: 'Worlds terraformed past half', unit: '', group: 'Planet' },
+  // Earth's satellite fleet under the seeded Sun (orbit/shells.ts): simulated, never observed
+  { key: 'orbitSats', label: 'Earth satellites in service (simulated)', unit: '', log: true, group: 'Orbit' },
+  { key: 'orbitReplacements', label: 'Satellite replacements per year', unit: '/yr', log: true, group: 'Orbit' },
+  { key: 'orbitSpend', label: 'Satellite replacement and launch spending', unit: '$/yr', log: true, group: 'Orbit' },
+  { key: 'orbitStormLoss', label: 'Satellites lost to storms per year', unit: '/yr', group: 'Orbit' },
+  { key: 'orbitAvailability', label: 'Constellation availability', unit: '%', group: 'Orbit' },
+  { key: 'orbitPropellant', label: 'Stationkeeping propellant per year', unit: 't/yr', log: true, group: 'Orbit' },
+  { key: 'solarF107', label: 'Solar flux F10.7, 81-day (seeded)', unit: 'sfu', group: 'Orbit' },
+  { key: 'solarSsn', label: 'Sunspot number, smoothed (seeded)', unit: '', group: 'Orbit' },
+  { key: 'apMean', label: 'Geomagnetic Ap, step mean (seeded)', unit: '', group: 'Orbit' },
+  { key: 'stormDays', label: 'Geomagnetic storm days (Ap ≥ 50)', unit: '/yr', group: 'Orbit' },
+  // impacts (impact/engineImpacts.ts)
+  { key: 'impactDeaths', label: 'Impact deaths (total)', unit: 'people', log: true, group: 'Impacts' },
+  { key: 'impactsAverted', label: 'Impacts averted by deflection (total)', unit: '', group: 'Impacts' },
 ];
 export const GM = Object.fromEntries(GLOBAL_METRICS.map((m, i) => [m.key, i])) as Record<string, number>;
 export const NGM = GLOBAL_METRICS.length;

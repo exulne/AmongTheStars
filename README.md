@@ -146,6 +146,21 @@ npm run sim -- 42     # run future #42 in the terminal and print a summary
 | `ml/` | Scripts that make training data and train the network |
 | `research/` | Notes, the simulation bible, the invention-model research and the build plan (`ambition-plan.md`) |
 | `src/ship/` | The Starship you can board and fly through the simulation (see below) |
+| `src/data/` | Observed-data snapshots (CelesTrak, JPL, NOAA, GFZ) with provenance, their adapters, and the mission, facility and organisation registries |
+| `src/orbit/` | Earth's thermosphere, the seeded Sun, drag and satellite lifecycles, SGP4 display, the simulated fleet |
+| `src/impact/` | Body profiles, impact rates, entry, craters, effects, exposure and the deep-future impact events |
+
+---
+
+## Orbits, atmospheres and impacts
+
+> Educational and strategic simulation: not an operational spaceflight, collision-avoidance, reentry-safety or planetary-defense tool.
+
+- **Data → Orbits & missions.** About 17,000 tracked objects from a CelesTrak GP snapshot, drawn around Earth with SGP4 near their element-set epochs (never as the simulated year). Pick one for its drag regime, ballistic-coefficient range, decay and lifetime ranges under quiet, nominal and disturbed atmospheres, stationkeeping demand and replacement exposure. Also: this future's simulated fleet and what drag under its seeded Sun costs it, the February 2022 Starlink loss as a validation case, a NASA/SpaceX/Blue Origin mission registry with separate roles (owner, operator, customer, launch provider), and the launch, landing and mission-control facilities.
+- **Data → Impact Lab** (Solar System Close Approach & Impact Scenario Lab). For all eight planets, the Moon, Pluto and Titan: the body's profile and atmosphere, observed impacts, JPL close approaches (never turned into probabilities), Sentry's official Earth risks, and hypothetical scenarios through body-specific physics (airbursts, craters, plumes on the giants) against the settlements standing at that year.
+- **In the engine**, impacts on settled worlds come from this model (not from fixed size classes): each body's own rate, a specific landing point, and damage that depends on the impactor, the atmosphere, the settlement's sites, the warning and the era's planetary defence. The living-worlds model still adds the impact-winter haze and the scar.
+
+Every object, mission and event carries one of seven classifications (historical, active, scheduled, contracted, announced, hypothetical, simulated). Methodology, sources, validation and limitations: `research/orbits-and-impacts.md`. Refresh the observed data with `npm run ingest`; test with `npm run check:orbits` and `npm run check:impacts`.
 
 ---
 

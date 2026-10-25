@@ -15,6 +15,7 @@ import { styleOf } from './epoch.ts';
 import { makeGalaxy } from './galaxyPoints.ts';
 import { atmosphereMaterial, planetMaterial, setCityLights } from './planetShader.ts';
 import { Orbitals, StarWorks, tierRank } from './orbitals.ts';
+import { EarthOrbitLayers } from './orbitLayers.ts';
 import { BEAM, SCOOP, shipStyle } from './shipStyles.ts';
 import { applyCultureLights, cultureLight, cultureSkin, lookKey, societyLook } from './societyLook.ts';
 import { REDUCED_MOTION, applyPlanetLook } from './timeLook.ts';
@@ -1047,6 +1048,8 @@ export class PlanetView implements View {
   private pivot = new THREE.Group();
   private orbit = new THREE.Group();
   private sats: ReturnType<typeof pointCloud> | null = null;
+  /** Earth only: the simulated fleet's shells and the observed GP layer (orbitLayers.ts) */
+  private earthOrbits = new EarthOrbitLayers();
   private elevators: THREE.Group[] = [];
   private elevSince = -1;
   private cityKey = ''; private satKey = -1; private elevKey = -1; private archKey = '';
@@ -1206,8 +1209,11 @@ export class PlanetView implements View {
     // orbital works by age and stage: tori, O'Neill pairs, Bishop rings, swarm panels, ring worlds
     this.works.sync(this.orbit, this.group, ctx.snap, ctx.year, b, st, on);
     if (this.sun) { (this.sun.material as THREE.SpriteMaterial).opacity = 0.9 * this.works.starLight; (this.sun.material as THREE.SpriteMaterial).color.copy(this.starCol).multiply(this.works.starTint); }
-    // satellites on a few inclined shells, more as the place grows
-    const nSat = on ? Math.min(900, 30 + st * st * 22) : 0;
+    // Earth: the simulated fleet's shells and, when asked, the observed objects; elsewhere procedural satellites on a few shells
+    const isEarth = b === ctx.world.earth;
+    if (isEarth) this.earthOrbits.sync(this.orbit, this.group, ctx.world, ctx.snap, on);
+    else this.earthOrbits.dispose(this.orbit, this.group);
+    const nSat = on && !isEarth ? Math.min(900, 30 + st * st * 22) : 0;
     if (this.satKey !== nSat) {
       this.satKey = nSat;
       if (this.sats) { this.orbit.remove(this.sats.pts); this.sats.pts.geometry.dispose(); }
@@ -1261,6 +1267,8 @@ export class PlanetView implements View {
     this.orbit.rotation.y = ctx.tm * 0.015;
     this.works.frame(ctx.tm);
     if (this.sats) this.sats.pts.rotation.y = ctx.tm * 0.05;
+    this.earthOrbits.frame(ctx.tm);
+    if (ctx.body === ctx.world.earth) this.earthOrbits.sync(this.orbit, this.group, ctx.world, ctx.snap, alive(stageOf(ctx.snap, ctx.body)));
     for (const g of this.elevators) {
       const c = g.userData.climber as THREE.Sprite;
       const u = (ctx.t * 0.05 + g.id * 0.37) % 1;

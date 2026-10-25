@@ -15,6 +15,10 @@ function stamp() {
   const h = createHash('sha256');
   // the war minds decide wars, so they are rules too
   RULES.push('src/sim/warMind.ts', 'src/ml/netMind.ts', 'src/ml/warNet.ts', 'src/ml/warWeights.ts');
+  // so do transport prices, the seeded Sun, the fleet, the impact physics and the observed data the engine reads
+  RULES.push('src/sim/launchEconomics.ts', 'src/orbit/spaceWeather.ts', 'src/orbit/shells.ts', 'src/orbit/decay.ts', 'src/orbit/thermosphere.ts', 'src/orbit/thermosphereFit.ts', 'src/orbit/classes.ts',
+    'src/impact/bodies.ts', 'src/impact/flux.ts', 'src/impact/entry.ts', 'src/impact/crater.ts', 'src/impact/effects.ts', 'src/impact/exposure.ts', 'src/impact/scenario.ts', 'src/impact/defense.ts', 'src/impact/engineImpacts.ts',
+    'src/data/snapshots/spaceweather.json', 'src/data/snapshots/sentry.json');
   for (const f of RULES) { try { h.update(readFileSync(f)); } catch { h.update(f); } }
   let trainedAt = '';
   try { trainedAt = /"trainedAt":"([^"]+)"/.exec(readFileSync('src/ml/weights.ts', 'utf8'))?.[1] ?? ''; } catch { /* no weights */ }

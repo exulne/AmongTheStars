@@ -21,6 +21,7 @@ import { ChartStrip, globalSeries, type Series } from './ui/charts.ts';
 import { fmtNum, fmtYear, parseCount } from './ui/format.ts';
 import { Inspector } from './ui/inspector.ts';
 import { installDataDesk } from './ui/dataDesk.ts';
+import { DISCLAIMER } from './data/provenance.ts';
 import { STAMP_CODE } from './ui/stamp.ts';
 import { Search, type Hit } from './ui/search.ts';
 import { NOTABLE, Ticker, describe } from './ui/ticker.ts';
@@ -193,6 +194,13 @@ const dataPanel = installDataDesk({
   showSeries: (key) => { if (charts.el.hidden) chartsToggle.click(); charts.show(key); },
   pickYear: (y) => timeline.set(y, true),
 });
+// a permanent notice: what this is not
+{
+  const note = document.createElement('p');
+  note.className = 'app-disclaimer';
+  note.textContent = DISCLAIMER;
+  app.append(note);
+}
 
 // below the street: one person's body, cells, molecules, atoms; above the Local Group: every future
 const micro = new Micro((id, y) => sim.person(id, y));
@@ -546,6 +554,8 @@ setShipApi((f, t, d) => sim.ship(f, t, d), () => refreshPanels(), (b, y) => sim.
 setMissionApi((id) => sim.data<'mission'>({ type: 'mission', mission: id }));
 inspector.onYear = (y) => timeline.set(y, true);
 inspector.onMission = (id) => dataPanel.openMission(id);
+inspector.onSat = (n) => dataPanel.openSat(n);
+inspector.onImpact = (id) => dataPanel.openImpact(id);
 app.querySelector('#chronicle')!.addEventListener('click', () => {
   inspector.chronicleOpen = !inspector.chronicleOpen;
   if (inspector.chronicleOpen) inspector.openPerson(null);

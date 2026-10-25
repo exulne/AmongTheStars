@@ -23,6 +23,8 @@ export interface DataHost {
   showSeries(key: string): void;
   /** move the timeline to a year */
   pickYear?(y: number): void;
+  /** the state shown at the current year (settlements, globals), if loaded */
+  snap?(): import('../sim/client.ts').StateMsg | null;
 }
 
 /** One tab of the desk. `refresh` runs when the year, run or selection changes while it shows. */
@@ -68,6 +70,9 @@ export class DataPanel {
   onClose: () => void = () => {};
   /** open one mission in the launch-economics tab (set by installDataDesk) */
   openMission: (id: number) => void = () => {};
+  /** open one observed object in Orbits, or one simulated impact in the Impact Lab (set by installDataDesk) */
+  openSat: (norad: number) => void = () => {};
+  openImpact: (id: number) => void = () => {};
   get hostApi(): DataHost { return this.host; }
   /** the shared filter: Places and Over time start from it */
   query = '';

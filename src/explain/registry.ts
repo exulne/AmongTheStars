@@ -10,7 +10,7 @@ import type { World } from '../sim/world.ts';
 /** R: real data. E: estimate from real data. P: procedural (drawn by this future's generator). */
 export type Tag = 'R' | 'E' | 'P';
 export interface Fact { k: string; v: string; t: Tag }
-export type ExAct = 'system' | 'body' | 'dive-system' | 'dive-body' | 'year' | 'enter' | 'bio' | 'mission';
+export type ExAct = 'system' | 'body' | 'dive-system' | 'dive-body' | 'year' | 'enter' | 'bio' | 'mission' | 'orbitsat' | 'impact';
 export interface ExLink { label: string; act: ExAct; id: number }
 export interface Explanation {
   eyebrow: string;      // what kind of thing, e.g. "Star in the Perseus Arm"
