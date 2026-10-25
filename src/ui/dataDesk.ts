@@ -12,6 +12,7 @@ import { Highlight } from './highlight.ts';
 import { RunTab } from './dataRun.ts';
 import { GroupsTab } from './dataGroups.ts';
 import { ChartsTab } from './dataCharts.ts';
+import { TrendsTab } from './dataTrends.ts';
 import { HistoryTab } from './dataHistory.ts';
 import { EconTab } from './dataEcon.ts';
 import { esc } from './dataPanel.ts';
@@ -40,6 +41,7 @@ export function installDataDesk(o: DeskOpts): DataPanel {
     pickYear: o.pickYear,
   });
   desk.add(new ChartsTab(desk.hostApi));
+  desk.add(new TrendsTab(desk.hostApi));
   desk.add(new GroupsTab(desk.hostApi, desk));
   desk.add(new HistoryTab(desk.hostApi));
   desk.add(new TimeTab(desk.hostApi, desk));
