@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { defineConfig, loadEnv } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
+import { openaiDev } from './scripts/openaiDev.ts';
 
 // The reproducibility stamp baked into the page: which commit built it, a hash
 // of everything that decides what a future number unfolds into (the catalog,
@@ -29,8 +30,9 @@ function stamp() {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const key = env.ELEVENLABS_API_KEY;
+  // the GPT assistant's key stays in the dev server (scripts/openaiDev.ts): never VITE_-prefixed, never in the page
   return {
-    plugins: [viteSingleFile()],
+    plugins: [viteSingleFile(), openaiDev(env.OPENAI_API_KEY)],
     define: { __BUILD__: JSON.stringify(stamp()) },
     worker: { format: 'es' },
     // satellite.js ships a top-level await, which the dev pre-bundle's default target rejects
