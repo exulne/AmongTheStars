@@ -112,6 +112,7 @@ export class OrbitInfra {
   private tugTrails: ReturnType<typeof lineBuf> | null = null;
   // orbital ring
   private ring: THREE.Group | null = null;
+  private ringGlow: THREE.Mesh | null = null;
   private ringLights: ReturnType<typeof points> | null = null;
   // traffic
   private ports: () => THREE.Vector3[] = () => [];
@@ -319,6 +320,7 @@ export class OrbitInfra {
     const glow = new THREE.Mesh(new THREE.TorusGeometry(R, 0.14, 8, 320), new THREE.MeshBasicMaterial({ color: 0x5fb6ff, transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false }));
     glow.rotation.x = Math.PI / 2;
     g.add(band, glow);
+    this.ringGlow = glow;
     const spokes: number[] = [];
     for (let k = 0; k < 24; k++) {
       const a = (k / 24) * Math.PI * 2, c = Math.cos(a), s = Math.sin(a);
@@ -533,7 +535,7 @@ export class OrbitInfra {
         explain: (i, c) => this.card(kind, i, body(), c),
         name: (i, c) => this.card(kind, i, body(), c).title,
         locate: (i, out) => list()[i]?.getWorldPosition(out) ?? null,
-        objectOf: (i) => (kind === 'oringl' ? null : list()[i] ?? null),
+        objectOf: (i) => (kind === 'oringl' ? this.ringGlow : list()[i] ?? null),
         // the ring is a whole circle: zoom into the stretch of it nearest the camera, and stay on it as the planet turns
         anchor: kind === 'oringl' ? (_i, from) => {
           const ring = this.ring;

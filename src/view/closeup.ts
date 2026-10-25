@@ -21,7 +21,7 @@ export const CLOSEUP: Record<string, { model: Model; size: number; dist: number;
   oyard: { model: 'yard', size: 0.9, dist: 1.9, name: 'shipyard' },
   odef: { model: 'defence', size: 0.24, dist: 0.6, name: 'defence platform' },
   omine: { model: 'miner', size: 0.4, dist: 0.95, name: 'asteroid tug' },
-  oringl: { model: 'ring', size: 0.5, dist: 0.9, name: 'orbital ring' },
+  oringl: { model: 'ring', size: 1.6, dist: 1.6, name: 'orbital ring' },
 };
 export type Model = 'sat' | 'station' | 'power' | 'yard' | 'defence' | 'miner' | 'ring';
 
