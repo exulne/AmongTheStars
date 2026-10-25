@@ -1,6 +1,8 @@
 // Checks the query language: parsing, precedence, strings, errors.
 //   node scripts/query-check.ts
-import { tryCompile } from '../src/sim/query.ts';
+import { DATA_METRICS } from '../src/sim/metrics.ts';
+import { globalBinder, PLACE_NAMES, placeBinder, QueryError, tryCompile } from '../src/sim/query.ts';
+import { buildWorld } from '../src/sim/world.ts';
 
 const vars: Record<string, number | string> = { pop: 2e6, stability: 0.2, gdp: 4e9, name: 'Mars', system: 'Sol' };
 const bind = (n: string) => (n in vars ? () => vars[n] : null);
@@ -17,5 +19,15 @@ for (const [src, want] of cases) {
   const got = c instanceof Error ? 'error' : c.value(null);
   if (got !== want) { bad++; console.log(`FAIL ${src}: got ${got}, want ${want}${c instanceof Error ? ` (${c.message})` : ''}`); }
 }
+// faith and culture are narrative, not data: the query language doesn't bind them
+const pb = placeBinder(buildWorld());
+for (const src of ['culture > 0', 'faith > 0']) {
+  const c = tryCompile(src, pb);
+  if (!(c instanceof QueryError)) { bad++; console.log(`FAIL ${src}: expected Unknown field`); }
+}
+if (globalBinder()('faiths') !== null) { bad++; console.log('FAIL globalBinder("faiths") should be null'); }
+if (PLACE_NAMES.includes('culture') || PLACE_NAMES.includes('faith')) { bad++; console.log('FAIL PLACE_NAMES lists culture or faith'); }
+if (DATA_METRICS.some((m) => m.key === 'faiths')) { bad++; console.log('FAIL DATA_METRICS includes faiths'); }
+
 console.log(bad ? `${bad} query checks failed` : `query: ${cases.length} checks ok`);
 if (bad) process.exit(1);

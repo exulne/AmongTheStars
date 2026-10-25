@@ -1,6 +1,6 @@
 // People checker: the persistent-people model (ledger → demography → lives)
 // against the engine, on several seeds. Exit code 1 on any failure.
-//   node scripts/people-check.ts [seeds=4] [firstSeed=1] [--samples=300] [--serial]
+//   node scripts/people-check.ts [seeds=4] [firstSeed=1] [--samples=300] [--serial] [--perf]
 import { availableParallelism } from 'node:os';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { Engine } from '../src/sim/engine.ts';
@@ -25,6 +25,9 @@ interface Result {
 }
 
 // internals the checker needs to see (TS privacy is compile-time only)
+// the timing budgets only bite under --perf: timings are still measured and
+// printed on every run, but a loaded machine shouldn't turn them into failures
+const PERF = process.argv.includes('--perf') || (!isMainThread && !!(workerData as { perf?: boolean } | undefined)?.perf);
 interface Town { pools: Pool[]; built: number; nativeByPeriod: Map<number, Pool> }
 const towns = (D: Demography) => (D as unknown as { towns: Map<number, Town> }).towns;
 const byFlow = (D: Demography) => (D as unknown as { byFlow: Map<number, { pool: Pool; count: number }[]> }).byFlow;
@@ -108,9 +111,11 @@ function checkSeed(world: World, seed: number, samples: number, det: boolean): R
     bio = Math.max(bio, performance.now() - t);
   }
   const perf = { censusCold, censusWarm, bio, bigBody: big, bigPop, buildAll: 0 };
-  if (censusCold > 2000) fail(`cold census of body ${big} (${bigPop} people) took ${censusCold.toFixed(0)} ms (budget 2000)`);
-  if (censusWarm > 50) fail(`warm census of body ${big} took ${censusWarm.toFixed(1)} ms (budget 50)`);
-  if (bio > 100) fail(`a biography took ${bio.toFixed(0)} ms (budget 100)`);
+  if (PERF) {
+    if (censusCold > 2000) fail(`cold census of body ${big} (${bigPop} people) took ${censusCold.toFixed(0)} ms (budget 2000)`);
+    if (censusWarm > 50) fail(`warm census of body ${big} took ${censusWarm.toFixed(1)} ms (budget 50)`);
+    if (bio > 100) fail(`a biography took ${bio.toFixed(0)} ms (budget 100)`);
+  }
 
   // (a) census == engine head-count, every settlement, every period (ships: == ledger)
   t = performance.now();
@@ -355,7 +360,7 @@ if (isMainThread) {
     const queue = [...seeds];
     const nw = Math.min(seeds.length, Math.max(1, availableParallelism() - 1));
     await Promise.all(Array.from({ length: nw }, () => new Promise<void>((resolve, reject) => {
-      const w = new Worker(new URL(import.meta.url), { workerData: { first, samples } });
+      const w = new Worker(new URL(import.meta.url), { workerData: { first, samples, perf: process.argv.includes('--perf') } });
       const feed = () => { const s = queue.shift(); if (s === undefined) { w.terminate(); resolve(); } else w.postMessage(s); };
       w.on('message', (r: Result) => { done(r); feed(); });
       w.on('error', reject);

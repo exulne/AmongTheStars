@@ -3,7 +3,7 @@
 // time", and every metric at the year under the pointer.
 
 import { ERAS } from '../sim/catalog.ts';
-import { GLOBAL_METRICS, GM, NGM } from '../sim/metrics.ts';
+import { DATA_METRICS, GLOBAL_METRICS, GM, NGM } from '../sim/metrics.ts';
 import { globalBinder, tryCompile, type GlobalRow } from '../sim/query.ts';
 import { AnalystChart, idxAt, type ABand, type ALine } from './analystChart.ts';
 import { globalSeries, registeredSeries, type Series } from './charts.ts';
@@ -53,7 +53,7 @@ export class ChartsTab implements DataTab {
 
   private options(cur: string): string {
     let html = '', group = '';
-    for (const m of GLOBAL_METRICS) {
+    for (const m of DATA_METRICS) {
       if (m.group !== group) { html += `${group ? '</optgroup>' : ''}<optgroup label="${esc(m.group)}">`; group = m.group; }
       html += `<option value="${m.key}"${m.key === cur ? ' selected' : ''}>${esc(m.label)}</option>`;
     }
@@ -134,7 +134,7 @@ export class ChartsTab implements DataTab {
     const year = this.hoverYear ?? this.host.year();
     const i = Math.max(0, Math.min(sim.frontier, idxAt(sim.years, year)));
     let html = `<p class="dc-y">${fmtYear(sim.years[i])}${this.hoverYear === null ? ' <span class="muted">(now)</span>' : ''}</p><dl>`, group = '';
-    for (const m of GLOBAL_METRICS) {
+    for (const m of DATA_METRICS) {
       if (m.group !== group) { html += `<dt class="dc-g">${esc(m.group)}</dt><dd></dd>`; group = m.group; }
       const v = sim.series[i * NGM + GM[m.key]];
       html += `<dt>${esc(m.label)}</dt><dd class="num">${m.key === 'era' ? esc(ERAS[v] ?? '') : esc(fmtUnit(v, m.unit))}</dd>`;
@@ -154,7 +154,7 @@ export class ChartsTab implements DataTab {
     const sim = this.host.sim;
     if (!sim.years.length) return;
     const i = Math.max(0, Math.min(sim.frontier, idxAt(sim.years, this.hoverYear ?? this.host.year())));
-    const rows = GLOBAL_METRICS.map((m) => [m.key, m.label, m.unit, sim.series[i * NGM + GM[m.key]]]);
+    const rows = DATA_METRICS.map((m) => [m.key, m.label, m.unit, sim.series[i * NGM + GM[m.key]]]);
     void copyText(toCsv(['metric', 'label', 'unit', 'value'], rows, `Every global metric in ${fmtYear(sim.years[i])}`), 'Metrics as CSV', status);
   }
 }

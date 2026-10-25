@@ -4,12 +4,11 @@
 
 import { EVENT_NAMES, STAGE_NAMES } from '../sim/catalog.ts';
 import type { SimClient, TableMsg } from '../sim/client.ts';
-import { F, GLOBAL_METRICS, NF, NGM, SETTLEMENT_FIELDS, SETTLEMENT_LABELS, type SField } from '../sim/metrics.ts';
+import { DATA_FIELDS, DATA_FIELD_IDX, DATA_METRICS, F, GM, NF, NGM, SETTLEMENT_LABELS, type SField } from '../sim/metrics.ts';
 import { PLACE_EXTRAS, placeBinder, tryCompile, type PlaceRow } from '../sim/query.ts';
 import type { World } from '../sim/world.ts';
 import { copyText, toCsv, toJson } from './exporter.ts';
 import { fmtNum, fmtYear } from './format.ts';
-import { names } from './names.ts';
 
 export interface DataHost {
   world: World;
@@ -45,7 +44,7 @@ export function cell(v: number): string {
 
 /** The field reference shown under every query box. */
 export function queryHelp(): string {
-  const fields = SETTLEMENT_FIELDS.map((f) => `<code title="${esc(SETTLEMENT_LABELS[f]?.join(' ') ?? f)}">${f}</code>`).join(' ');
+  const fields = DATA_FIELDS.map((f) => `<code title="${esc(SETTLEMENT_LABELS[f]?.join(' ') ?? f)}">${f}</code>`).join(' ');
   const extra = PLACE_EXTRAS.map(([k, d]) => `<code title="${esc(d)}">${k}</code>`).join(' ');
   return `<details class="q-help"><summary>How to write a query</summary>
     <p>Compare fields with <code>&lt; &lt;= &gt; &gt;= == !=</code>, combine with <code>&amp;&amp; || !</code> (or <code>and or not</code>), do arithmetic with <code>+ - * / ^</code>. Numbers can be <code>1e6</code>, <code>2.5M</code>, <code>3B</code>. Text compares with <code>==</code> or <code>~</code> (contains): <code>system ~ "ceti"</code>. Functions: <code>abs sqrt log ln exp min max floor ceil round pow if(c,a,b)</code>.</p>
@@ -136,11 +135,12 @@ export class DataPanel {
     if (on) this.refresh(true);
   }
 
-  /** The year, the run or the selection changed. Cheap: the active tab updates at most every 200ms. */
+  /** The year, the run or the selection changed. Cheap: the active tab updates at most every 200ms, and at least that often while changes keep coming (playback included). */
   refresh(now = false): void {
-    if (!this.open) return;
+    if (!this.open || (this.timer && !now)) return;
     clearTimeout(this.timer);
     this.timer = window.setTimeout(() => {
+      this.timer = 0;
       const sim = this.host.sim;
       this.sub.textContent = sim.years.length ? `${fmtYear(this.host.year())} · future #${sim.seed}` : '';
       this.active?.refresh();
@@ -260,10 +260,9 @@ class PlacesTab implements DataTab {
       { key: 'system', head: 'system', title: 'Star system', text: true, value: (b) => Sy[B[b].system].name, show: (b) => esc(Sy[B[b].system].name) },
       { key: 'dist', head: 'dist', title: 'Light years from the Sun', text: false, value: (b) => Sy[B[b].system].dist, show: (b) => Sy[B[b].system].dist.toFixed(1) },
       { key: 'capital', head: 'faction', title: 'Faction, named for its capital', text: true, value: (_b, r) => name(v(r, 'faction')), show: (_b, r) => esc(name(v(r, 'faction'))) },
-      { key: 'faith', head: 'faith', title: 'Faith (culture) number', text: false, value: (_b, r) => v(r, 'culture'), show: (_b, r) => esc(names.faith(v(r, 'culture'))) },
     ];
-    for (const f of SETTLEMENT_FIELDS) {
-      if (f === 'faction' || f === 'culture') continue;
+    for (const f of DATA_FIELDS) {
+      if (f === 'faction') continue;
       const lab = SETTLEMENT_LABELS[f];
       const title = lab ? `${lab[0]}${lab[1] ? ` (${lab[1]})` : ''}` : f;
       if (f === 'stage') cols.push({ key: f, head: f, title: 'Stage', text: false, value: (_b, r) => v(r, f), show: (_b, r) => STAGE_NAMES[v(r, f)] ?? '' });
@@ -337,12 +336,12 @@ class PlacesTab implements DataTab {
   /** Raw values: names as text, everything else as full-precision numbers. */
   private exportRows(): { columns: string[]; rows: (number | string)[][] } {
     const t = this.table!;
-    const columns = ['body', 'name', 'system', 'dist_ly', 'faction_capital', ...SETTLEMENT_FIELDS];
+    const columns = ['body', 'name', 'system', 'dist_ly', 'faction_capital', ...DATA_FIELDS];
     const { bodies: B, systems: Sy } = this.host.world;
     const rows = this.order().map((r) => {
       const b = t.bodies[r];
       const fac = t.rows[r * NF + F.faction];
-      return [b, B[b].name, Sy[B[b].system].name, Sy[B[b].system].dist, B[fac]?.name ?? '', ...Array.from(t.rows.subarray(r * NF, r * NF + NF))];
+      return [b, B[b].name, Sy[B[b].system].name, Sy[B[b].system].dist, B[fac]?.name ?? '', ...DATA_FIELD_IDX.map((k) => t.rows[r * NF + k])];
     });
     return { columns, rows };
   }
@@ -360,8 +359,8 @@ class PlacesTab implements DataTab {
     const sim = this.host.sim;
     const n = Math.min(sim.years.length, sim.frontier + 1);
     const rows: number[][] = [];
-    for (let i = 0; i < n; i++) rows.push([2040 + sim.years[i], ...Array.from(sim.series.subarray(i * NGM, i * NGM + NGM))]);
-    const text = toCsv(['year', ...GLOBAL_METRICS.map((m) => m.key)], rows, `Global series: every metric at every simulated step (${n} steps; ${GLOBAL_METRICS.map((m) => `${m.key}=${m.label}${m.unit ? ` [${m.unit}]` : ''}`).join('; ')})`);
+    for (let i = 0; i < n; i++) rows.push([2040 + sim.years[i], ...DATA_METRICS.map((m) => sim.series[i * NGM + GM[m.key]])]);
+    const text = toCsv(['year', ...DATA_METRICS.map((m) => m.key)], rows, `Global series: every metric at every simulated step (${n} steps; ${DATA_METRICS.map((m) => `${m.key}=${m.label}${m.unit ? ` [${m.unit}]` : ''}`).join('; ')})`);
     void copyText(text, 'Global series as CSV', this.status);
   }
 }

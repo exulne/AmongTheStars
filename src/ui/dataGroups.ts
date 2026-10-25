@@ -1,12 +1,12 @@
-// "Groups": humanity broken down by faction, faith, star system or stage at
-// the current year, a card for any one group (a faction's capital, reach,
-// faiths and members), and the share each of the biggest groups held over the
-// whole run as a stacked area.
+// "Groups": humanity broken down by faction, star system or stage at the
+// current year, a card for any one group (a faction's capital, reach and
+// members), and the share each of the biggest groups held over the whole run
+// as a stacked area.
 
 import { STAGE_NAMES } from '../sim/catalog.ts';
 import type { TableMsg } from '../sim/client.ts';
 import { groupKey, type DataRes, type GroupBy } from '../sim/dataApi.ts';
-import { F, NF, SETTLEMENT_FIELDS } from '../sim/metrics.ts';
+import { DATA_FIELDS, DATA_FIELD_IDX, F, NF } from '../sim/metrics.ts';
 import { placeBinder, tryCompile, type PlaceRow } from '../sim/query.ts';
 import { cell, esc, type DataHost, type DataPanel, type DataTab } from './dataPanel.ts';
 import { copyText, toCsv } from './exporter.ts';
@@ -14,13 +14,13 @@ import { fmtNum, fmtYear } from './format.ts';
 import { PALETTE, drawLines, drawStacked } from './miniChart.ts';
 
 type GroupsMsg = Extract<DataRes, { type: 'groups' }>;
-const BY_LABEL: Record<GroupBy, [string, string]> = { faction: ['faction', 'factions'], culture: ['majority faith', 'faiths'], system: ['star system', 'star systems'], stage: ['stage', 'stages'] };
+const BY_LABEL: Record<GroupBy, [string, string]> = { faction: ['faction', 'factions'], system: ['star system', 'star systems'], stage: ['stage', 'stages'] };
 const OTHER = 'rgba(154, 157, 163, 0.45)';
 
 /** One group at the current year. */
 interface Agg {
   key: number; places: number; pop: number; gdp: number; energy: number; research: number; military: number; capital: number;
-  stab: number; happy: number; systems: Set<number>; faiths: Map<number, number>; factions: Map<number, number>; members: number[]; oldest: number;
+  stab: number; happy: number; systems: Set<number>; factions: Map<number, number>; members: number[]; oldest: number;
 }
 
 const COLS: { key: keyof Agg | 'share' | 'name' | 'nsys'; head: string; title: string }[] = [
@@ -45,8 +45,6 @@ export class GroupsTab implements DataTab {
   private aggs: Agg[] = [];
   private total = 0;
   private year = 0;
-  private faithNames = new Map<number, string>();
-  private faithSeed = -1;
   private over: GroupsMsg | null = null;
   private overKey = '';
   private overBusy = '';
@@ -87,23 +85,11 @@ export class GroupsTab implements DataTab {
   private name(k: number, by = this.by): string {
     const { bodies: B, systems: Sy } = this.host.world;
     if (by === 'faction') return B[k]?.name ?? `#${k}`;
-    if (by === 'culture') return this.faithNames.get(k) ?? `faith #${k}`;
     if (by === 'system') return Sy[k]?.name ?? `#${k}`;
     return STAGE_NAMES[k] ?? `#${k}`;
   }
 
   refresh(): void {
-    const sim = this.host.sim;
-    if (sim.done && this.faithSeed !== sim.seed) {
-      this.faithSeed = sim.seed;
-      const seed = sim.seed;
-      sim.data<'faiths'>({ type: 'faiths' }).then((m) => {
-        if (seed !== sim.seed) return;
-        if (m.pending) { this.faithSeed = -1; return; }
-        this.faithNames = new Map(m.faiths.map((f) => [f.n, f.name]));
-        this.render();
-      });
-    }
     const t = this.desk.table();
     if (t) this.aggregate(t);
     this.render();
@@ -127,13 +113,12 @@ export class GroupsTab implements DataTab {
       if (test) { row.b = b; row.o = o; if (!test(row)) continue; }
       const k = groupKey(this.by, R, o, B[b].system);
       let a = by.get(k);
-      if (!a) by.set(k, (a = { key: k, places: 0, pop: 0, gdp: 0, energy: 0, research: 0, military: 0, capital: 0, stab: 0, happy: 0, systems: new Set(), faiths: new Map(), factions: new Map(), members: [], oldest: Infinity }));
+      if (!a) by.set(k, (a = { key: k, places: 0, pop: 0, gdp: 0, energy: 0, research: 0, military: 0, capital: 0, stab: 0, happy: 0, systems: new Set(), factions: new Map(), members: [], oldest: Infinity }));
       const p = R[o + F.pop];
       a.places++; a.pop += p; total += p;
       a.gdp += R[o + F.gdp]; a.energy += R[o + F.energy]; a.research += R[o + F.research]; a.military += R[o + F.military]; a.capital += R[o + F.capital];
       a.stab += R[o + F.stability] * p; a.happy += R[o + F.happiness] * p;
       a.systems.add(B[b].system);
-      a.faiths.set(R[o + F.culture], (a.faiths.get(R[o + F.culture]) ?? 0) + p);
       a.factions.set(R[o + F.faction], (a.factions.get(R[o + F.faction]) ?? 0) + p);
       a.members.push(i);
       a.oldest = Math.min(a.oldest, R[o + F.founded]);
@@ -182,7 +167,7 @@ export class GroupsTab implements DataTab {
     if (this.focus === null) return;
     const { bodies: B, systems: Sy } = this.host.world;
     const t = this.desk.table();
-    const title = this.by === 'faction' ? `The faction of ${esc(this.name(this.focus))}` : this.by === 'culture' ? esc(this.name(this.focus)) : this.by === 'system' ? `The ${esc(this.name(this.focus))} system` : `Every ${esc(this.name(this.focus))}`;
+    const title = this.by === 'faction' ? `The faction of ${esc(this.name(this.focus))}` : this.by === 'system' ? `The ${esc(this.name(this.focus))} system` : `Every ${esc(this.name(this.focus))}`;
     if (!a || !t) {
       card.innerHTML = `<h3 class="data-h">${title} <button class="link" type="button" data-act="unfocus">Close</button></h3><p class="muted">Not present in ${fmtYear(this.year)}.</p><canvas class="data-chart g-line"></canvas>`;
       this.drawFocus();
@@ -199,7 +184,6 @@ export class GroupsTab implements DataTab {
       ['Product', `$${fmtNum(a.gdp)}/yr · $${fmtNum(a.gdp / (a.pop || 1))} per person`], ['Energy', `${fmtNum(a.energy)} W`], ['Military', `$${fmtNum(a.military)}/yr`],
       ['Stability · happiness', `${a.stab.toFixed(2)} · ${a.happy.toFixed(2)}`], ['Oldest member founded', fmtYear(a.oldest)],
       ['Star systems', `${a.systems.size} · farthest ${Math.max(...[...a.systems].map((s) => Sy[s].dist)).toFixed(1)} ly from the Sun`]);
-    if (this.by !== 'culture') kv.push(['Faiths', top(a.faiths, 'culture')]);
     if (this.by !== 'faction') kv.push(['Allegiance', top(a.factions, 'faction')]);
     const members = a.members.slice(0, 12).map((i) => {
       const b = t.bodies[i];
@@ -287,8 +271,8 @@ export class GroupsTab implements DataTab {
       const a = this.aggs.find((x) => x.key === this.focus), tb = this.desk.table();
       if (!a || !tb) return;
       const { bodies: B, systems: Sy } = this.host.world;
-      const rows = a.members.map((i) => { const bb = tb.bodies[i]; return [bb, B[bb].name, Sy[B[bb].system].name, ...Array.from(tb.rows.subarray(i * NF, i * NF + NF))]; });
-      void copyText(toCsv(['body', 'name', 'system', ...SETTLEMENT_FIELDS], rows, `Members of ${this.name(a.key)} (${BY_LABEL[this.by][0]}) in ${fmtYear(this.year)}`), 'Members as CSV', status);
+      const rows = a.members.map((i) => { const bb = tb.bodies[i]; return [bb, B[bb].name, Sy[B[bb].system].name, ...DATA_FIELD_IDX.map((k) => tb.rows[i * NF + k])]; });
+      void copyText(toCsv(['body', 'name', 'system', ...DATA_FIELDS], rows, `Members of ${this.name(a.key)} (${BY_LABEL[this.by][0]}) in ${fmtYear(this.year)}`), 'Members as CSV', status);
     } else if (act === 'ocsv' && this.over) {
       const m = this.over, sim = this.host.sim, K = m.keys.length;
       const rows = Array.from(m.steps, (s, i) => [2040 + sim.years[s], m.total[i], m.nGroups[i], ...m.keys.map((_, j) => m.values[i * K + j]), m.other[i]]);

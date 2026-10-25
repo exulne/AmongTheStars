@@ -33,13 +33,18 @@ import { EraMood } from './view/eraMood.ts';
 import { ShipConsole } from './ship/console.ts';
 import { Assistant } from './assistant/assistant.ts';
 import { Voyage } from './ship/voyage.ts';
+import { installPaths } from './features/paths.ts';
+import { installTimelineHand } from './features/timelineHand.ts';
 import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionCss, faithCss, stageLegend, type ColorMode } from './view/colorModes.ts';
 import { names as naming } from './ui/names.ts';
 import { StreetView } from './view/street.ts';
 import { Picker } from './explain/picker.ts';
 import { explainLocate, explainName, explainerFor } from './explain/registry.ts';
-import { resetShips, setMissionApi, setShipApi } from './explain/ships.ts';
+import { resetShips, setMissionApi, setShipApi, shipId } from './explain/ships.ts';
 import { GalaxyView, LocalView, LEVELS, PLANET_SUN, PlanetView, SystemView, UniverseView, alive, cityCount, cityDir, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
+import type { AppApi } from './app/api.ts';
+import { applyUrlParts, setHashWriter, urlPartTokens } from './app/urlState.ts';
+import { installFollow } from './features/follow.ts';
 
 // ------------------------------------------------------------------ DOM
 
@@ -61,6 +66,7 @@ app.innerHTML = `
       <label for="seed">Future #</label><input id="seed" inputmode="numeric" value="1" size="6">
       <button id="reroll" class="link" type="button">Another future</button>
       <button id="chronicle" class="link" type="button">Chronicle</button>
+      <button id="lifepick" class="link" type="button" aria-expanded="false" title="Pick one person and follow their whole life">Follow a life</button>
       <button id="data" class="link" type="button" aria-pressed="false">Data</button>
       <button id="ask" class="link" type="button" aria-pressed="false" title="Ask the ship computer anything, by voice or typing (backquote key: tap to type, hold to talk)">Ask</button>
       <button id="board" class="link" type="button" aria-pressed="false" title="Fly this future yourself: tell the ship where and when">Board the Starship</button>
@@ -195,7 +201,7 @@ const dataPanel = installDataDesk({
   app, scene: canvas, world, sim, ctx, view: () => views[level],
   selectBody: (b) => select(asPick({ kind: 'body', id: b })),
   showSeries: (key) => { if (charts.el.hidden) chartsToggle.click(); charts.show(key); },
-  pickYear: (y) => timeline.set(y, true),
+  pickYear: (y) => seekTo(y),
 });
 // a permanent notice: what this is not
 {
@@ -219,6 +225,7 @@ const views: Record<Level, View> = {
   street: new StreetView((b, y, o, n) => sim.residents(b, y, o, n)),
 };
 const street = views.street as StreetView;
+street.setPersonFetch((pid, y) => sim.person(pid, y));
 // seen from the Sun in the local view; behind the whole galaxy it is only a backdrop
 const sky = makeSky(1, 7000, 'sky', () => (level === 'local' ? { name: 'the Sun', x: 0, y: 0, z: 0, sol: true } : null));
 scene.add(sky);
@@ -578,6 +585,33 @@ inspector.onDive = (p) => { select(p); dive(p); };
 inspector.onLookCloser = (pid, bio) => enterPerson(pid, null, bio);
 inspector.onEnter = () => { if (ctx.selected) dive(ctx.selected); };
 inspector.onBio = () => { if (micro.pid) { inspector.openPerson(micro.pid); inspector.el.classList.add('open'); } };
+
+/** Seek to a year (and a world): a click may name a year not yet simulated. */
+function seekTo(y: number, b?: number): void {
+  // events past the simulated frontier can't be shown yet: park the year, go as far
+  // as we can, and the loop lands on the real year once it's simulated
+  const front = sim.done ? 10000 : (sim.years[sim.frontier] ?? 0);
+  pendingYear = y > front ? y : null;
+  timeline.set(Math.min(y, front), true);
+  if (b != null) select(asPick({ kind: 'body', id: b }));
+}
+
+// the shared surface the feature modules install against; declared before the
+// first install call, with mutable state read lazily so nothing goes stale
+export const api: AppApi = {
+  app, world, sim, ctx, timeline, inspector, street, naming, seedInput,
+  get search() { return search; },
+  level: () => level,
+  runGen: () => runGen,
+  pendingYear: () => pendingYear,
+  setPendingYear: (y) => { pendingYear = y; },
+  pull: () => pull,
+  setPull: (r) => { pull = r; },
+  seekTo, select, asPick, setLevel, startRun, shipId,
+};
+
+// pick one person and follow their whole life: a quiet panel off the header
+const follow = installFollow(api);
 
 // Wheel out past the outer limit goes up a level. Wheel in over a thing pulls
 // it to the centre of the view, and once close enough enters it.
@@ -971,6 +1005,7 @@ function refreshPanels(): void {
   calendar.place(ctx.snap, place, ctx.year, sim.years[sim.frontier] ?? 0);
   dataPanel.refresh();
   assistant?.contextChanged();
+  follow.followYear(ctx.year);
 }
 
 charts.setSource((key): Series | null => {
@@ -1023,6 +1058,10 @@ timeline.onChange = (y) => {
   charts.setYear(y);
 };
 
+// a hand on the timeline (the slider and its keys, a typed year, an age, Play, the Space and arrow
+// shortcuts) drops a year parked by a link, the URL or Watch; seeks made in code keep it
+installTimelineHand(api);
+
 sim.onProgress = () => {
   const era = GM.era;
   timeline.setData(sim.done ? 10000 : sim.years[sim.frontier], { years: sim.years, n: sim.frontier + 1, era: (i) => sim.series[i * NGM + era] });
@@ -1052,11 +1091,12 @@ function writeHash(): void {
     const parts = [`future${sim.seed}`, `y${Math.abs(yy - Math.round(yy)) < 0.005 ? Math.round(yy) : yy.toFixed(2)}`];
     if (sel) parts.push(sel.kind === 'city' ? `c${ctx.body}.${sel.id}` : sel.kind === 'thing' ? `x${sel.ex}.${sel.id}` : `${REF_CODE[sel.kind]}${sel.id}`);
     if (isMicro(level) && micro.pid) parts.push(`p${micro.pid.replace(/-/g, '~')}`, micro.hash());
-    parts.push(`l${level}`, STAMP_CODE);
+    parts.push(...urlPartTokens(), `l${level}`, STAMP_CODE);
     // replaceState so scrubbing doesn't flood the back button
     try { window.history.replaceState(null, '', `#${parts.join('-')}`); } catch { /* sandboxed frames may refuse */ }
   }, 400);
 }
+setHashWriter(writeHash);
 
 function readHash(): { seed: number; year: number | null; sel: Pickable | null; level: Level | null; pid: string | null } {
   const h = location.hash.slice(1);
@@ -1086,6 +1126,8 @@ function startRun(seed: number): void {
   runGen++;
   clearSocietyLooks();
   inspector.resetPeople();
+  follow.lifePick.hide();
+  follow.stopFollow();
   resetShips();
   ctx.snap = null; lastStep = -1; wanted = -1; inFlight = false; events = []; history = null; fc = null;
   ticker.clear(); tickFrom = 0;
@@ -1124,7 +1166,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key.length === 1 && /[\p{L}\p{N}#]/u.test(e.key)) { e.preventDefault(); search.focus(e.key); return; }
   if (e.code === 'Space') { e.preventDefault(); timeline.toggle(); }
   else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); timeline.step(e.key === 'ArrowRight' ? 1 : -1, e.shiftKey); }
-  else if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; else if (level === 'street' && street.follow >= 0) street.follow = -1; else select(null); }
+  else if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; else if (!follow.lifePick.el.hidden) follow.lifePick.hide(); else if (follow.following()) follow.stopFollow(); else if (level === 'street' && street.follow >= 0) street.follow = -1; else select(null); }
   else if (e.key === '/') { e.preventDefault(); search.focus(); }
   else if (e.key === '?') help.hidden = !help.hidden;
   else if (e.key === 'Enter' && ctx.selected && !(e.target instanceof HTMLButtonElement)) dive(ctx.selected);
@@ -1230,6 +1272,10 @@ search.onPick = (h) => {
     if (level !== 'planet' || ctx.body !== h.id) setLevel('planet', { kind: 'body', id: h.id }, () => { ctx.body = h.id; ctx.system = world.bodies[h.id].system; });
   }
 };
+
+// ------------------------------------------------------------------ what leads to…?
+
+installPaths(api, follow);
 
 // ------------------------------------------------------------------ the Starship
 
@@ -1387,6 +1433,7 @@ if (fromHash.sel) {
 }
 setLevel(fromHash.level ?? 'system', null, undefined, false);
 pendingYear = fromHash.year;
+applyUrlParts(location.hash.slice(1));
 
 /** Report a time trip once the state for its year has arrived, so "where are we" reads that year's numbers. */
 function arrived(y: number, done: (y: number) => void, tries = 0): void {
@@ -1434,4 +1481,4 @@ function loop(now: number): void {
 }
 requestAnimationFrame(loop);
 
-if (import.meta.env.DEV) Object.assign(window, { __app: { assistant, ctx, views, setLevel, dive, select, timeline, camera, controls, micro, multiverse, enterPerson, street, inspector, sim, get level() { return level; }, get busy() { return busy; }, get flying() { return !!flight; } } });
+if (import.meta.env.DEV) Object.assign(window, { __app: { assistant, ctx, views, setLevel, dive, select, timeline, camera, controls, micro, multiverse, enterPerson, street, inspector, sim, get level() { return level; }, get busy() { return busy; }, get flying() { return !!flight; }, get following() { return follow.following(); }, get pull() { return pull; } } });

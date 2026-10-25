@@ -33,7 +33,8 @@ export default defineConfig(({ mode }) => {
   // the GPT assistant's key stays in the dev server (scripts/openaiDev.ts): never VITE_-prefixed, never in the page
   return {
     plugins: [viteSingleFile(), openaiDev(env.OPENAI_API_KEY)],
-    define: { __BUILD__: JSON.stringify(stamp()) },
+    // __ELEVEN_PROXY__: whether the dev proxy holds a key; the key itself stays here
+    define: { __BUILD__: JSON.stringify(stamp()), __ELEVEN_PROXY__: JSON.stringify(!!key) },
     worker: { format: 'es' },
     // satellite.js ships a top-level await, which the dev pre-bundle's default target rejects
     optimizeDeps: { esbuildOptions: { target: 'es2022' } },

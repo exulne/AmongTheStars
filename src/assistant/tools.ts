@@ -268,7 +268,7 @@ export class AssistantTools {
     if (!p) throw new ToolError(`No person with id ${id}.`);
     const brief = (q: { name: string; id: string } | null) => (q ? `${q.name} (${q.id})` : null);
     return {
-      id: p.id, name: p.name, sex: p.sex, status: p.status, born: `${cal(p.born)} on ${p.bornAtName}`, job: p.job, faith: p.faith ?? undefined,
+      id: p.id, name: p.name, sex: p.sex, status: p.status, born: `${cal(p.born)} on ${p.bornAtName}`, job: p.job,
       livesAt: p.where?.name, died: p.died ? `${p.died.year > y ? 'will die ' : ''}${cal(p.died.year)} at ${Math.floor(p.died.age)} on ${p.died.place}, ${p.died.cause}` : null,
       mother: brief(p.mother), father: brief(p.father), partners: p.partners.slice(0, 3).map(brief), children: p.children.length,
       descendants: p.descendants.total, story: p.story.slice(0, 10).map((s) => `${cal(s.year)}: ${clip(s.text, 160)}`),

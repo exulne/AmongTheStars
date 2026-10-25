@@ -71,15 +71,31 @@ export function biographyHtml(b: Biography | null, year: number, loading: boolea
     ? `<p>${fmtNum(d.total)} descendant${d.total === 1 ? '' : 's'} over ${d.generations} generation${d.generations === 1 ? '' : 's'} by ${yr(year)}${d.total >= 1500 ? ' (counting stops at 1,500)' : ''}; ${fmtNum(d.alive)} alive.</p>
       ${d.places.length ? `<p class="muted">Living in ${d.places.map((p) => `<button class="link" data-act="goto-body" data-id="${p.body}" type="button">${esc(p.name)}</button> (${fmtNum(p.n)})`).join(', ')}.</p>` : ''}`
     : '<p class="muted">No descendants yet.</p>';
+  // the pathway of their life: every place they were, in order; the current one is lit
+  const path = b.path.map((s) => {
+    const cur = s.from <= year && (s.to === null || year < s.to);
+    const name = s.body === null ? esc(s.name) : `<button class="link" data-act="body" data-id="${s.body}" type="button">${esc(s.name)}</button>`;
+    return `<li class="${cur ? 'now' : s.from > year ? 'future' : ''}"><span class="num ev-year">${s.to === null ? `from ${yr(s.from)}` : `${yr(s.from)}–${yr(s.to)}`}</span> ${name}</li>`;
+  }).join('');
   const traits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Steadiness'];
+  const s = b.standing;
+  const stand = s ? `
+    <dt>Standing</dt><dd>${esc(s.class)}; about $${fmtNum(s.worth)}${s.worth > 0 ? ` — wealthier than ${Math.round(s.wealthPct * 100)}% here` : ''}</dd>
+    <dt>Education</dt><dd>${esc(s.education)}</dd>
+    <dt>Health</dt><dd>${esc(s.health)}</dd>
+    <dt>Mood</dt><dd>${esc(s.mood)}</dd>
+    <dt>Moves</dt><dd class="num">${s.moves === 0 ? 'never left home' : `${s.moves} relocation${s.moves === 1 ? '' : 's'}`}</dd>
+    <dt>Speaks</dt><dd>${esc(s.language)}</dd>` : '';
   return `
     <p class="eyebrow muted">Person · ${esc(b.id)}</p>
     <h2>${esc(b.name)}</h2>
     <p class="lede">${status}</p>
     ${where}
     ${b.status !== 'unborn' ? `<p class="act"><button class="link" data-act="look-closer" data-pid="${b.id}" type="button">Look closer: ${b.body === 'uploaded' ? 'the substrate their mind runs on' : 'their body'}, its cells, molecules and atoms</button></p>` : ''}
+    <p class="act"><button class="link" data-act="follow-person" data-pid="${b.id}" type="button">Follow them: the camera goes where they go, birth to death</button></p>
     <p class="muted">This person stays open as you move through time. Drag the slider to see them younger, older, or not yet born.</p>
     <h3>Life</h3><ol class="events story">${story || '<li class="muted">Nothing yet.</li>'}</ol>
+    <h3>Pathway</h3><ol class="events path">${path || '<li class="muted">Nowhere yet.</li>'}</ol>
     <h3>Family</h3>
     <dl class="family">
       <dt>Mother</dt><dd>${b.mother ? briefLine(b.mother, year) : '<span class="muted">unknown</span>'}</dd>
@@ -91,6 +107,6 @@ export function biographyHtml(b: Biography | null, year: number, loading: boolea
     <h3>Ancestry</h3>${anc}
     <h3>Bloodline</h3>${blood}
     <h3>Body and character</h3>
-    <dl class="kv">${b.body ? `<dt>Body</dt><dd>${esc(b.body)}</dd>` : ''}<dt>Height</dt><dd class="num">${b.height} cm</dd><dt>Born</dt><dd>${yr(b.born)}, ${esc(b.bornAtName)}</dd><dt>Generations on ${esc(b.bornAtName)}</dt><dd class="num">${b.generationsHere}</dd></dl>
+    <dl class="kv">${b.body ? `<dt>Body</dt><dd>${esc(b.body)}</dd>` : ''}<dt>Height</dt><dd class="num">${b.height} cm</dd><dt>Born</dt><dd>${yr(b.born)}, ${esc(b.bornAtName)}</dd><dt>Generations on ${esc(b.bornAtName)}</dt><dd class="num">${b.generationsHere}</dd>${stand}</dl>
     <div class="bars">${b.personality.map((v, k) => `<div class="bar"><span>${traits[k]}</span><i style="--v:${v}"></i></div>`).join('')}</div>`;
 }

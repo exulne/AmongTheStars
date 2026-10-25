@@ -302,6 +302,11 @@ export class StreetView implements View {
   private sunCol = new THREE.Color();
   focus = -1;  // resident whose biography is open
   follow = -1; // resident the camera is following
+  /** a person the app wants shadowed wherever they live — injected as an agent if the census didn't draw them */
+  followPid: string | null = null;
+  private followKey = '';
+  private fetchPerson: ((pid: string, year: number) => Promise<{ pending?: boolean; bio: (PersonBrief & { where?: { body: number; name: string } | null }) | null }>) | null = null;
+  setPersonFetch(f: StreetView['fetchPerson']): void { this.fetchPerson = f; }
 
   constructor(private fetchResidents: ResidentsFetch) {}
 
@@ -736,6 +741,41 @@ export class StreetView implements View {
     const want = `${pl.body}:${pl.city}:${Math.floor(ctx.year / 10)}`;
     if (want !== this.fetchedFor) { this.fetchedFor = want; this.agents = []; this.pool = []; this.nextOffset = 0; }
     this.fill(ctx);
+    this.keepFollow(ctx);
+  }
+
+  /** If the app follows someone who lives here, make them an agent the camera shadows. */
+  private keepFollow(ctx: Ctx): void {
+    if (!this.followPid || !this.fetchPerson) return;
+    const key = `${this.fetchedFor}:${this.followPid}`;
+    if (this.followKey === key) return;
+    const k = this.agents.findIndex((a) => a.p.id === this.followPid);
+    if (k >= 0) { this.followKey = key; this.focus = this.follow = k; return; }
+    this.followKey = key;
+    const pid = this.followPid, year = ctx.year;
+    this.fetchPerson(pid, year).then((m) => {
+      if (this.followPid !== pid || this.followKey !== key) return;
+      if (m.pending) { window.setTimeout(() => { if (this.followKey === key) this.followKey = ''; }, 900); return; }
+      const b = m.bio;
+      // they're not (or no longer) here: unborn, dead, moved away, or mid-voyage
+      if (!b || !b.alive || b.where?.body !== this.where(ctx).body) { this.dropAgent(pid); return; }
+      this.inject(b);
+    });
+  }
+
+  private inject(p: PersonBrief): void {
+    let k = this.agents.findIndex((a) => a.p.id === p.id);
+    if (k < 0) k = Math.min(this.agents.length, MAX_AGENTS - 1);
+    this.agents[k] = makeAgent(p, k, this.places, this.mood);
+    this.focus = this.follow = k;
+  }
+
+  private dropAgent(pid: string): void {
+    const k = this.agents.findIndex((a) => a.p.id === pid);
+    if (k < 0) return;
+    this.agents.splice(k, 1);
+    if (this.follow === k) this.follow = -1; else if (this.follow > k) this.follow--;
+    if (this.focus === k) this.focus = -1; else if (this.focus > k) this.focus--;
   }
 
   private fill(ctx: Ctx): void {
