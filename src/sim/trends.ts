@@ -16,10 +16,12 @@ export interface Trends {
   moved: number[];           // per departure period: people who set out (all flows but landings)
   lost: number[];            // same, only the flows that were lost
   hot: { p: number; year: number; body: number; n: number; from: number }[]; // up to 3 busiest destinations per arrival period
-  /** for each period p with edges[p] <= upTo, up to 5 worlds with the largest gain in product
-   *  (gdp, $/yr) over the MARKET_WINDOW years before edges[p]. Only gain > 0.
+  /** for each period p with growthFrom <= edges[p] <= upTo, up to 5 worlds with the largest gain in product
+   *  (gdp, $/yr) since the history sample MARKET_WINDOW years before edges[p], or since the first sample
+   *  when that window starts before the history (since = the compared sample's year). Only gain > 0.
    *  Sorted by p, then by gain descending. year = edges[p]. */
-  markets: { p: number; year: number; body: number; now: number; then: number }[];
+  markets: { p: number; year: number; since: number; body: number; now: number; then: number }[];
+  growthFrom: number;        // first year a market's growth can be measured: the second history sample (Infinity if none)
   shocks: { key: string; label: string; types: number[]; counts: number[]; years: number[]; top: TrendPoint[] }[];
 }
 
@@ -112,8 +114,10 @@ export function buildTrends(e: Engine): Trends | null {
     const Y = edges[p];
     if (Y > upTo) break;
     const kY = sampleAt(Y);
-    if (kY < 0) continue;
-    const then = gdpAt(sampleAt(Y - MARKET_WINDOW));
+    if (kY <= 0) continue;   // at the first sample there is nothing yet to grow from
+    // a window that starts before the history compares with its first sample
+    const k0 = Math.max(0, sampleAt(Y - MARKET_WINDOW));
+    const then = gdpAt(k0);
     // bounded top-5, stable in sample-row order on equal gains
     const top: { body: number; now: number; then: number; gain: number }[] = [];
     for (let r = sStart[kY]; r < sEnd[kY]; r++) {
@@ -125,7 +129,7 @@ export function buildTrends(e: Engine): Trends | null {
       for (let j = 0; j < top.length; j++) if (top[j].gain < gain) { i = j; break; }
       if (i < 5) { top.splice(i, 0, { body, now, then: before, gain }); if (top.length > 5) top.pop(); }
     }
-    for (const g of top) markets.push({ p, year: Y, body: g.body, now: g.now, then: g.then });
+    for (const g of top) markets.push({ p, year: Y, since: sYear[k0], body: g.body, now: g.now, then: g.then });
   }
 
   const shocks: Trends['shocks'] = [];
@@ -152,5 +156,5 @@ export function buildTrends(e: Engine): Trends | null {
       });
     shocks.push({ key: cat.key, label: cat.label, types: cat.types, counts, years, top });
   }
-  return { edges, upTo, moved, lost, hot, markets, shocks };
+  return { edges, upTo, moved, lost, hot, markets, growthFrom: sYear.length > 1 ? sYear[1] : Infinity, shocks };
 }

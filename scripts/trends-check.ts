@@ -130,7 +130,7 @@ ok(!/faith/i.test(JSON.stringify(t)), 'payload mentions no faith');
     perP.set(m.p, (perP.get(m.p) ?? 0) + 1);
     if (!(m.now - m.then > 0)) badM++;
     if (m.body < 0 || isShipBody(m.body) || m.body >= main.world.bodies.length) badM++;
-    if (m.year !== t.edges[m.p] || m.year > t.upTo) badM++;
+    if (m.year !== t.edges[m.p] || m.year > t.upTo || m.year < t.growthFrom || !(m.since < m.year)) badM++;
     const q = t.markets[i - 1];
     if (q && (q.p > m.p || (q.p === m.p && q.now - q.then < m.now - m.then))) badM++;
   }
@@ -138,10 +138,10 @@ ok(!/faith/i.test(JSON.stringify(t)), 'payload mentions no faith');
   ok([...perP.values()].every((v) => v <= 5), 'at most 5 markets per period');
   ok(marketsAt(t, 3000).every((m) => m.p === periodOf(3000) && m.year <= 3000), 'marketsAt(3000) only its period, year <= y');
 
-  // brute force the same period's top 5 straight from the history rows
+  // brute force a period's top 5 straight from the history rows: against the sample MARKET_WINDOW back,
+  // or the first sample when the window starts before the history; no list at the first sample itself
   const w = 2 + HIST_FIELDS.length;
   const gc = 2 + HIST_FIELDS.indexOf('gdp');
-  const P = periodOf(3000), Y = periodStart(P);
   const samples: { year: number; rows: Map<number, number> }[] = [];
   for (let r = 0; r < main.histLen;) {
     const step = main.hist[r * w];
@@ -150,18 +150,30 @@ ok(!/faith/i.test(JSON.stringify(t)), 'payload mentions no faith');
     samples.push({ year: main.years[step], rows });
   }
   const at = (y: number) => { let k = -1; for (let i = 0; i < samples.length; i++) if (samples[i].year <= y) k = i; return k; };
-  const kY = at(Y), k0 = at(Y - MARKET_WINDOW);
-  const want: typeof t.markets = [];
-  if (kY >= 0) {
-    const then = k0 >= 0 ? samples[k0].rows : new Map<number, number>();
-    for (const [b, now] of samples[kY].rows) {
-      const bef = then.get(b) ?? 0;
-      if (!isShipBody(b) && now - bef > 0) want.push({ p: P, year: Y, body: b, now, then: bef });
+  const brute = (P: number) => {
+    const Y = periodStart(P), kY = at(Y), k0 = Math.max(0, at(Y - MARKET_WINDOW));
+    const want: typeof t.markets = [];
+    if (kY > 0) {
+      const then = samples[k0].rows;
+      for (const [b, now] of samples[kY].rows) {
+        const bef = then.get(b) ?? 0;
+        if (!isShipBody(b) && now - bef > 0) want.push({ p: P, year: Y, since: samples[k0].year, body: b, now, then: bef });
+      }
+      want.sort((a, b) => b.now - b.then - (a.now - a.then));
+      want.length = Math.min(want.length, 5);
     }
-    want.sort((a, b) => b.now - b.then - (a.now - a.then));
-    want.length = Math.min(want.length, 5);
+    return want;
+  };
+  for (const y of [0, 60, 3000]) {
+    const P = periodOf(y);
+    ok(JSON.stringify(t.markets.filter((m) => m.p === P)) === JSON.stringify(brute(P)), `markets p=${P} (year ${y}) vs brute force`);
   }
-  ok(JSON.stringify(t.markets.filter((m) => m.p === P)) === JSON.stringify(want), `markets p=${P} vs brute force`);
+  ok(t.growthFrom === (samples.length > 1 ? samples[1].year : Infinity), `growthFrom ${t.growthFrom}`);
+  ok(marketsAt(t, samples[0].year).length === 0, 'no market list at the first history sample');
+  const early = marketsAt(t, 60), earth = main.world.bodies.findIndex((b) => b.name === 'Earth');
+  ok(early.length > 0 && early.every((m) => m.since === samples[0].year && m.year - m.since < MARKET_WINDOW), 'first-century markets count since the first sample');
+  ok(!early.some((m) => m.body === earth && m.then === 0), 'Earth is not a new market in the first century');
+  console.log(`  markets @${Math.round(2040 + 60)}: ${early.slice(0, 3).map((m) => `${main.world.bodies[m.body].name} ${m.then === 0 ? 'new' : `+${(m.now - m.then).toExponential(2)}$/yr`}`).join('; ')}`);
 
   // truncation: a run cut off at 3000 must produce the same markets for the periods it has
   const e2 = new Engine(buildWorld(), seed);

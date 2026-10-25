@@ -9,7 +9,7 @@ import type { Annals } from '../sim/chronicle.ts';
 import { NPERIODS, periodOf } from '../sim/ledger.ts';
 import { GLOBAL_METRICS, GM } from '../sim/metrics.ts';
 import { buildReport, marketsAt, REPORT_COLUMNS, reportTable, SECTIONS, seriesTable, shockSignal, signalAt, turningPoints, type Dir, type ReportRow, type Signal, type TrendSection } from '../sim/trendSignals.ts';
-import type { Trends } from '../sim/trends.ts';
+import { MARKET_WINDOW, type Trends } from '../sim/trends.ts';
 import { AnalystChart, type AData, type ALine } from './analystChart.ts';
 import { globalSeries } from './charts.ts';
 import { esc, type DataHost, type DataTab } from './dataPanel.ts';
@@ -378,11 +378,12 @@ export class TrendsTab implements DataTab {
     const t = this.trends;
     if (!t) return '';
     const ms = marketsAt(t, y);
-    if (!ms.length) return '<p class="muted">No growing markets yet.</p>';
+    if (!ms.length) return `<p class="muted">${t.edges[periodOf(y)] < t.growthFrom ? 'No growth data yet.' : 'No growing markets yet.'}</p>`;
+    const Y = ms[0].year, since = ms[0].since, short = Y - since < MARKET_WINDOW;
     const lis = ms.map((m) => this.pt(m.year, m.body, m.then === 0
       ? `${esc(this.name(m.body) || '?')} — new market, product ${fmtUnit(m.now, '$/yr')}`
-      : `${esc(this.name(m.body) || '?')} — product ${fmtUnit(m.now, '$/yr')}, up ${fmtUnit(m.now - m.then, '$/yr')} in a century`));
-    return `<p class="muted">Fastest-growing markets, the century to ${fmtYear(t.edges[ms[0].p])}</p><ol class="tr-pts">${lis.join('')}</ol>`;
+      : `${esc(this.name(m.body) || '?')} — product ${fmtUnit(m.now, '$/yr')}, up ${fmtUnit(m.now - m.then, '$/yr')} ${short ? `since ${fmtYear(since)}` : 'in a century'}`));
+    return `<p class="muted">Fastest-growing markets, ${short ? `since ${fmtYear(since)}, as of ${fmtYear(Y)}` : `the century to ${fmtYear(Y)}`}</p><ol class="tr-pts">${lis.join('')}</ol>`;
   }
 
   /** The end-of-run report: one line per section's headline row. */
