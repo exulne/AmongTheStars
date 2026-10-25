@@ -149,6 +149,28 @@ const peOk = (text: string, want: string) => {
   }
 }
 
+// probe regression phrases: all parse through parseEvent, no error, no notes
+{
+  const want: Record<string, string> = {
+    'an uploaded world': 'the first uploaded world beyond Earth',
+    'cryo hibernation': 'Cryogenic suspension',
+    'quantum computers': 'Fault-tolerant quantum computing',
+  };
+  const phrases = ['an uploaded world', 'cryo hibernation', 'cryosleep', 'colonisation of titan', 'self-replicating probes',
+    'a ring world', 'a brain star', 'a lifted star', 'swarm world', 'matrioshka brain', 'beyond the milky way',
+    'humans in andromeda', 'a metropolis on mars', 'a megastructure', 'bishop rings', 'generation ships', 'light sails',
+    'quantum computers', 'neural lace', 'asteroid mining', 'space elevator', "o'neill cylinders", 'first footprint on titan',
+    'boots on europa', 'a trillion people', 'kardashev 2', 'type ii civilisation', 'ten star systems',
+    'colonise another star', 'independence of mars', 'the first war'];
+  for (const ph of phrases) {
+    const r = pe(ph);
+    if ('error' in r) fail(`probe "${ph}" -> ${r.error}`);
+    else if (r.notes?.length) fail(`probe "${ph}" spurious notes: ${r.notes.join('; ')}`);
+    else if (want[ph] && r.goal.label !== want[ph]) fail(`probe "${ph}" -> "${r.goal.label}", want "${want[ph]}"`);
+    else ok(`"${ph}" -> ${r.goal.label}`);
+  }
+}
+
 // galaxy goals are never true at step 0
 {
   let all = true;
@@ -186,7 +208,10 @@ const gVenusPop = gp('a billion people on venus');
 const gEarth10B = gp('ten billion people on earth');
 const gIndep = gp('independence');
 const gAnyGal = gp('another galaxy');
-pool.push(gMars, gVenus, gDyson, gWar, gContact, gTrillion, gTitan, gUpload, gMoon, gMoonBase, gMarsPop, gVenusPop, gEarth10B, gIndep, gAnyGal);
+const gTri: Goal = { id: 'gal:tri', label: 'the first settlement in Triangulum', detail: '', kind: 'stage', galaxy: 'Triangulum', stage: 1 };
+const gLmc: Goal = { id: 'gal:lmc', label: 'the first settlement in the Large Magellanic Cloud', detail: '', kind: 'stage', galaxy: 'Large Magellanic Cloud', stage: 1 };
+const gSmc: Goal = { id: 'gal:smc', label: 'the first settlement in the Small Magellanic Cloud', detail: '', kind: 'stage', galaxy: 'Small Magellanic Cloud', stage: 1 };
+pool.push(gMars, gVenus, gDyson, gWar, gContact, gTrillion, gTitan, gUpload, gMoon, gMoonBase, gMarsPop, gVenusPop, gEarth10B, gIndep, gAnyGal, gTri);
 const gi = new Map<string, number>(pool.map((g, i) => [g.id, i]));
 const poolOk = pool.every((g) => g && g.kind);
 
@@ -203,6 +228,7 @@ if (poolOk) {
     chainFrom([gMars, gVenus, gUpload], ['then', 'and']),           // 3-part chain
     chainFrom([gDyson, gVenus], ['then']),                          // two-stage chain
     chainFrom([gWar, gIndep], ['and']),                             // two event parts, one stage
+    chainOf(gTri),                                                // named-galaxy endpoint (miss wording)
     chainOf(gAnyGal),                                               // galaxy endpoint run
   ];
 
@@ -213,6 +239,7 @@ if (poolOk) {
     const e = new Engine(world, seed);
     e.ledger = null;
     const trs = chains.map((c) => new ChainTracker(c, e));
+    const galTrs = [gTri, gLmc, gSmc].map((g) => new ChainTracker(chainOf(g), e));
     // per-step tables for independent recomputation
     const truthT: boolean[][] = pool.map(() => []);
     const gyT: number[][] = pool.map(() => []);
@@ -224,6 +251,7 @@ if (poolOk) {
       e.step();
       const t = e.st.step;
       for (const tr of trs) tr.check(before);
+      for (const tr of galTrs) tr.check(before);
       for (let i = 0; i < pool.length; i++) {
         const g = pool[i];
         if (g.kind !== 'event') { truthT[i][t] = reached(g, e); gyT[i][t] = goalYear(g, e); }
@@ -314,7 +342,20 @@ if (poolOk) {
         if (!tr.done || tr.completionYear() < worm) fail(`any-galaxy seed2: done=${tr.done} year=${tr.done ? tr.completionYear() : '-'} wormholes=${worm}`);
         else ok(`any-galaxy seed2 reached ${tr.completionYear()} >= wormholes ${worm}`);
       } else if (tr.done) fail(`any-galaxy seed${seed} reached ${tr.completionYear()}`);
-      else ok(`any-galaxy seed${seed} never reached`);
+      else {
+        const res = resultOf(chains[chains.length - 1], e, tr);
+        if (res.progress !== 'traversable wormholes were never invented') fail(`any-galaxy seed${seed} miss note: ${res.progress}`);
+        else ok(`any-galaxy seed${seed} never reached | ${res.progress}`);
+      }
+    }
+    for (const [gi2, g] of [gTri, gLmc, gSmc].entries()) {
+      const tr = galTrs[gi2];
+      if (tr.done) { ok(`${g.galaxy} seed${seed} reached ${tr.completionYear()}`); continue; }
+      const res = resultOf(chainOf(g), e, tr);
+      const inv = res.progress === 'traversable wormholes were never invented';
+      const named = new RegExp(`^traversable wormholes came in \\d+, but (${g.galaxy === 'Large Magellanic Cloud' || g.galaxy === 'Small Magellanic Cloud' ? `the ${g.galaxy}` : g.galaxy} was never settled|nowhere in ${g.galaxy === 'Large Magellanic Cloud' || g.galaxy === 'Small Magellanic Cloud' ? `the ${g.galaxy}` : g.galaxy} passed)`).test(res.progress ?? '');
+      if (inv || named) ok(`${g.galaxy} seed${seed} miss | ${res.progress}`);
+      else fail(`${g.galaxy} seed${seed} miss note: ${res.progress}`);
     }
   }
   if (!cover.andThenMix) fail('case1 (and+then mix) never exercised');
