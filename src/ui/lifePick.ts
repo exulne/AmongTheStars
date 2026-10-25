@@ -6,6 +6,7 @@
 
 import type { Biography, PersonBrief, PickWant } from '../sim/lives.ts';
 import { MOODS_BAD, MOODS_GOOD } from '../sim/lives.ts';
+import { isShipBody } from '../sim/ledger.ts';
 import { fmtNum, fmtYear, parseCount } from './format.ts';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -89,6 +90,12 @@ export function noMatchText(m: { where: string | null; n: number; total: number;
   if (!m.total) return m.want && !m.want.born ? `Nobody lived ${m.where ? place : 'anywhere'} in ${yr}.`
     : `Nobody${m.want?.born ? ' in that birth range' : ''} had been born ${m.where ? place : 'anywhere'} by ${yr}.`;
   return `No match among ${fmtNum(m.sampled)} ${m.sampled === 1 ? 'person' : 'people'} sampled from ${fmtNum(m.total)} ${place}, in ${yr} — loosen a filter, or press Follow again for a new sample.`;
+}
+
+/** The world someone was born on, read from their id ("body.pool.index"); null when born aboard a ship. */
+export function birthWorld(pid: string): number | null {
+  const b = Number(pid.split('.')[0]);
+  return Number.isInteger(b) && b >= 0 && !isShipBody(b) ? b : null;
 }
 
 export class LifePick {
@@ -218,7 +225,8 @@ export class LifePick {
     if (p || st) this.showRoll(p ?? undefined, st ?? null);   // blank fields get filled by whoever was found
     const stats = st ? ` ${esc(st.class)}, ${esc(st.mood)}.` : '';
     const moved = year !== shown ? `Moved to ${fmtYear(year)}${p?.alive ? " so they're alive" : ''}. ` : '';
-    this.say(p ? `${moved}Following <b>${esc(p.name)}</b> — born on ${esc(where ?? p.place)} in ${fmtYear(p.born)}${p.born > year ? ', not yet born.' : p.alive ? `; ${Math.floor(p.age)}, ${esc(p.job)}${p.place && p.place !== where ? ` on ${esc(p.place)}` : ''}.${stats}` : ', now gone.'}` : `${moved}Following them.`, seq);
+    const bw = birthWorld(r.person), born = where ?? (bw === null ? null : this.opts.nameOf(bw) || null);
+    this.say(p ? `${moved}Following <b>${esc(p.name)}</b> — born ${born ? `on ${esc(born)}` : 'aboard ship'} in ${fmtYear(p.born)}${p.born > year ? ', not yet born.' : p.alive ? `; ${Math.floor(p.age)}, ${esc(p.job)}${p.place && p.place !== born ? ` on ${esc(p.place)}` : ''}.${stats}` : ', now gone.'}` : `${moved}Following them.`, seq);
     // the whole life laid out — including everything after the year being shown;
     // click a beat to be taken to it
     if (r.life?.length) {

@@ -6,7 +6,7 @@ import { FLOW, SHIP_BODY, isShipBody, periodOf, periodStart } from '../src/sim/l
 import { Lives } from '../src/sim/lives.ts';
 import { HIST_FIELDS } from '../src/sim/metrics.ts';
 import { buildWorld } from '../src/sim/world.ts';
-import { buildWant, noMatchText, searchYear } from '../src/ui/lifePick.ts';
+import { birthWorld, buildWant, noMatchText, searchYear } from '../src/ui/lifePick.ts';
 import { fmtNum, fmtYear } from '../src/ui/format.ts';
 
 const seed = Number(process.argv[2] ?? 1);
@@ -358,6 +358,38 @@ checkShares(e1500, 'Earth@1500');
   const rn = L.pickLife(world.mars, 1e15, 'any', 3000, undefined, 1);
   const numMiss = noMatchText({ where: 'Mars', n: 1e15, total: rn.total, sampled: rn.scanned, year: 3000 });
   ok(rn.person === null && numMiss.startsWith('Mars has seen ') && numMiss.endsWith('pick a number up to that.'), `T11: numbered miss — ${numMiss}`);
+}
+
+// --- T12: the birth world comes from the id, not from where they live now
+{
+  const V = (o: Record<string, string>) => (k: string) => o[k] ?? '';
+  ok(birthWorld('2.-20.0') === 2, 'T12: an Earth id reads as Earth');
+  ok(birthWorld('4.4.3632') === 4, 'T12: a Mars id reads as Mars');
+  ok(birthWorld('1000029.31.0') === null, 'T12: a ship id reads as no world');
+  ok(birthWorld('x.1.2') === null, 'T12: a malformed id reads as no world');
+  // a real mover: where they live now needn't be where they were born
+  const moverWant = buildWant(V({ 'moves-lo': '1' }));
+  const rm = L.pickLife(-1, 0, 'any', 3000, moverWant, 77);
+  if (!rm.person) ok(false, 'T12: mover pick found nobody');
+  else {
+    const bio = L.biography(idStr(rm.person), 3000)!;
+    const diff = !!bio.where && bio.where.body !== bio.bornAt;
+    ok(birthWorld(idStr(rm.person)) === bio.bornAt, `T12: mover born on ${bio.bornAtName}, living ${bio.where ? 'on ' + bio.where.name : 'aboard ship'}${diff ? ' — they differ' : ' — same world'}`);
+    if (!diff) {
+      for (let s = 78; s <= 90; s++) {
+        const rm2 = L.pickLife(-1, 0, 'any', 3000, moverWant, s);
+        const bio2 = rm2.person ? L.biography(idStr(rm2.person), 3000) : null;
+        if (bio2?.where && bio2.where.body !== bio2.bornAt) {
+          ok(birthWorld(idStr(rm2.person!)) === bio2.bornAt, `T12: salt ${s} mover born on ${bio2.bornAtName}, living on ${bio2.where.name} — they differ`);
+          break;
+        }
+      }
+    }
+  }
+  if (ship !== undefined) {
+    const sp = L.bornAt(ship, 1, 'any', 8000).person;
+    ok(!!sp && birthWorld(idStr(sp)) === null, 'T12: someone born aboard reads as no world');
+  } else console.log('  skip T12: no ship births in this seed');
 }
 
 process.exit(fails ? 1 : 0);
