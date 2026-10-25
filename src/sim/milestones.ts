@@ -391,12 +391,12 @@ const VOCAB = new Set(('terraform terraforming greening green breathable open se
   'generation agi artificial general intelligence ai mind upload uploading uploads matrioshka lifting lift neill oneill orbital ' +
   'rotating habitats habitat antimatter nanotech nanofab molecular assembler assemblers nano fabrication ' +
   'extension immortal anti aging ageing longevity laser sails sail beamed bishop rings ring cloud aerostat ' +
-  'von neumann self replicating replicat cryo cryosleep hibernat hibernate quantum comp computer computing neural lace interface ' +
+  'von neumann self replicating cryo cryosleep hibernate quantum computer computing neural lace interface ' +
   'asteroid asteroids genetic medicine adaptation gene therapy seed embryo ramjet bussard paraterraform magnetic nuclear thermal ' +
-  'synth synthetic bio engineered crops psychohistory predictive social comms network starshot sub carbon nanotube nanotubes ' +
-  'radiation regolith robot robots robotics situ isru support closed loop fission reusable heavy interstellar ' +
+  'synthetic bio engineered crops psychohistory predictive social comms network starshot sub carbon nanotube nanotubes ' +
+  'radiation regolith robot robots robotics isru support closed loop fission reusable heavy interstellar ' +
   'first contact aliens extraterrestrial independence secede break breaks away free war wars out ' +
-  'world worlds swarmworld brain-star lifted metropolis metropol city cities town towns hub hubs base bases ' +
+  'world worlds lifted metropolis city cities town towns hub hubs base bases ' +
   'colony colonies colonist colonists colonise colonize colonisation colonization settle settles settled settling ' +
   'settlement settlements outpost outposts land lands landed landing boots foot footprint steps step ' +
   'reach reaches reached reaching get gets getting ' +
@@ -435,6 +435,13 @@ function typoCands(world: World): Set<string> {
 }
 const TYPO_CANDS = new WeakMap<World, Set<string>>();
 
+/** Words the parser's own stems accept even when they're not whole vocabulary words ("uploaded", "hibernation"). */
+const STEM_RES = [...STAGE_WORDS.map(([re]) => re), ...TECH_ALIAS.map(([re]) => re)];
+const accounted = (w: string, placeWords: Set<string>): boolean =>
+  /\d/.test(w) || STOP.has(w) || VOCAB.has(w) || placeWords.has(w) ||
+  STEM_RES.some((re) => re.test(` ${w} `)) ||
+  (w.length > 1 && (VOCAB.has(w.replace(/es$/, '')) || VOCAB.has(w.replace(/s$/, ''))));
+
 /** What a tag (and later the mic and the Oracle) is made from: connectors, words, the parse, the 2040 check. */
 export function parseEvent(text: string, world: World): ParseResult {
   const t = ` ${wordsToNumbers(text.toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9.,\s]/g, ' ')).replace(/\s+/g, ' ').trim()} `;
@@ -444,7 +451,7 @@ export function parseEvent(text: string, world: World): ParseResult {
     return { error: 'One event per tag: press Enter after each event.', suggestions: [] };
   }
   const tokens = t.trim().split(/\s+/);
-  const unaccounted = tokens.filter((w) => !/\d/.test(w) && !STOP.has(w) && !VOCAB.has(w) && !placeWords.has(w));
+  const unaccounted = tokens.filter((w) => !accounted(w, placeWords));
   const notes: string[] = [];
   let corrected = text;
   if (unaccounted.length) {
