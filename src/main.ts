@@ -28,6 +28,7 @@ import { Timeline } from './ui/timeline.ts';
 import { LocalCalendar } from './ui/calendar.ts';
 import { EraBanner, eraRun, eraTitle } from './ui/eraBanner.ts';
 import { wayOfWarHtml } from './ui/wayOfWar.ts';
+import { setWarAnnals } from './view/warLayer.ts';
 import { EraMood } from './view/eraMood.ts';
 import { ShipConsole } from './ship/console.ts';
 import { Voyage } from './ship/voyage.ts';
@@ -540,7 +541,7 @@ inspector.api = {
   residentAt: (b, y, k) => sim.residentAt(b, y, k),
   annals: () => sim.annals(),
 };
-inspector.onAnnals = (a) => { timeline.setAges(a?.ages ?? []); calendar.annals = a; timeline.refresh(); };
+inspector.onAnnals = (a) => { setWarAnnals(a); timeline.setAges(a?.ages ?? []); calendar.annals = a; timeline.refresh(); };
 inspector.onSelect = (p) => select(p);
 setShipApi((f, t, d) => sim.ship(f, t, d), () => refreshPanels(), (b, y) => sim.residents(b, y, 0, 6));
 inspector.onYear = (y) => timeline.set(y, true);

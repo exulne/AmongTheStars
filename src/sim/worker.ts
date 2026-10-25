@@ -4,12 +4,12 @@
 
 import { EV } from './catalog.ts';
 import { Engine, type SimState } from './engine.ts';
-import { HIST_FIELDS, NGM } from './metrics.ts';
+import { F, HIST_FIELDS, NF, NGM } from './metrics.ts';
 import { Chronicle, type Annals, type Entry } from './chronicle.ts';
 import { Lives, type Biography, type PersonBrief } from './lives.ts';
 import { SocietyModel, type Society } from './society.ts';
 import { buildWorld } from './world.ts';
-import { HG, NWC, OUTCOME, WAR_KIND, WC } from './civ.ts';
+import { H, HG, NH, NWC, OUTCOME, WAR_KIND, WC } from './civ.ts';
 import { SHIP_BODY, periodOf, periodStart } from './ledger.ts';
 import { handleData, isDataReq, type DataReq, type DataRes } from './dataApi.ts';
 import { NetMind } from '../ml/netMind.ts';
@@ -38,7 +38,7 @@ export type ToWorker =
 
 export type FromWorker =
   | { type: 'progress'; seed: number; step: number; years: number[]; series: Float64Array; done: boolean; ms: number }
-  | { type: 'state'; id: number; step: number; S: Float64Array; techDone: Float64Array; techWhere: Float64Array; ships: ReturnType<Engine['shipList']>; globals: ReturnType<Engine['globals']>; settled: Int32Array }
+  | { type: 'state'; id: number; step: number; S: Float64Array; techDone: Float64Array; techWhere: Float64Array; ships: ReturnType<Engine['shipList']>; globals: ReturnType<Engine['globals']>; settled: Int32Array; wars: WarVis[]; postures: [number, number][] }
   | { type: 'history'; id: number; body: number; steps: number[]; cols: Record<string, number[]> }
   | { type: 'events'; id: number; events: Engine['events'] }
   | { type: 'residents'; id: number; pending?: boolean; total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] }
@@ -58,6 +58,15 @@ export type FromWorker =
 export interface WarSpan { wars: number; kinetic: number; killed: number; annex: number; rep: number; peace: number; rounds: number; years: number }
 /** How this future fights at a year: which trained generation (if any), now and in the span before. */
 export interface WayOfWar { run: string; gen: number; gens: number; now: WarSpan; before: WarSpan }
+
+/**
+ * A war the star map draws at a year. Local: a and b are the two factions (capital bodies), sys the
+ * contested system. Kinetic: a launches from system `from` at body b in system `sys`; the strike lands
+ * at `arrive` and, if the target could reply from elsewhere, the reply lands on a at `end`.
+ */
+export interface WarVis { id: number; kinetic: boolean; a: number; b: number; sys: number; from: number; start: number; end: number; arrive: number; outcome: number; winner: number; killed: number }
+/** How long an ended war stays on the map, fading, years. */
+export const WAR_LINGER = 40;
 
 /** A ship in transit, as the people model knows it: its name, who boarded, and the Chronicle's launch entry (with its captain). */
 export interface ShipInfo { name: string; n: number; generation: boolean; launch: Entry | null; body: number; born: [number, number][] }
@@ -159,6 +168,35 @@ function warSpan(e: Engine, from: number, to: number): WarSpan {
   return out;
 }
 
+/** The wars on the map at this engine's year: under way, or ended within WAR_LINGER years. */
+function warsNow(e: Engine): WarVis[] {
+  const X = e.st.hx, W = X.war, y = e.year, out: WarVis[] = [];
+  for (let w = X.hg[HG.nWar] - 1; w >= 0 && out.length < 256; w--) {
+    const o = w * NWC, start = W[o + WC.start], end = W[o + WC.end];
+    if (start > y || (W[o + WC.outcome] !== OUTCOME.ONGOING && end + WAR_LINGER < y) || (W[o + WC.outcome] === OUTCOME.ONGOING && end + 4 * WAR_LINGER < y)) continue;
+    const kinetic = W[o + WC.kind] === WAR_KIND.KINETIC;
+    let arrive = end;
+    if (kinetic) {
+      const A = world.systems[W[o + WC.from]], B = world.systems[W[o + WC.sys]];
+      arrive = start + Math.hypot(A.x - B.x, A.y - B.y, A.z - B.z) / Math.max(1e-3, W[o + WC.speed]);
+    }
+    out.push({ id: w, kinetic, a: W[o + WC.a], b: W[o + WC.b], sys: W[o + WC.sys], from: kinetic ? W[o + WC.from] : -1, start, end, arrive: Math.min(arrive, end), outcome: W[o + WC.outcome], winner: W[o + WC.winner], killed: W[o + WC.killed] });
+  }
+  return out;
+}
+
+/** Factions whose war mind is arming above the base rate (H.posture > 0): [capital, posture]. */
+function posturesNow(e: Engine): [number, number][] {
+  const S = e.st.S, Hh = e.st.hx.H, out: [number, number][] = [];
+  for (let m = 0; m < e.st.nSettled; m++) {
+    const b = e.st.settled[m];
+    if (S[b * NF + F.faction] !== b) continue;
+    const p = Hh[b * NH + H.posture];
+    if (p > 0) out.push([b, p]);
+  }
+  return out;
+}
+
 function wayOfWar(year: number, span: number): WayOfWar {
   const e = main!, y = Math.min(year, e.year);
   return {
@@ -178,7 +216,7 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
     const S = e.st.S.slice();
     const techDone = e.st.techDone.slice(), techWhere = e.st.techWhere.slice();
     const settled = e.st.settled.slice(0, e.st.nSettled);
-    post({ type: 'state', id: m.id, step: e.st.step, S, techDone, techWhere, ships: e.shipList(), globals: e.globals(), settled }, [S.buffer, techDone.buffer, techWhere.buffer, settled.buffer]);
+    post({ type: 'state', id: m.id, step: e.st.step, S, techDone, techWhere, ships: e.shipList(), globals: e.globals(), settled, wars: warsNow(e), postures: posturesNow(e) }, [S.buffer, techDone.buffer, techWhere.buffer, settled.buffer]);
   } else if (m.type === 'history' && main) {
     const w = 2 + HIST_FIELDS.length;
     const steps: number[] = [];
