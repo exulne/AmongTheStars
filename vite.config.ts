@@ -33,6 +33,8 @@ export default defineConfig(({ mode }) => {
     plugins: [viteSingleFile()],
     define: { __BUILD__: JSON.stringify(stamp()) },
     worker: { format: 'es' },
+    // satellite.js ships a top-level await, which the dev pre-bundle's default target rejects
+    optimizeDeps: { esbuildOptions: { target: 'es2022' } },
     build: {
       target: 'es2022',
       chunkSizeWarningLimit: 4000,
