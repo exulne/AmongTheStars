@@ -4,7 +4,7 @@
 
 import './paths.css';
 import { Pathfinder } from './pathfinder.ts';
-import { chainLabel, chainOf, compareFutures, countLine, lineageSeeds, narrateFuture, narrateOverview, parseGoal, shownFutures, type Chain, type FutureResult, type Step } from '../sim/milestones.ts';
+import { chainLabel, chainOf, compareFutures, countLine, lineageSeeds, narrateFuture, narrateOverview, parseEvent, shownFutures, type Chain, type FutureResult, type Step } from '../sim/milestones.ts';
 import type { World } from '../sim/world.ts';
 import type { Voice } from '../ship/voice.ts';
 import type { OracleAgent } from '../ship/agent.ts';
@@ -167,7 +167,7 @@ export class FuturePaths {
    */
   ask(text: string): Promise<AskResult> {
     const seq = ++this.seq;
-    const pr = parseGoal(text, this.opts.world);
+    const pr = parseEvent(text, this.opts.world);
     this.results = [];
     this.tried = 0;
     // a live Oracle conversation keeps its transcript; only cold asks clear it
@@ -182,10 +182,11 @@ export class FuturePaths {
     }
     const chain = this.chain = chainOf(pr.goal);
     const label = chainLabel(chain);
+    const note = pr.notes?.length ? ` (${pr.notes.join('; ')})` : '';
     this.showAll = false;
     this.cardsEl.innerHTML = '';
     this.footerEl.textContent = '';
-    this.status(`Simulating futures toward ${label}…`);
+    this.status(`Simulating futures toward ${label}${note}…`);
     const { seeds } = lineageSeeds(this.opts.seed(), 0, this.readFutures());
     return new Promise((resolve) => {
       this.pathfinder.run(chain, seeds, (r) => {

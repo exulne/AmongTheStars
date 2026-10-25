@@ -374,16 +374,117 @@ function whyTrue(goal: Goal, e: Engine): string {
   }
 }
 
-/** What a tag (and later the mic and the Oracle) is made from: parseGoal plus the checks that keep a tag honest. */
+// ------------------------------------------------------------------ strict words
+
+/** Words that never carry meaning in a tag: articles, prepositions, pronouns, auxiliaries, filler. */
+const STOP = new Set(('the a an of on in to at for by with from into onto around near its it our my some any ' +
+  'anywhere there here be is are was were becomes become begin begins start starts new whole all more than over up out ' +
+  'until about when what which that this these those do does can will would should let lets see show me us we you i ' +
+  'time moment day year years happen happens happened earliest soonest ever').split(' '));
+
+/** Every word the goal vocabulary owns — pattern words, stage words, galaxy words, tech words. */
+const VOCAB = new Set(('terraform terraforming greening green breathable open sea seas ocean oceans air atmosphere hold holds ' +
+  'thickens thicken return make makes made habitable liveable livable ' +
+  'dyson sphere swarm megastructure megastructures capture phase ii two complete completed finished full third begins ' +
+  'construction construct build built ' +
+  'warp alcubierre ftl faster than light wormholes wormhole he3 helium aneutronic fusion torch drive space elevator elevators ' +
+  'generation agi artificial general intelligence ai mind upload uploading uploads matrioshka lifting lift neill oneill orbital ' +
+  'rotating habitats habitat antimatter nanotech nanofab molecular assembler assemblers nano fabrication ' +
+  'extension immortal anti aging ageing longevity laser sails sail beamed bishop rings ring cloud aerostat ' +
+  'von neumann self replicating replicat cryo cryosleep hibernat hibernate quantum comp computer computing neural lace interface ' +
+  'asteroid asteroids genetic medicine adaptation gene therapy seed embryo ramjet bussard paraterraform magnetic nuclear thermal ' +
+  'synth synthetic bio engineered crops psychohistory predictive social comms network starshot sub carbon nanotube nanotubes ' +
+  'radiation regolith robot robots robotics situ isru support closed loop fission reusable heavy interstellar ' +
+  'first contact aliens extraterrestrial independence secede break breaks away free war wars out ' +
+  'world worlds swarmworld brain-star lifted metropolis metropol city cities town towns hub hubs base bases ' +
+  'colony colonies colonist colonists colonise colonize colonisation colonization settle settles settled settling ' +
+  'settlement settlements outpost outposts land lands landed landing boots foot footprint steps step ' +
+  'reach reaches reached reaching get gets getting ' +
+  'people persons humans souls inhabitants colonists residents kardashev type civil civilisation civilization empire ' +
+  'species systems population humanity total passes brain way ' +
+  'sol solar system another other exoplanet stars extrasolar alien planet ' +
+  'galaxy galaxies andromeda triangulum magellanic cloud large small m31 m33 lmc smc milky different outside intergalactic ' +
+  'star sun anywhere ').split(/\s+/));
+for (const tt of TECHS) {
+  for (const w of normName(tt.name).split(' ')) VOCAB.add(w);
+  for (const w of tt.id.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(' ')) VOCAB.add(w);
+}
+VOCAB.delete('on'); VOCAB.delete('in'); VOCAB.delete('at'); VOCAB.delete('to'); // stage-verb particles stay stopwords-adjacent but count for nothing
+
+/** Optimal-string-alignment (Damerau) edit distance. */
+function osa(a: string, b: string): number {
+  const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) => [i, ...new Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) ? d[i - 2][j - 2] + 1 : Infinity);
+  }
+  return d[a.length][b.length];
+}
+
+/** The words typo candidates are drawn from: the vocabulary plus every real place name's words. */
+function typoCands(world: World): Set<string> {
+  const c = new Set(VOCAB);
+  for (const sys of world.systems) if (sys.real) {
+    for (const w of normName(sys.name).split(' ')) c.add(w);
+    for (const b of sys.bodies) for (const w of normName(world.bodies[b].name).split(' ')) c.add(w);
+  }
+  for (const g of GALAXIES) for (const w of normName(g.name).split(' ')) c.add(w);
+  for (const w of ['m31', 'm33', 'lmc', 'smc']) c.add(w);
+  return c;
+}
+const TYPO_CANDS = new WeakMap<World, Set<string>>();
+
+/** What a tag (and later the mic and the Oracle) is made from: connectors, words, the parse, the 2040 check. */
 export function parseEvent(text: string, world: World): ParseResult {
-  const r = parseGoal(text, world);
+  const t = ` ${wordsToNumbers(text.toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9.,\s]/g, ' ')).replace(/\s+/g, ' ').trim()} `;
+  const placeWords = new Set([...(findPlace(t, world)?.words ?? []), ...(findGalaxy(t)?.words ?? [])]);
+  const masked = ` ${t.trim().split(/\s+/).filter((w) => !placeWords.has(w)).join(' ')} `;
+  if (/\b(and then|followed by|after that|then|and)\b|&/.test(masked)) {
+    return { error: 'One event per tag: press Enter after each event.', suggestions: [] };
+  }
+  const tokens = t.trim().split(/\s+/);
+  const unaccounted = tokens.filter((w) => !/\d/.test(w) && !STOP.has(w) && !VOCAB.has(w) && !placeWords.has(w));
+  const notes: string[] = [];
+  let corrected = text;
+  if (unaccounted.length) {
+    let cands = TYPO_CANDS.get(world);
+    if (!cands) { cands = typoCands(world); TYPO_CANDS.set(world, cands); }
+    const picks: string[][] = [];
+    let bad: string | null = null;
+    for (const w of unaccounted) {
+      if (w.length < 4) { bad = w; break; }
+      const lim = w.length <= 6 ? 1 : 2;
+      let best = Infinity, found: string[] = [];
+      for (const c of cands) {
+        const d = osa(w, c);
+        if (d > 0 && d <= lim && d < best) { best = d; found = [c]; }
+        else if (d > 0 && d === best) { if (!found.includes(c)) found.push(c); }
+      }
+      if (found.length === 1) picks.push([w, found[0]]);
+      else if (found.length > 1) {
+        const list = found.slice(0, 3);
+        const offer = list.length === 2 ? `${list[0]} or ${list[1]}` : `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}`;
+        return { error: `Did you mean ${offer}?`, suggestions: list.map((c) => text.replace(new RegExp(`\\b${w}\\b`, 'i'), c)) };
+      } else { bad = w; break; }
+    }
+    if (bad) {
+      const rest = tokens.filter((w) => !unaccounted.includes(w)).join(' ');
+      const rr = parseGoal(rest, world);
+      if ('goal' in rr) return { error: `I understood "${rr.goal.label}" but not "${unaccounted.join(' ')}".`, suggestions: [] };
+      return { error: `I can't read a moment in time out of "${text}".`, suggestions: [...SUGGESTIONS] };
+    }
+    for (const [w, c] of picks) { corrected = corrected.replace(new RegExp(`\\b${w}\\b`, 'i'), c); notes.push(`read "${w}" as "${c}"`); }
+  }
+  const r = parseGoal(corrected, world);
   if ('error' in r) return r;
   const e0 = engine0(world);
   if (reached(r.goal, e0)) {
     return { error: `That's already true in 2040: ${whyTrue(r.goal, e0)}.`, suggestions: [...SUGGESTIONS] };
   }
-  return r;
+  return notes.length ? { goal: r.goal, notes } : r;
 }
+
 
 // ------------------------------------------------------------------ watching a run
 
