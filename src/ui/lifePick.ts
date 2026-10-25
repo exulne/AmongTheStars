@@ -54,7 +54,7 @@ export function buildWant(v: (key: string) => string): PickWant {
   const loM = num('moves-lo'), hiM = num('moves-hi');
   const loB = yr(num('born-lo')), hiB = yr(num('born-hi'));
   const w: PickWant = {};
-  if (loW !== undefined || hiW !== undefined) w.wealth = [Math.max(0, Math.min(100, 100 - (hiW ?? 100))), Math.max(0, Math.min(100, 100 - (loW ?? 0)))];
+  if (loW !== undefined || hiW !== undefined) w.wealth = [Math.max(0, Math.min(100, 100 - (hiW ?? 100) - 0.5)), Math.max(0, Math.min(100, 100 - (loW ?? 0) + 0.5))];   // ±0.5: the "top %" shown is rounded
   if (loA !== undefined || hiA !== undefined) w.age = [loA ?? 0, hiA === undefined ? 1e6 : hiA + 1];       // a whole year: [y, y+1)
   if (loH !== undefined || hiH !== undefined) w.height = [loH ?? 0, hiH ?? 1e6];
   if (loM !== undefined || hiM !== undefined) w.moves = [loM ?? 0, hiM ?? 1e6];

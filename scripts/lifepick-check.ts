@@ -123,7 +123,7 @@ for (let k = 0; k < 20; k++) {
   const w4 = buildWant(V({ 'age-lo': '30', 'age-hi': '30' }));
   ok(w4.age?.[0] === 30 && w4.age?.[1] === 31, `T1: age 30–30 → [${w4.age}]`);
   const w5 = buildWant(V({ 'wealth-lo': '0', 'wealth-hi': '10' }));
-  ok(w5.wealth?.[0] === 90 && w5.wealth?.[1] === 100, `T1: wealth top 0–10% → [${w5.wealth}]`);
+  ok(w5.wealth?.[0] === 89.5 && w5.wealth?.[1] === 100, `T1: wealth top 0–10% → [${w5.wealth}]`);
   ok(Object.values(buildWant(() => '')).every((v) => v === undefined), 'T1: all blank → {}');
 }
 
@@ -390,6 +390,29 @@ checkShares(e1500, 'Earth@1500');
     const sp = L.bornAt(ship, 1, 'any', 8000).person;
     ok(!!sp && birthWorld(idStr(sp)) === null, 'T12: someone born aboard reads as no world');
   } else console.log('  skip T12: no ship births in this seed');
+}
+
+// --- T13: typed wealth bounds widen by ±0.5, matching the rounded "top %" shown
+{
+  const V = (o: Record<string, string>) => (k: string) => o[k] ?? '';
+  const w0 = buildWant(V({ 'wealth-lo': '37', 'wealth-hi': '37' }));
+  ok(w0.wealth?.[0] === 62.5 && w0.wealth?.[1] === 63.5, `T13: top 37–37% → [${w0.wealth}]`);
+  const w1 = buildWant(V({ 'wealth-hi': '10' }));
+  ok(w1.wealth?.[0] === 89.5 && w1.wealth?.[1] === 100, `T13: top –10% → [${w1.wealth}]`);
+  const w2 = buildWant(V({ 'wealth-lo': '90' }));
+  ok(w2.wealth?.[0] === 0 && w2.wealth?.[1] === 10.5, `T13: top 90–% → [${w2.wealth}]`);
+  // end to end: typing the shown value must find the people it describes
+  const wt = buildWant(V({ 'wealth-lo': '37', 'wealth-hi': '37' }));
+  let hits = 0, good = true;
+  for (const salt of [1, 2, 3]) {
+    const r = L.pickLife(world.earth, 0, 'any', 1500, wt, salt);
+    if (!r.person) continue;
+    hits++;
+    const shown = Math.round(100 - r.standing!.wealthPct * 100);
+    console.log(`  T13 salt ${salt}: shown top ${shown}%`);
+    if (shown !== 37) good = false;
+  }
+  ok(hits >= 2 && good, `T13: 37–37 finds people shown as top 37% (${hits}/3 salts)`);
 }
 
 process.exit(fails ? 1 : 0);
