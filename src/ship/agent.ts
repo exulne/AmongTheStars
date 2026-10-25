@@ -54,6 +54,8 @@ export class OracleAgent {
   private inRate = 16000;
   private outRate = 16000;
   private micAcc = new Int16Array(0);
+  private micPos = 0;    // where the next output sample falls, in input samples from this block's start (negative: between the last block's end and this one's first sample)
+  private micLast = 0;
   private session = 0;   // bumped by every start/stop: stale continuations and stale sockets bow out
   private live = false;
   private readyTimer = 0;
@@ -169,16 +171,21 @@ export class OracleAgent {
     }
   }
 
-  /** Resample the mic block down to the agent's input rate, ship ~100 ms chunks. */
+  /** Resample the mic block down to the agent's input rate, carrying the read position across blocks, ship ~100 ms chunks. */
   private onMic(input: Float32Array): void {
-    const k = this.ctx ? this.ctx.sampleRate / this.inRate : 1;
-    const n = Math.floor(input.length / k);
-    const joined = new Int16Array(this.micAcc.length + n);
-    joined.set(this.micAcc);
-    for (let i = 0; i < n; i++) {
-      const p = i * k, i0 = Math.floor(p), i1 = Math.min(input.length - 1, i0 + 1), t = p - i0;
-      joined[this.micAcc.length + i] = Math.max(-32768, Math.min(32767, Math.round((input[i0] + (input[i1] - input[i0]) * t) * 32767)));
+    if (!this.ctx || !input.length) return;
+    const step = this.ctx.sampleRate / this.inRate;
+    const out: number[] = [];
+    let p = this.micPos;
+    for (; p < input.length - 1; p += step) {
+      const i0 = Math.floor(p), t = p - i0, a = i0 < 0 ? this.micLast : input[i0];
+      out.push(a + (input[i0 + 1] - a) * t);
     }
+    this.micPos = p - input.length;
+    this.micLast = input[input.length - 1];
+    const joined = new Int16Array(this.micAcc.length + out.length);
+    joined.set(this.micAcc);
+    for (let i = 0; i < out.length; i++) joined[this.micAcc.length + i] = Math.max(-32768, Math.min(32767, Math.round(out[i] * 32767)));
     this.micAcc = joined;
     const want = Math.round(this.inRate * 0.1);
     while (this.micAcc.length >= want) {
@@ -233,6 +240,8 @@ export class OracleAgent {
     this.live = false;
     clearTimeout(this.readyTimer);
     this.micAcc = new Int16Array(0);
+    this.micPos = 0;
+    this.micLast = 0;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
     this.micSrc?.disconnect(); this.micSrc = null;
