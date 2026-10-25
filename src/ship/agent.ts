@@ -54,46 +54,54 @@ export class OracleAgent {
   private inRate = 16000;
   private outRate = 16000;
   private micAcc = new Int16Array(0);
-  private userStop = false;
+  private session = 0;   // bumped by every start/stop: stale continuations and stale sockets bow out
+  private live = false;
   private readyTimer = 0;
   private ready: (() => void) | null = null;
   private fail: ((e: Error) => void) | null = null;
 
   constructor(private agentId: string | null, tools: OracleTools) {
     this.available = !!agentId;
-    this.dispatch = { find_futures: tools.find_futures, watch_future: tools.watch_future };
+    this.dispatch = { find_futures: (p) => tools.find_futures(p), watch_future: (p) => tools.watch_future(p) };
   }
 
-  get active(): boolean { return this.ws !== null; }
+  get active(): boolean { return this.live; }
 
-  /** Mic first — a denied mic throws before any network — then the socket. */
+  /** The AudioContext is created inside the click so the browser lets it play; then mic, url, worklet, socket. */
   async start(h: AgentHooks): Promise<void> {
-    if (this.active) return;
+    if (this.live) return;
     if (!this.agentId) throw new Error('No Oracle agent is configured.');
+    const s = ++this.session;
+    const ctx = this.ctx = new AudioContext();
+    ctx.resume().catch(() => {});   // a context closed before it resumed rejects: nothing to report
+    this.live = true;
     this.hooks = h;
-    this.userStop = false;
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
     try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      if (s !== this.session) { stream.getTracks().forEach((t) => t.stop()); return; }
+      this.stream = stream;
       const url = await this.signedUrl();
-      this.ctx = new AudioContext();
+      if (s !== this.session) return;
+      const mod = URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }));
+      try { await ctx.audioWorklet.addModule(mod); } finally { URL.revokeObjectURL(mod); }
+      if (s !== this.session) return;
       await new Promise<void>((resolve, reject) => {
         this.ready = resolve; this.fail = reject;
         this.readyTimer = window.setTimeout(() => this.settle(new Error('The Oracle did not answer.')), 15000);
         const ws = this.ws = new WebSocket(url);
-        ws.onopen = () => ws.send(JSON.stringify({ type: 'conversation_initiation_client_data' }));
-        ws.onmessage = (e) => this.onMessage(e);
-        ws.onerror = () => this.settle(new Error('The Oracle connection failed.'));
-        ws.onclose = (ev) => this.onClose(ev);
+        ws.onopen = () => { if (this.ws !== ws) return; ws.send(JSON.stringify({ type: 'conversation_initiation_client_data' })); };
+        ws.onmessage = (e) => { if (this.ws !== ws) return; this.onMessage(e); };
+        ws.onerror = () => { if (this.ws !== ws) return; this.settle(new Error('The Oracle connection failed.')); };
+        ws.onclose = (ev) => { if (this.ws !== ws) return; this.onClose(ev); };
       });
-      if (!this.ctx || !this.stream) return;   // stopped while connecting
-      const mod = URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }));
-      try { await this.ctx.audioWorklet.addModule(mod); } finally { URL.revokeObjectURL(mod); }
-      this.micSrc = this.ctx.createMediaStreamSource(this.stream);
-      this.worklet = new AudioWorkletNode(this.ctx, 'oracle-mic');
+      if (s !== this.session) return;
+      this.micSrc = ctx.createMediaStreamSource(this.stream);
+      this.worklet = new AudioWorkletNode(ctx, 'oracle-mic');
       this.worklet.port.onmessage = (e) => this.onMic(e.data as Float32Array);
       this.micSrc.connect(this.worklet);
-      this.worklet.connect(this.ctx.destination);   // the processor emits silence; this only keeps it running
+      this.worklet.connect(ctx.destination);   // the processor emits silence; this only keeps it running
     } catch (e) {
+      if (s !== this.session) return;   // the user hung up while we connected
       this.cleanup();
       throw e;
     }
@@ -101,8 +109,8 @@ export class OracleAgent {
 
   /** User-initiated hang-up: quiet, no status line. */
   stop(): void {
-    this.userStop = true;
-    if (this.ws && this.ws.readyState < WebSocket.CLOSING) this.ws.close(1000);
+    this.session++;
+    this.settle();
     this.cleanup();
   }
 
@@ -184,9 +192,10 @@ export class OracleAgent {
   private play(a: string | undefined): void {
     if (!a || !this.ctx) return;
     const bin = atob(a), n = bin.length >> 1;
+    if (n === 0) return;
     const buf = new AudioBuffer({ length: n, numberOfChannels: 1, sampleRate: this.outRate });
     const f = buf.getChannelData(0);
-    for (let i = 0; i < n; i++) f[i] = (bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8) << 16 >> 16) / 32768;
+    for (let i = 0; i < n; i++) { const lo = bin.charCodeAt(2 * i), hi = bin.charCodeAt(2 * i + 1); f[i] = ((((hi << 8) | lo) << 16) >> 16) / 32768; }
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     src.connect(this.ctx.destination);
@@ -199,29 +208,29 @@ export class OracleAgent {
   }
 
   private async toolCall(call: any): Promise<void> {
-    const name = call?.tool_name as AgentToolName;
+    const name = call?.tool_name as string;
     this.hooks?.mode(name === 'find_futures' ? 'searching the futures…' : name === 'watch_future' ? 'flying there…' : 'working…');
+    const s = this.session;
     let result: string, isErr: boolean;
     try {
-      const fn = this.dispatch[name];
+      const fn = Object.hasOwn(this.dispatch, name) ? this.dispatch[name as AgentToolName] : undefined;
       if (fn) { result = await fn(call?.parameters ?? {}); isErr = false; }
       else { result = `Unknown tool ${name}`; isErr = true; }
     } catch (e) { result = (e as Error).message ?? String(e); isErr = true; }
+    if (s !== this.session) return;   // a new session owns the wire now
     this.send({ type: 'client_tool_result', tool_call_id: call?.tool_call_id, result, is_error: isErr });
     if (!this.sources.size) this.hooks?.mode('listening');
   }
 
   private onClose(ev: CloseEvent): void {
-    if (this.ready || this.fail) { this.userStop ? this.settle() : this.settle(new Error('The Oracle connection failed.')); return; }
-    const wasLive = this.ws !== null;
+    if (this.ready || this.fail) { this.settle(new Error('The Oracle connection failed.')); return; }
     this.cleanup();
-    if (wasLive && !this.userStop) {
-      this.hooks?.mode('');
-      this.hooks?.status(`The Oracle has gone quiet${ev.reason ? `: ${ev.reason}` : '.'}`);
-    }
+    this.hooks?.mode('');
+    this.hooks?.status(`The Oracle has gone quiet${ev.reason ? `: ${ev.reason}` : '.'}`);
   }
 
   private cleanup(): void {
+    this.live = false;
     clearTimeout(this.readyTimer);
     this.micAcc = new Int16Array(0);
     this.stream?.getTracks().forEach((t) => t.stop());
