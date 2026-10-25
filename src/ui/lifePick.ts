@@ -147,25 +147,28 @@ export class LifePick {
     // 'anyone' means the user didn't choose — roll a kind per draw rather than fixing one
     const kind = this.val('.lp-kind') === 'any' ? 'random' : this.val('.lp-kind');
     const where = b >= 0 ? this.opts.nameOf(b) : null;
-    const want = this.want();
+    const base = this.want();
     const n = random ? 0 : Math.max(0, Math.floor(parseCount(this.nInput.value) || 0));
-    // anything the user left blank is a random roll, not an assumed value — but a fully
-    // pinned person (world + number) is already fixed, so stats stay out of the way
-    if (!(b >= 0 && n > 0)) {
-      const one = <T>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
+    const pinned = b >= 0 && n > 0;
+    // a blank field is a random roll, not an assumed value — and a rolled spec that
+    // matches nobody just rerolls; only what the user submitted stays fixed
+    const roll = (): PickWant => {
+      const w: PickWant = { ...base };
+      if (pinned) return w;
+      const one = <T,>(arr: readonly T[]) => arr[Math.floor(Math.random() * arr.length)];
       const randRange = (lo0: number, span: number, pad: number): [number, number] => { const lo = lo0 + Math.floor(Math.random() * span); return [lo, lo + pad + Math.floor(Math.random() * pad)]; };
-      want.sex ??= one(['f', 'm'] as const);
-      want.mood ??= one([...MOODS_GOOD, ...MOODS_BAD]);
-      want.health ??= one(HEALTH_OPTS.map((o) => o[0]));
-      want.education ??= one(EDU_OPTS);
-      want.devotion ??= one(DEVOTION_OPTS);
-      want.wealth ??= randRange(0, 80, 10);   // percentile window of ~10–20
-      want.age ??= randRange(0, 140, 40);
-      want.height ??= randRange(130, 55, 15);
-      want.moves ??= [0, Math.floor(Math.random() * 4)];
-      if (!want.born) { const Y = this.opts.year(); want.born = randRange(0, Math.max(1, Math.floor(Y * 0.9)), Math.max(40, Math.floor(Y * 0.05))); }
-    }
-    const filtered = Object.values(want).some((v) => v !== undefined);
+      w.sex ??= one(['f', 'm'] as const);
+      w.mood ??= one([...MOODS_GOOD, ...MOODS_BAD]);
+      w.health ??= one(HEALTH_OPTS.map((o) => o[0]));
+      w.education ??= one(EDU_OPTS);
+      w.devotion ??= one(DEVOTION_OPTS);
+      w.wealth ??= randRange(0, 80, 10);
+      w.age ??= randRange(0, 140, 40);
+      w.height ??= randRange(130, 55, 15);
+      w.moves ??= [0, Math.floor(Math.random() * 4)];
+      if (!w.born) { const Y = this.opts.year(); w.born = randRange(0, Math.max(1, Math.floor(Y * 0.9)), Math.max(40, Math.floor(Y * 0.05))); }
+      return w;
+    };
     this.say('Finding them…', seq);
     if (!this.bodiesReady) {
       const r = await this.opts.bodies();
@@ -174,13 +177,19 @@ export class LifePick {
       this.bodiesReady = r.bodies;
     }
     if (b >= 0 && !this.bodiesReady.includes(b)) { this.say(`Nobody has ever been born on ${esc(where!)}.`, seq); return; }
-    const r = await this.opts.find(b, n, kind, this.opts.year(), filtered ? want : undefined);
-    if (seq !== this.seq) return;
-    if (r.pending) { this.say('This future is still simulating; its people appear when it finishes.', seq); return; }
+    const filtered = Object.values(base).some((v) => v !== undefined);
+    let r: Awaited<ReturnType<LifePickOpts['find']>> | null = null, rolls = 0;
+    for (; rolls < 6; rolls++) {
+      const want = roll();
+      r = await this.opts.find(b, n, kind, this.opts.year(), Object.values(want).some((v) => v !== undefined) ? want : undefined);
+      if (seq !== this.seq) return;
+      if (r.pending || r.person || pinned) break;
+    }
+    if (!r || r.pending) { this.say('This future is still simulating; its people appear when it finishes.', seq); return; }
     if (!r.person) {
       this.say(b < 0 ? `Nobody anywhere matches that${filtered ? ' — loosen a filter or two.' : '.'}`
         : !r.total ? `Nobody has ever been born on ${esc(where!)}.`
-        : kind === 'any' && n === 0 && !filtered ? `${esc(where!)} has seen ${fmtNum(r.total)} birth${r.total === 1 ? '' : 's'} — pick a number up to that.`
+        : kind === 'random' && n === 0 && !filtered ? `${esc(where!)} has seen ${fmtNum(r.total)} birth${r.total === 1 ? '' : 's'} — pick a number up to that.`
         : `No match on ${esc(where!)} among ${fmtNum(Math.max(r.scanned, n))} scanned${filtered ? ' — loosen a filter or two' : ''}.`, seq);
       return;
     }
