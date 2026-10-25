@@ -6,7 +6,7 @@ import { EV, EVENT_NAMES, STAGE_NAMES, TECHS } from './catalog.ts';
 import { Demography, idStr, periodMid, type Id, type Stay } from './demography.ts';
 import { Engine } from './engine.ts';
 import { FLOW, SHIP_BODY, isShipBody, periodOf, periodStart, type Flow } from './ledger.ts';
-import { F, GM, NF, NGM } from './metrics.ts';
+import { F, GM, HIST_FIELDS, NF, NGM } from './metrics.ts';
 import { hash01 } from './rng.ts';
 
 const GIVEN_F = ['Amara', 'Mei', 'Priya', 'Sofia', 'Fatima', 'Yuki', 'Elena', 'Zara', 'Nia', 'Lin', 'Hana', 'Ana', 'Lea', 'Aisha', 'Ingrid', 'Mariam', 'Chiara', 'Ife', 'Noor', 'Valentina', 'Saoirse', 'Thandiwe', 'Keiko', 'Rosa'];
@@ -34,6 +34,22 @@ const JOBS_BY_ERA: Record<number, string[]> = {
 const JOBS_EARLY = ['hydroponics technician', 'life-support engineer', 'regolith miner', 'teacher', 'medic', 'fabricator', 'pilot', 'geologist', 'robot wrangler', 'reactor operator', 'trader', 'administrator', 'cook', 'artist'];
 const MOODS_GOOD = ['content', 'hopeful', 'proud', 'curious', 'in love'];
 const MOODS_BAD = ['restless', 'homesick', 'tired', 'grieving', 'angry'];
+
+/** Inverse standard-normal CDF (Acklam's rational approximation), p in (0, 1). */
+function probit(p: number): number {
+  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239];
+  const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572];
+  const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+  const q = p - 0.5;
+  if (Math.abs(q) <= 0.425) {
+    const r = 0.180625 - q * q;
+    return (q * (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5])) / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+  }
+  const r = Math.sqrt(-Math.log(Math.min(p, 1 - p)));
+  const x = (((((c[0] * r + c[1]) * r + c[2]) * r + c[3]) * r + c[4]) * r + c[5]) / ((((d[0] * r + d[1]) * r + d[2]) * r + d[3]) * r + 1);
+  return q < 0 ? -x : x;
+}
 
 const MORTAL: Record<number, string> = {
   [EV.Plague]: 'the plague', [EV['Habitat breach']]: 'a habitat breach', [EV['Asteroid strike']]: 'the asteroid strike',
@@ -63,6 +79,13 @@ export interface Biography extends PersonBrief {
   faith?: string | null;  // raised in, from the birthplace's faith shares at birth
   /** every place they ever were, in order: the pathway of a life, birth to death */
   path: { body: number | null; name: string; from: number; to: number | null; ship?: { from: number; to: number; depart: number } }[];
+  /** Standing, schooling, health, mood: derived, not simulated — hashed from identity,
+   *  conditioned on where they live and on the settlement's recorded history. */
+  standing: {
+    wealthPct: number;        // their place in the local wealth distribution, 0..1
+    worth: number;            // indicative net worth in $, from local product and inequality
+    class: string; education: string; health: string; mood: string; language: string; devotion: string | null;
+  } | null;
 }
 
 export class Lives {
@@ -349,6 +372,89 @@ export class Lives {
     return age > 140 ? 'chose to stop, after a very long life' : 'old age';
   }
 
+  // ---------------------------------------------------------------- derived standing
+
+  /** A settlement's recorded economy at a year: the last history row at or before it. */
+  private histAt(b: number, year: number): { gdp: number; pop: number; happy: number; stab: number } | null {
+    const h = this.e.hist, w = 2 + HIST_FIELDS.length;
+    const ys = this.e.years;
+    let lo = 0, hi = ys.length - 1;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (ys[m] <= year) lo = m; else hi = m - 1; }
+    const gi = HIST_FIELDS.indexOf('gdp'), pi = HIST_FIELDS.indexOf('pop'), ei = HIST_FIELDS.indexOf('happiness'), si = HIST_FIELDS.indexOf('stability');
+    for (let i = this.e.histLen - 1; i >= 0; i--) {
+      const r = i * w;
+      if (h[r] > lo) continue;
+      if (h[r + 1] !== b) continue;
+      return { gdp: h[r + 2 + gi], pop: h[r + 2 + pi], happy: h[r + 2 + ei], stab: h[r + 2 + si] };
+    }
+    return null;
+  }
+
+  /** Where a person sits in the local wealth distribution: mostly luck, part accumulation
+   *  with age, part inherited from a parent (one level up, keeping it cheap). */
+  private wealthPct(id: Id, year: number, depth = 0): number {
+    const age = Math.max(0, year - this.D.birthYear(id));
+    const u = hash01(id.b, id.q, id.i, 81);
+    const a = age < 20 ? 0 : age < 45 ? ((age - 20) / 25) * 0.6 : 0.6 + Math.min(0.4, (age - 45) / 80);
+    let inherit = u;
+    if (depth === 0) {
+      const p = this.D.father(id) ?? this.D.mother(id);
+      if (p) inherit = this.wealthPct(p, year, 1);
+    }
+    return Math.max(0.02, Math.min(0.995, 0.55 * u + 0.2 * a + 0.25 * inherit));
+  }
+
+  private education(job: string): string {
+    if (job === 'child') return 'too young for school';
+    if (job === 'student') return 'in school';
+    if (job === 'retired') return 'a working life behind them';
+    if (/(medic|epidemiologist|counsellor|ethicist|historian|forecaster|philosopher|composer|teacher|ecologist|geologist|archivist|artist)/.test(job)) return 'the universities';
+    if (/(engineer|operator|pilot|architect|designer|welder|fabricator|technician|surveyor|terraformer|tender|wrangler|sculptor)/.test(job)) return 'the technical colleges';
+    if (/(soldier|drone pilot|warden)/.test(job)) return 'service training';
+    if (/(trader|administrator|clerk|diplomat)/.test(job)) return 'apprenticed into administration';
+    return 'learned the work';
+  }
+
+  /** Everything about a person's place in society, derived at the asked year. */
+  private standing(id: Id, year: number, life: Stay[], at: number, job: string, body: string | undefined, faith: string | null): Biography['standing'] {
+    const born = this.D.birthYear(id), age = Math.max(0, year - born);
+    const hist = this.histAt(at, year);
+    const g = this.e.st.S[at * NF + F.gini];
+    const gini = g > 0.15 && g < 0.9 ? g : 0.4;
+    const ys = this.e.years;
+    let lo = 0, hi = ys.length - 1;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (ys[m] <= year) lo = m; else hi = m - 1; }
+    const gpc = hist && hist.pop > 0 ? hist.gdp / hist.pop : this.e.series[lo * NGM + GM.gdpPerCap] || 0;
+    const pct = this.wealthPct(id, year);
+    // the local distribution read as lognormal: Gini = 2Φ(σ/√2) − 1
+    const sig = Math.SQRT2 * probit((gini + 1) / 2);
+    const worth = 5 * gpc * Math.exp(sig * probit(pct) - (sig * sig) / 2);
+    const cls = pct < 0.25 ? 'poor' : pct < 0.55 ? 'working' : pct < 0.8 ? 'comfortable' : pct < 0.93 ? 'well-off' : pct < 0.99 ? 'wealthy' : 'the elite';
+    // what they lived through leaves marks: a disaster survived at a place they were in
+    let scar: string | null = null, recent = false;
+    for (const s of life) {
+      const y0 = Math.max(periodStart(s.from), born), y1 = Math.min(periodStart(s.to + 1), year);
+      for (const ev of this.eventsBy.get(s.body) ?? []) {
+        if (ev.year >= y0 && ev.year < y1 && ev.type in MORTAL) { scar = MORTAL[ev.type]; if (year - ev.year < 8) recent = true; }
+      }
+    }
+    const health = body === 'uploaded' ? 'no body to fail; a mind on a substrate'
+      : body === 'adapted to this world' ? 'engineered for this world'
+      : scar ? `scarred by ${scar}`
+      : age > this.expectedLife(year) * 0.85 ? 'frail'
+      : hash01(id.b, id.q, id.i, 82) < 0.08 ? 'a chronic condition' : 'healthy';
+    const happy = hist?.happy ?? 0.6;
+    const um = hash01(id.b, id.q, id.i, 83, Math.floor(year / 5));
+    const mood = recent || happy < 0.35 ? MOODS_BAD[Math.floor(um * MOODS_BAD.length)]
+      : happy > 0.55 ? MOODS_GOOD[Math.floor(um * MOODS_GOOD.length)]
+      : um < 0.5 ? MOODS_GOOD[Math.floor(um * 2 * MOODS_GOOD.length)] : MOODS_BAD[Math.floor((um - 0.5) * 2 * MOODS_BAD.length)];
+    const dr = this.drift(at, year);
+    const language = dr < 0.15 ? 'Earth languages' : dr < 0.4 ? `${this.coined(3, at, 0, 2)} creole` : dr < 0.7 ? `${this.coined(4, at, 0, 2)}, a daughter language of Earth's` : `${this.coined(5, at, 0, 2)}, unrelated to Earth's`;
+    const ud = hash01(id.b, id.q, id.i, 84);
+    const devotion = faith ? ud < 0.15 ? 'lapsed' : ud < 0.45 ? 'nominal' : ud < 0.8 ? 'observant' : 'devout' : null;
+    return { wealthPct: pct, worth, class: cls, education: this.education(job), health, mood, language, devotion };
+  }
+
   biography(idS: string, year: number): Biography | null {
     const m = idS.match(/^(\d+)\.(-?\d+)\.(\d+)$/);
     if (!m) return null;
@@ -463,6 +569,13 @@ export class Lives {
     const S = this.e.st.S;
     const status: Biography['status'] = year < born ? 'unborn' : dead && year >= deathYear ? 'dead'
       : stay && stay.end === 'left' && stay.flow && year > stay.flow.depart && year < stay.flow.arrive ? 'travelling' : 'alive';
+    // where their life is lived for standing purposes: where they are at the asked year
+    // (or where they died), a ship counting as its home port
+    const atStay = status === 'dead' ? last : stay;
+    const at = this.home(atStay?.body ?? id.b);
+    const effYear = Math.min(year, dead ? Math.max(born, deathYear - 1) : year);
+    const standing = year >= born && !isShipBody(at) && at < this.e.world.bodies.length
+      ? this.standing(id, effYear, life, at, brief.job, brief.body, faith) : null;
     return {
       ...brief, age, bornAt: id.b, bornAtName: this.bodyName(id.b), died, status,
       where: stay ? { body: stay.body, name: this.bodyName(stay.body) } : null,
@@ -478,6 +591,7 @@ export class Lives {
       faith,
       descendants: { total: desc.total, alive: desc.alive, generations: desc.generations, places: [...desc.places.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([b, n]) => ({ body: b, name: this.bodyName(b), n })) },
       path,
+      standing,
     };
   }
 }
