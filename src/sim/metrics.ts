@@ -113,4 +113,4 @@ export const SETTLEMENT_LABELS: Partial<Record<SField, [string, string]>> = {
 };
 
 // Settlement history columns logged every few steps (for per-settlement charts).
-export const HIST_FIELDS: SField[] = ['pop', 'energy', 'gdp', 'stability', 'research', 'water', 'metals', 'happiness', 'tempAnom'];
+export const HIST_FIELDS: SField[] = ['pop', 'energy', 'gdp', 'stability', 'research', 'water', 'metals', 'happiness', 'tempAnom', 'gini'];

@@ -2,7 +2,7 @@
 // the world they were born on (or anywhere that saw a birth), their number
 // among its births (or a random draw), their kind of human, and any of the
 // derived standing stats — wealth percentile, age, height, mood, health,
-// education, devotion. Choosing them opens their biography.
+// education. Choosing them opens their biography.
 
 import type { Biography, PersonBrief, PickWant } from '../sim/lives.ts';
 import { MOODS_BAD, MOODS_GOOD } from '../sim/lives.ts';
@@ -34,12 +34,36 @@ const HEALTH_OPTS: [string, string][] = [
   ['chronic', 'a chronic condition'], ['uploaded', 'a mind on a substrate'], ['engineered', 'engineered for their world'],
 ];
 const EDU_OPTS = ['the universities', 'the technical colleges', 'service training', 'apprenticed into administration', 'learned the work', 'in school'];
-const DEVOTION_OPTS = ['devout', 'observant', 'nominal', 'lapsed', 'none'];
 
 const sel = (cls: string, label: string, opts: [string, string][]) =>
   `<label>${label} <select class="${cls}" aria-label="${label}">${opts.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('')}</select></label>`;
 const range = (cls: string, label: string, lo: string, hi: string) =>
   `<label>${label} <span class="lp-range"><input class="${cls}-lo" inputmode="numeric" placeholder="${lo}" aria-label="${label} from"><span>–</span><input class="${cls}-hi" inputmode="numeric" placeholder="${hi}" aria-label="${label} to"></span></label>`;
+
+/** The filters the form asks for, built from raw control values: `v(key)` returns a
+ *  control's value ('' for blank or rolled), keyed by its class suffix without `.lp-`
+ *  ('wealth-lo', 'born-hi', 'sex', 'mood', 'health', 'edu'). Pure, so it can run in Node. */
+export function buildWant(v: (key: string) => string): PickWant {
+  const num = (key: string) => { const x = parseCount(v(key)); return Number.isFinite(x) ? x : undefined; };
+  /** a year the user typed: calendar years (>= 1900) convert to sim years, small numbers are sim years */
+  const yr = (x: number | undefined) => (x === undefined ? undefined : x >= 1900 ? x - 2040 : x);
+  const loW = num('wealth-lo'), hiW = num('wealth-hi');
+  const loA = num('age-lo'), hiA = num('age-hi');
+  const loH = num('height-lo'), hiH = num('height-hi');
+  const loM = num('moves-lo'), hiM = num('moves-hi');
+  const loB = yr(num('born-lo')), hiB = yr(num('born-hi'));
+  const w: PickWant = {};
+  if (loW !== undefined || hiW !== undefined) w.wealth = [Math.max(0, Math.min(100, 100 - (hiW ?? 100))), Math.max(0, Math.min(100, 100 - (loW ?? 0)))];
+  if (loA !== undefined || hiA !== undefined) w.age = [loA ?? 0, hiA === undefined ? 1e6 : hiA + 1];       // a whole year: [y, y+1)
+  if (loH !== undefined || hiH !== undefined) w.height = [loH ?? 0, hiH ?? 1e6];
+  if (loM !== undefined || hiM !== undefined) w.moves = [loM ?? 0, hiM ?? 1e6];
+  if (loB !== undefined || hiB !== undefined) w.born = [loB ?? -1e6, hiB === undefined ? 1e6 : hiB + 1];   // a whole year: [y, y+1)
+  if (v('sex')) w.sex = v('sex') as 'f' | 'm';
+  if (v('mood')) w.mood = v('mood');
+  if (v('health')) w.health = v('health');
+  if (v('edu')) w.education = v('edu');
+  return w;
+}
 
 export class LifePick {
   el: HTMLElement;
@@ -73,7 +97,6 @@ export class LifePick {
       ${sel('lp-mood', 'Mood', [['', 'any'], ...[...MOODS_GOOD, ...MOODS_BAD].map((m) => [m, m] as [string, string])])}
       ${sel('lp-health', 'Health', [['', 'any'], ...HEALTH_OPTS])}
       ${sel('lp-edu', 'Education', [['', 'any'], ...EDU_OPTS.map((e) => [e, e] as [string, string])])}
-      ${sel('lp-faith', 'Faith', [['', 'any'], ...DEVOTION_OPTS.map((d) => [d, d] as [string, string])])}
       <p class="lp-row"><button class="link lp-go" type="button">Follow their life</button><button class="link lp-rand" type="button">someone at random</button><button class="link lp-clear" type="button">clear</button></p>
       <p class="lp-result muted" aria-live="polite"></p>
       <div class="lp-life" role="list"></div>`;
@@ -88,6 +111,11 @@ export class LifePick {
       const ev = (e.target as HTMLElement).closest<HTMLElement>('.lp-ev');
       if (ev?.dataset.y) this.opts.seek(Number(ev.dataset.y), ev.dataset.b === undefined ? undefined : Number(ev.dataset.b));
     });
+    // typing over a rolled value makes it a real filter again
+    for (const ev of ['input', 'change']) this.el.addEventListener(ev, (e) => {
+      const c = e.target as HTMLElement;
+      if (c.dataset.rolled) { delete c.dataset.rolled; c.classList.remove('lp-rolled'); }
+    });
   }
 
   onToggle: (open: boolean) => void = () => {};
@@ -101,11 +129,11 @@ export class LifePick {
   }
 
   private get<T extends HTMLElement>(cls: string): T { return this.el.querySelector<T>(cls)!; }
-  private val(cls: string): string { return this.get<HTMLSelectElement>(cls).value; }
 
   private clear(): void {
     this.el.querySelectorAll('select').forEach((s) => { s.selectedIndex = 0; });
     this.el.querySelectorAll('input').forEach((i) => { i.value = ''; });
+    this.el.querySelectorAll<HTMLElement>('[data-rolled]').forEach((c) => { delete c.dataset.rolled; c.classList.remove('lp-rolled'); });
     this.result.textContent = '';
   }
 
@@ -123,28 +151,15 @@ export class LifePick {
     });
   }
 
+  /** A control's submitted value; rolled values (shown but not chosen) read as blank. */
+  private submitted(key: string): string {
+    const el = this.get<HTMLInputElement | HTMLSelectElement>(`.lp-${key}`);
+    return el.dataset.rolled ? '' : el.value;
+  }
+
   /** The filters the form asks for; undefined fields mean "anyone". */
   private want(): PickWant {
-    const num = (cls: string) => { const v = parseCount(this.get<HTMLInputElement>(cls).value); return Number.isFinite(v) ? v : undefined; };
-    /** a year the user typed: calendar years (>2040) convert to sim years, small numbers are sim years */
-    const yr = (v: number | undefined) => (v === undefined ? undefined : v > 2040 ? v - 2040 : v);
-    const loW = num('.lp-wealth-lo'), hiW = num('.lp-wealth-hi');
-    const loA = num('.lp-age-lo'), hiA = num('.lp-age-hi');
-    const loH = num('.lp-height-lo'), hiH = num('.lp-height-hi');
-    const loM = num('.lp-moves-lo'), hiM = num('.lp-moves-hi');
-    const loB = yr(num('.lp-born-lo')), hiB = yr(num('.lp-born-hi'));
-    const w: PickWant = {};
-    if (loW !== undefined || hiW !== undefined) w.wealth = [Math.max(0, Math.min(100, 100 - (hiW ?? 100))), Math.max(0, Math.min(100, 100 - (loW ?? 0)))];
-    if (loA !== undefined || hiA !== undefined) w.age = [loA ?? 0, hiA ?? 1e6];
-    if (loH !== undefined || hiH !== undefined) w.height = [loH ?? 0, hiH ?? 1e6];
-    if (loM !== undefined || hiM !== undefined) w.moves = [loM ?? 0, hiM ?? 1e6];
-    if (loB !== undefined || hiB !== undefined) w.born = [loB ?? -1e6, hiB ?? 1e6];
-    if (this.val('.lp-sex')) w.sex = this.val('.lp-sex') as 'f' | 'm';
-    if (this.val('.lp-mood')) w.mood = this.val('.lp-mood');
-    if (this.val('.lp-health')) w.health = this.val('.lp-health');
-    if (this.val('.lp-edu')) w.education = this.val('.lp-edu');
-    if (this.val('.lp-faith')) w.devotion = this.val('.lp-faith');
-    return w;
+    return buildWant((k) => this.submitted(k));
   }
 
   private say(html: string, seq: number): void { if (seq === this.seq) this.result.innerHTML = html; }
@@ -152,8 +167,7 @@ export class LifePick {
   private async go(random: boolean): Promise<void> {
     const seq = ++this.seq;
     const b = Number(this.bodySel.value);
-    // 'anyone' means the user didn't choose — roll a kind per draw rather than fixing one
-    const kind = this.val('.lp-kind') === 'any' ? 'random' : this.val('.lp-kind');
+    const kind = this.submitted('kind') || 'any';
     const where = b >= 0 ? this.opts.nameOf(b) : null;
     const want = this.want();
     const n = random ? 0 : Math.max(0, Math.floor(parseCount(this.nInput.value) || 0));
@@ -173,14 +187,14 @@ export class LifePick {
     if (!r.person) {
       this.say(b < 0 ? `Nobody anywhere matches that${filtered ? ' — loosen a filter or two.' : '.'}`
         : !r.total ? `Nobody has ever been born on ${esc(where!)}.`
-        : kind === 'random' && n === 0 && !filtered ? `${esc(where!)} has seen ${fmtNum(r.total)} birth${r.total === 1 ? '' : 's'} — pick a number up to that.`
+        : kind === 'any' && n === 0 && !filtered ? `${esc(where!)} has seen ${fmtNum(r.total)} birth${r.total === 1 ? '' : 's'} — pick a number up to that.`
         : `No match on ${esc(where!)} among ${fmtNum(Math.max(r.scanned, n))} scanned${filtered ? ' — loosen a filter or two' : ''}.`, seq);
       return;
     }
     this.opts.open(r.person);
     const p = r.brief, st = r.standing;
     if (p || st) this.showRoll(p ?? undefined, st ?? null);   // blank fields get filled by whoever was found
-    const stats = st ? ` ${esc(st.class)}${st.devotion ? `, ${st.devotion}` : ''}, ${esc(st.mood)}.` : '';
+    const stats = st ? ` ${esc(st.class)}, ${esc(st.mood)}.` : '';
     this.say(p ? `Following <b>${esc(p.name)}</b> — born on ${esc(where ?? p.place)} in ${fmtYear(p.born)}${p.born > this.opts.year() ? ', not yet born.' : p.alive ? `; ${Math.floor(p.age)}, ${esc(p.job)}${p.place && p.place !== where ? ` on ${esc(p.place)}` : ''}.${stats}` : ', now gone.'}` : 'Following them.', seq);
     // the whole life laid out — including everything after the year being shown;
     // click a beat to be taken to it
@@ -194,8 +208,9 @@ export class LifePick {
   /** Writes the found person's traits into any control the user left blank — blank
    *  means "rolled", so the dice's answer is shown, never a default value. */
   private showRoll(p: PersonBrief | undefined, st: Biography['standing']): void {
-    const set = (cls: string, v: string | number) => { const el = this.get<HTMLInputElement | HTMLSelectElement>(cls); if (!el.value) el.value = String(v); };
-    const setSel = (cls: string, v: string) => { const el = this.get<HTMLSelectElement>(cls); if (el.selectedIndex <= 0 && [...el.options].some((o) => o.value === v)) el.value = v; };
+    const mark = (el: HTMLElement) => { el.dataset.rolled = '1'; el.classList.add('lp-rolled'); };
+    const set = (cls: string, v: string | number) => { const el = this.get<HTMLInputElement>(cls); if (!el.value) { el.value = String(v); mark(el); } };
+    const setSel = (cls: string, v: string) => { const el = this.get<HTMLSelectElement>(cls); if (el.selectedIndex <= 0 && [...el.options].some((o) => o.value === v)) { el.value = v; mark(el); } };
     const pbody = { 'baseline human': 'baseline', 'adapted to this world': 'adapted', uploaded: 'uploaded' }[p?.body ?? ''] as string | undefined;
     if (pbody) setSel('.lp-kind', pbody);
     if (p?.sex) setSel('.lp-sex', p.sex);
@@ -204,7 +219,6 @@ export class LifePick {
       const hcat = st.health.includes('scarred') ? 'scarred' : st.health.startsWith('a mind') ? 'uploaded' : st.health.startsWith('engineered') ? 'engineered' : st.health === 'a chronic condition' ? 'chronic' : st.health;
       setSel('.lp-health', hcat);
       setSel('.lp-edu', st.education);
-      setSel('.lp-faith', st.devotion ?? 'none');
       set('.lp-wealth-lo', Math.round(100 - st.wealthPct * 100));
       set('.lp-wealth-hi', Math.round(100 - st.wealthPct * 100));
       set('.lp-moves-lo', st.moves);
@@ -213,8 +227,8 @@ export class LifePick {
     if (p) {
       set('.lp-age-lo', Math.floor(p.age));
       set('.lp-age-hi', Math.floor(p.age));
-      set('.lp-born-lo', 2040 + p.born);
-      set('.lp-born-hi', 2040 + p.born);
+      set('.lp-born-lo', Math.floor(2040 + p.born));
+      set('.lp-born-hi', Math.floor(2040 + p.born));
     }
   }
 }

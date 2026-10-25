@@ -59,6 +59,16 @@ function erf(x: number): number {
 }
 const ncdf = (x: number) => 0.5 * (1 + erf(x / Math.SQRT2));
 
+/** soft(v) maps a 0–1 quantity onto a moderate normal quantile band. */
+const softQ = (v: number) => probit(0.15 + 0.7 * Math.max(0, Math.min(1, v)));
+/** Var[soft(U)] for U ~ Uniform(0,1), by numeric integration at load (≈0.309). */
+const SOFT_U_VAR = (() => {
+  const N = 4096;
+  let m = 0, m2 = 0;
+  for (let k = 0; k < N; k++) { const s = softQ((k + 0.5) / N); m += s; m2 += s * s; }
+  return m2 / N - (m / N) * (m / N);
+})();
+
 const MORTAL: Record<number, string> = {
   [EV.Plague]: 'the plague', [EV['Habitat breach']]: 'a habitat breach', [EV['Asteroid strike']]: 'the asteroid strike',
   [EV.Famine]: 'the famine', [EV.War]: 'the war', [EV['Gamma-ray burst']]: 'the gamma-ray burst', [EV.Supernova]: 'the supernova',
@@ -84,7 +94,6 @@ export interface Biography extends PersonBrief {
   story: { year: number; text: string; link?: { kind: 'body' | 'person'; id: string | number } }[];
   height: number; personality: [number, number, number, number, number]; generationsHere: number;
   descendants: { total: number; alive: number; places: { body: number; name: string; n: number }[]; generations: number };
-  faith?: string | null;  // raised in, from the birthplace's faith shares at birth
   /** every place they ever were, in order: the pathway of a life, birth to death */
   path: { body: number | null; name: string; from: number; to: number | null; ship?: { from: number; to: number; depart: number } }[];
   /** Standing, schooling, health, mood: derived, not simulated — hashed from identity,
@@ -92,24 +101,24 @@ export interface Biography extends PersonBrief {
   standing: {
     wealthPct: number;        // their place in the local wealth distribution, 0..1
     worth: number;            // indicative net worth in $, from local product and inequality
-    class: string; education: string; health: string; mood: string; language: string; devotion: string | null;
+    class: string; education: string; health: string; mood: string; language: string;
     /** relocations so far: every stay after the first, counting returns (Earth→Mars→Earth = 2) */
     moves: number;
   } | null;
 }
 
-/** Filters for pickLife: leave a field undefined for "anyone". wealth bounds are percentiles 0–100. */
+/** Filters for pickLife: leave a field undefined for "anyone". wealth bounds are percentiles 0–100;
+ *  born and age take a lower-inclusive, upper-exclusive range (a whole year means [y, y+1)). */
 export interface PickWant {
   sex?: 'f' | 'm';
   wealth?: [number, number];
-  age?: [number, number];
+  age?: [number, number];   // lower bound inclusive, upper exclusive
   height?: [number, number];
   moves?: [number, number];  // relocations so far: 0 = born-and-stayed
-  born?: [number, number];   // birth year bounds (sim years: 0 = 2040)
+  born?: [number, number];   // birth year bounds (sim years: 0 = 2040); lower inclusive, upper exclusive
   mood?: string;
   health?: string;        // healthy | scarred | frail | chronic | uploaded | engineered
   education?: string;
-  devotion?: string;      // devout | observant | nominal | lapsed | none
 }
 
 export class Lives {
@@ -298,19 +307,29 @@ export class Lives {
     return pool[Math.floor(h * pool.length)];
   }
 
-  /** baseline, adapted (engineered for their world) or uploaded */
-  private bodyKind(id: Id, age: number, year: number): string {
+  /** baseline, adapted (engineered for their world) or uploaded; `at` is where they live */
+  private bodyKind(id: Id, age: number, year: number, at: number): string {
     const born = year - age;
     if (this.bodyShares && !isShipBody(id.b)) {
       // the shares the sim keeps per settlement: uploads among the old where they live, adaptation from birth
-      const here = this.bodyShares(id.b, year), atBirth = this.bodyShares(id.b, born);
-      if (age > 40 && hash01(id.b, id.q, id.i, 71) < Math.min(1, here.uploaded * 1.6)) return 'uploaded';
+      const here = this.bodyShares(at, year), atBirth = this.bodyShares(id.b, born);
+      if (age > 40) {
+        const s40 = this.ageStats(at, year).over40;
+        if (hash01(id.b, id.q, id.i, 71) < (s40 > 0 ? Math.min(1, here.uploaded / s40) : 0)) return 'uploaded';
+      }
       if (hash01(id.b, id.q, id.i, 72) < atBirth.adapted) return 'adapted to this world';
       return 'baseline human';
     }
     if (this.techBy('mindUpload', year) && age > 60 && hash01(id.b, id.q, id.i, 71) < Math.min(0.6, (year - this.e.st.techDone[TECHS.findIndex((t) => t.id === 'mindUpload')]) / 800)) return 'uploaded';
     if (this.techBy('bioAdapt', born) && !isShipBody(id.b) && this.e.world.bodies[id.b] && Math.abs(1 - this.e.world.bodies[id.b].g) > 0.3) return 'adapted to this world';
     return 'baseline human';
+  }
+  /** What kind of human they are at `year`, judged where they then live (a ship reads as its home port). */
+  private kindAt(id: Id, year: number): string {
+    const life = this.D.life(id, this.D.lastPeriod);
+    const stay = life ? this.stayAt(life, year) : null;
+    const at = this.home(stay?.body ?? id.b);
+    return this.bodyKind(id, year - this.D.birthYear(id), year, at);
   }
   /** set by the worker: shares of a settlement's people adapted and uploaded in a year */
   bodyShares: ((b: number, year: number) => { adapted: number; uploaded: number }) | null = null;
@@ -324,7 +343,7 @@ export class Lives {
     const stay = this.stayAt(life, year);
     return {
       id: idStr(id), name: this.name(id), sex: this.sexOf(id) === 0 ? 'f' : 'm', born, age,
-      place: this.bodyName(stay?.body ?? id.b), job: this.job(id, age, year), alive: year >= born && year < deathYear, body: this.bodyKind(id, age, year),
+      place: this.bodyName(stay?.body ?? id.b), job: this.job(id, age, year), alive: year >= born && year < deathYear, body: this.kindAt(id, year),
     };
   }
 
@@ -367,7 +386,7 @@ export class Lives {
       for (let i = 0; i < x.n && scanned < BUDGET; i++) {
         scanned++;
         const id = { b: body, q: x.q, i };
-        if (this.bodyKind(id, Math.max(0, year - this.D.birthYear(id)), year) === want && ++seen === n) return { person: id, total, scanned };
+        if (this.kindAt(id, year) === want && ++seen === n) return { person: id, total, scanned };
       }
       if (scanned >= BUDGET) break;
     }
@@ -393,7 +412,8 @@ export class Lives {
 
   private heightOf(id: Id, born: number): number {
     const bodyG = isShipBody(id.b) ? 0.9 : this.e.world.bodies[id.b].g;
-    return Math.round(172 + (1 - Math.min(bodyG, 1.5)) * 24 * Math.min(1, (born - (isShipBody(id.b) ? born - 100 : this.e.st.S[id.b * NF + F.founded])) / 300) + (hash01(id.b, id.q, id.i, 61) - 0.5) * 22);
+    const noise = probit(Math.min(1 - 1e-6, Math.max(1e-6, hash01(id.b, id.q, id.i, 61)))) * 7;
+    return Math.round((this.sexOf(id) === 0 ? 164 : 177) + (1 - Math.min(bodyG, 1.5)) * 24 * Math.min(1, (born - (isShipBody(id.b) ? born - 100 : this.e.st.S[id.b * NF + F.founded])) / 300) + noise);
   }
   private personalityOf(id: Id): Biography['personality'] {
     return [62, 63, 64, 65, 66].map((k) => Math.round(hash01(id.b, id.q, id.i, k) * 100) / 100) as Biography['personality'];
@@ -406,17 +426,18 @@ export class Lives {
     const life = this.D.life(id, this.D.lastPeriod);
     if (!life) return false;
     const born = this.D.birthYear(id);
-    if (want.born && (born < want.born[0] || born > want.born[1])) return false;
+    if (want.born && (born < want.born[0] || born >= want.born[1])) return false;
     const last = life[life.length - 1];
     const dead = last.end === 'died' || last.end === 'lost';
     const ey = Math.min(year, dead ? Math.max(born, last.diedYear! - 1) : year);
-    const age = ey - born;
-    if (age < 0) return false;
+    if (ey < born) return false;
+    // the age filter reads the age a biography shows: at the year, or at death
+    const age = Math.min(year, dead ? last.diedYear! : year) - born;
     const brief = this.brief(id, ey);
     if (want.sex && brief.sex !== want.sex) return false;
     const h = this.heightOf(id, born);
     if (want.height && (h < want.height[0] || h > want.height[1])) return false;
-    if (want.age && (age < want.age[0] || age > want.age[1])) return false;
+    if (want.age && (age < want.age[0] || age >= want.age[1])) return false;
     // moves so far at ey: relocations before then — stays that started on or before its period
     if (want.moves) {
       const p = periodOf(ey);
@@ -425,13 +446,11 @@ export class Lives {
     }
     const stay = this.stayAt(life, ey);
     const at = this.home(stay?.body ?? id.b);
-    const faith = this.faithAt?.(this.home(id.b), born, hash01(id.b, id.q, id.i, 71)) ?? null;
-    const st = this.standing(id, ey, life, at, brief.job, brief.body, faith);
+    const st = this.standing(id, ey, life, at, brief.job, brief.body);
     if (!st) return false;
     if (want.wealth && (st.wealthPct * 100 < want.wealth[0] || st.wealthPct * 100 > want.wealth[1])) return false;
     if (want.mood && st.mood !== want.mood) return false;
     if (want.education && st.education !== want.education) return false;
-    if (want.devotion && (want.devotion === 'none' ? st.devotion !== null : st.devotion !== want.devotion)) return false;
     if (want.health) {
       const cat = st.health.includes('scarred') ? 'scarred' : st.health.startsWith('a mind') ? 'uploaded' : st.health.startsWith('engineered') ? 'engineered' : st.health === 'a chronic condition' ? 'chronic' : st.health;
       if (cat !== want.health) return false;
@@ -444,7 +463,7 @@ export class Lives {
    *  outside it — callers check exact birth years). */
   private bornBy(body: number, n: number, year: number, lo = -Infinity, hi = Infinity): { person: Id | null; total: number } {
     const t = this.D.ensure(body, Math.min(this.D.lastPeriod, Math.max(0, periodOf(year))));
-    const pools = t.pools.filter((x) => x.native && (x.q < 0 ? lo < 0 : periodStart(x.q) <= year && periodStart(x.q) <= hi && periodStart(x.q + 1) > lo)).sort((a, b) => a.q - b.q);
+    const pools = t.pools.filter((x) => x.native && (x.q < 0 ? lo < 0 : periodStart(x.q) <= year && periodStart(x.q) < hi && periodStart(x.q + 1) > lo)).sort((a, b) => a.q - b.q);
     const total = pools.reduce((a, x) => a + x.n, 0);
     if (n < 1 || n > total) return { person: null, total };
     let left = n;
@@ -459,7 +478,6 @@ export class Lives {
    *  birth number; 0 draws at random, up to a few hundred tries until the filters fit. */
   pickLife(body: number, n: number, kind: string, year: number, want: PickWant | undefined, salt: number): { person: Id | null; total: number; scanned: number; standing: Biography['standing'] } {
     const KIND_WORD: Record<string, string> = { baseline: 'baseline human', adapted: 'adapted to this world', uploaded: 'uploaded' };
-    const KINDS = Object.keys(KIND_WORD);
     // one named person on one named world: the exact lookup, filters checked once
     if (body >= 0 && n > 0) {
       const r = this.bornAt(body, n, kind === 'random' ? 'any' : kind, year);
@@ -483,38 +501,66 @@ export class Lives {
     const moverFlows = want?.moves && want.moves[0] >= 1 && L
       ? (body >= 0 ? (L.inBy.get(body) ?? []) : L.flows.map((f, i) => i)).filter((i) => { const f = L.flows[i]; return !f.lost && f.pArrive <= pNow; })
       : null;
+    // the flow is drawn proportional to its ridership; the member within it stays uniform
+    const moverCum: number[] = [];
+    if (moverFlows) { let s = 0; for (const i of moverFlows) { s += L.flows[i].n; moverCum.push(s); } }
+    /** index of the cell of `cum` that x lands in (cum holds prefix sums; zero-width cells are unreachable) */
+    const pickIn = (cum: number[], x: number): number => {
+      let a = 0, z = cum.length - 1;
+      while (a < z) { const m = (a + z) >> 1; if (cum[m] <= x) a = m + 1; else z = m; }
+      return a;
+    };
     const rider = (t: number): Id | null => {
-      const fid = moverFlows![Math.floor(hash01(this.e.seed, salt, t, 7) * moverFlows!.length)];
+      const tot = moverCum[moverCum.length - 1];
+      if (tot <= 0) return null;
+      const fid = moverFlows![pickIn(moverCum, hash01(this.e.seed, salt, t, 7) * tot)];
       const ranges = this.D.flowMembers(fid);
-      const tot = ranges.reduce((a, r) => a + r.count, 0);
-      if (!tot) return null;
-      let j = Math.floor(hash01(this.e.seed, salt, t, 8) * tot);
+      const tot2 = ranges.reduce((a, r) => a + r.count, 0);
+      if (!tot2) return null;
+      let j = Math.floor(hash01(this.e.seed, salt, t, 8) * tot2);
       const r = ranges.find((x) => (j < x.count ? true : ((j -= x.count), false)))!;
       return this.D.origin(r.pool, r.start + j);
     };
     let total = 0;
     const filtered = !!want && Object.values(want).some((v) => v !== undefined);
-    const TRIES = filtered || kind === 'random' ? 500 : 120;
+    const TRIES = filtered ? 500 : 120;
     const censuses = new Map<number, { total: number; at: (k: number) => Id }>();
     const birthsOf = new Map<number, number>();
+    // the body is drawn proportional to the people the draw can reach there: the living
+    // head-count when it samples the census, else the births in pools overlapping the
+    // born window (plus Earth's pre-Landing cohort when the window reaches before 2040)
+    const lo = want?.born?.[0] ?? -Infinity, hi = want?.born?.[1] ?? Infinity;
+    const pC = Math.max(0, Math.min(this.D.lastPeriod, periodOf(year) - (year >= 5 ? 1 : 0)));
+    const byBirths = !(filtered && !want?.born);
+    const weightOf = (b: number): number => {
+      if (!byBirths) return Math.max(0, L.popEnd.get(b)?.[pC] ?? 0);
+      const br = L.births.get(b);
+      let w = 0;
+      if (br) for (let k = 0; k < br.length; k++) if (br[k] > 0 && periodStart(k) <= year && periodStart(k) < hi && periodStart(k + 1) > lo) w += br[k];
+      if (lo < 0 && b === this.e.world.earth)
+        for (const x of this.D.ensure(b, 0).pools) if (x.native && x.q < 0) w += x.n;
+      return w;
+    };
+    const cumFor = (list: number[]) => { const c: number[] = []; let s = 0; for (const b of list) c.push((s += weightOf(b))); return c; };
+    const bodiesCum = cumFor(bodies), eventCum = cumFor(eventBodies);
     for (let t = 0; t < TRIES; t++) {
-      const biased = eventBodies;
-      const pool = biased.length && hash01(this.e.seed, salt, t, 9) < 0.7 ? biased : bodies;
-      const b = pool.length === 1 ? pool[0] : pool[Math.floor(hash01(this.e.seed, salt, t, 1) * pool.length)];
+      const biased = eventBodies.length && hash01(this.e.seed, salt, t, 9) < 0.7;
+      const pool = biased ? eventBodies : bodies, cum = biased ? eventCum : bodiesCum;
+      const totW = cum[cum.length - 1];
+      const b = pool.length === 1 ? pool[0] : totW > 0 ? pool[pickIn(cum, hash01(this.e.seed, salt, t, 1) * totW)] : null;
+      if (b === null) continue;
       let id: Id | null;
-      if (moverFlows?.length && hash01(this.e.seed, salt, t, 9) >= 0.3) {
+      if (moverFlows?.length && hash01(this.e.seed, salt, t, 10) >= 0.3) {
         id = rider(t);
       } else if (filtered && !want?.born) {
         // filters need someone assessable at the year: draw from the living census —
         // unless a born range is set, since the dead were born then too
-        const p = Math.max(0, Math.min(this.D.lastPeriod, periodOf(year) - (year >= 5 ? 1 : 0)));
         let c = censuses.get(b);
-        if (!c) { c = this.D.census(b, p); censuses.set(b, c); }
+        if (!c) { c = this.D.census(b, pC); censuses.set(b, c); }
         if (!c.total) continue;
         total = Math.max(total, c.total);
         id = c.at(Math.floor(hash01(this.e.seed, salt, t, 2) * c.total));
       } else {
-        const lo = want?.born?.[0] ?? -Infinity, hi = want?.born?.[1] ?? Infinity;
         let tot = birthsOf.get(b);
         if (tot === undefined) { tot = this.bornBy(b, 1, year, lo, hi).total; birthsOf.set(b, tot); }
         if (!tot || (n > 0 && n > tot)) continue;
@@ -522,11 +568,8 @@ export class Lives {
         id = this.bornBy(b, n > 0 ? n : 1 + Math.floor(hash01(this.e.seed, salt, t, 2) * tot), year, lo, hi).person;
       }
       if (!id) continue;
-      const kk = kind === 'random' ? KINDS[Math.floor(hash01(this.e.seed, salt, t, 3) * KINDS.length)] : kind;
-      if (kk !== 'any') {
-        const age = year - this.D.birthYear(id);
-        if (this.bodyKind(id, Math.max(0, age), year) !== KIND_WORD[kk]) continue;
-      }
+      const kk = kind === 'random' ? 'any' : kind;
+      if (kk !== 'any' && this.kindAt(id, year) !== KIND_WORD[kk]) continue;
       const got = this.match(id, year, want ?? {});
       if (got !== false) return { person: id, total, scanned: t + 1, standing: got || null };
     }
@@ -552,25 +595,60 @@ export class Lives {
   // ---------------------------------------------------------------- derived standing
 
   /** A settlement's recorded economy at a year: the last history row at or before it. */
-  private histAt(b: number, year: number): { gdp: number; pop: number; happy: number; stab: number } | null {
+  private histAt(b: number, year: number): { gdp: number; pop: number; happy: number; stab: number; gini: number } | null {
     const h = this.e.hist, w = 2 + HIST_FIELDS.length;
     const ys = this.e.years;
     let lo = 0, hi = ys.length - 1;
     while (lo < hi) { const m = (lo + hi + 1) >> 1; if (ys[m] <= year) lo = m; else hi = m - 1; }
-    const gi = HIST_FIELDS.indexOf('gdp'), pi = HIST_FIELDS.indexOf('pop'), ei = HIST_FIELDS.indexOf('happiness'), si = HIST_FIELDS.indexOf('stability');
-    for (let i = this.e.histLen - 1; i >= 0; i--) {
-      const r = i * w;
-      if (h[r] > lo) continue;
-      if (h[r + 1] !== b) continue;
-      return { gdp: h[r + 2 + gi], pop: h[r + 2 + pi], happy: h[r + 2 + ei], stab: h[r + 2 + si] };
+    const gi = HIST_FIELDS.indexOf('gdp'), pi = HIST_FIELDS.indexOf('pop'), ei = HIST_FIELDS.indexOf('happiness'), si = HIST_FIELDS.indexOf('stability'), ni = HIST_FIELDS.indexOf('gini');
+    const rows = this.histIndex().get(b);
+    if (!rows) return null;
+    let a = 0, z = rows.length;
+    while (a < z) { const m = (a + z) >> 1; if (h[rows[m] * w] <= lo) a = m + 1; else z = m; }
+    if (!a) return null;
+    const r = rows[a - 1] * w;
+    return { gdp: h[r + 2 + gi], pop: h[r + 2 + pi], happy: h[r + 2 + ei], stab: h[r + 2 + si], gini: h[r + 2 + ni] };
+  }
+  private histIdx: Map<number, number[]> | null = null;
+  /** History row offsets per body, in step order (rows are appended in step order). */
+  private histIndex(): Map<number, number[]> {
+    if (!this.histIdx) {
+      const h = this.e.hist, w = 2 + HIST_FIELDS.length, m = new Map<number, number[]>();
+      for (let i = 0; i < this.e.histLen; i++) {
+        const b = h[i * w + 1], a = m.get(b);
+        if (a) a.push(i); else m.set(b, [i]);
+      }
+      this.histIdx = m;
     }
-    return null;
+    return this.histIdx;
+  }
+
+  private locStats = new Map<string, { mu: number; va: number; over40: number }>();
+  /** soft(age-map) moments over the local population at `year`'s census period —
+   *  mean and variance of soft(a(age)), and the share of people over 40. */
+  private ageStats(at: number, year: number): { mu: number; va: number; over40: number } {
+    const p = Math.max(0, Math.min(this.D.lastPeriod, periodOf(year) - (year >= 5 ? 1 : 0)));
+    const key = `${at}:${p}`, got = this.locStats.get(key);
+    if (got) return got;
+    const c = this.D.census(at, p);
+    const aOf = (age: number) => (age < 20 ? 0 : age < 45 ? ((age - 20) / 25) * 0.7 : 0.7 + Math.min(0.3, (age - 45) / 120));
+    let tot = 0, mu = 0, m2 = 0, old = 0;
+    for (const { pool, alive } of c.pools) {
+      const s = softQ(aOf(year - periodMid(pool.q)));   // ages at the asked year, matching the person's own a
+      tot += alive; mu += alive * s; m2 += alive * s * s;
+      // share of the pool aged over 40 at `year`: members' births spread evenly over its period
+      const len = periodStart(pool.q + 1) - periodStart(pool.q);
+      old += alive * Math.min(1, Math.max(0, (year - 40 - periodStart(pool.q)) / len));
+    }
+    const out = { mu: tot ? mu / tot : 0, va: tot ? m2 / tot - (mu / tot) ** 2 : 0, over40: tot ? old / tot : 0 };
+    this.locStats.set(key, out);
+    return out;
   }
 
   /** Where a person sits in the local wealth distribution: mostly luck, part accumulation
    *  with age, part inherited from a parent (one level up). The mix happens in normal
    *  space so the result is a true percentile — uniform across the population. */
-  private wealthPct(id: Id, year: number, depth = 0): number {
+  private wealthPct(id: Id, year: number, at: number, depth = 0): number {
     const age = Math.max(0, year - this.D.birthYear(id));
     const u = hash01(id.b, id.q, id.i, 81);
     // age and inheritance tilt the draw rather than dominate it: map each into a
@@ -579,10 +657,13 @@ export class Lives {
     let inherit = 0.5;
     if (depth === 0) {
       const p = this.D.father(id) ?? this.D.mother(id);
-      if (p) inherit = this.wealthPct(p, year, 1);
+      if (p) inherit = this.wealthPct(p, year, at, 1);
     }
-    const soft = (v: number) => probit(0.15 + 0.7 * Math.max(0, Math.min(1, v)));
-    const z = (0.6 * probit(u) + 0.2 * soft(a) + 0.25 * soft(inherit)) / Math.sqrt(0.6 * 0.6 + 0.2 * 0.2 + 0.25 * 0.25);
+    const { mu, va } = this.ageStats(at, year);
+    // each ingredient contributes its own variance: luck is N(0,1), age is centred on the
+    // local mean, inheritance is a fresh soft draw (the parent herself carries none)
+    const z = (0.6 * probit(u) + 0.2 * (softQ(a) - mu) + (depth === 0 ? 0.25 * softQ(inherit) : 0))
+      / Math.sqrt(0.36 + 0.04 * va + (depth === 0 ? 0.0625 * SOFT_U_VAR : 0));
     return Math.max(0.001, Math.min(0.999, ncdf(z)));
   }
 
@@ -598,16 +679,16 @@ export class Lives {
   }
 
   /** Everything about a person's place in society, derived at the asked year. */
-  private standing(id: Id, year: number, life: Stay[], at: number, job: string, body: string | undefined, faith: string | null): Biography['standing'] {
+  private standing(id: Id, year: number, life: Stay[], at: number, job: string, body: string | undefined): Biography['standing'] {
     const born = this.D.birthYear(id), age = Math.max(0, year - born);
     const hist = this.histAt(at, year);
-    const g = this.e.st.S[at * NF + F.gini];
+    const g = hist?.gini ?? 0;
     const gini = g > 0.15 && g < 0.9 ? g : 0.4;
     const ys = this.e.years;
     let lo = 0, hi = ys.length - 1;
     while (lo < hi) { const m = (lo + hi + 1) >> 1; if (ys[m] <= year) lo = m; else hi = m - 1; }
     const gpc = hist && hist.pop > 0 ? hist.gdp / hist.pop : this.e.series[lo * NGM + GM.gdpPerCap] || 0;
-    const pct = this.wealthPct(id, year);
+    const pct = this.wealthPct(id, year, at);
     // the local distribution read as lognormal: Gini = 2Φ(σ/√2) − 1
     const sig = Math.SQRT2 * probit((gini + 1) / 2);
     const worth = 5 * gpc * Math.exp(sig * probit(pct) - (sig * sig) / 2);
@@ -635,10 +716,8 @@ export class Lives {
       : um < 0.5 ? MOODS_GOOD[Math.floor(um * 2 * MOODS_GOOD.length)] : MOODS_BAD[Math.floor((um - 0.5) * 2 * MOODS_BAD.length)];
     const dr = this.drift(at, year);
     const language = dr < 0.15 ? 'Earth languages' : dr < 0.4 ? `${this.coined(3, at, 0, 2)} creole` : dr < 0.7 ? `${this.coined(4, at, 0, 2)}, a daughter language of Earth's` : `${this.coined(5, at, 0, 2)}, unrelated to Earth's`;
-    const ud = hash01(id.b, id.q, id.i, 84);
-    const devotion = faith ? ud < 0.15 ? 'lapsed' : ud < 0.45 ? 'nominal' : ud < 0.8 ? 'observant' : 'devout' : null;
     const moves = Math.max(0, life.filter((s, k) => k > 0 && s.from <= periodOf(year)).length);
-    return { wealthPct: pct, worth, class: cls, education: this.education(job), health, mood, language, devotion, moves };
+    return { wealthPct: pct, worth, class: cls, education: this.education(job), health, mood, language, moves };
   }
 
   /** The critical beats of a whole life — birth, every move, every mortal event
@@ -788,7 +867,7 @@ export class Lives {
     const at = this.home(atStay?.body ?? id.b);
     const effYear = Math.min(year, dead ? Math.max(born, deathYear - 1) : year);
     const standing = year >= born && !isShipBody(at) && at < this.e.world.bodies.length
-      ? this.standing(id, effYear, life, at, brief.job, brief.body, faith) : null;
+      ? this.standing(id, effYear, life, at, brief.job, brief.body) : null;
     return {
       ...brief, age, bornAt: id.b, bornAtName: this.bodyName(id.b), died, status,
       where: stay ? { body: stay.body, name: this.bodyName(stay.body) } : null,
@@ -801,7 +880,6 @@ export class Lives {
       height: this.heightOf(id, born),
       personality: this.personalityOf(id),
       generationsHere: ancestors.filter((a) => a.who.place === this.bodyName(id.b)).length + 1,
-      faith,
       descendants: { total: desc.total, alive: desc.alive, generations: desc.generations, places: [...desc.places.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([b, n]) => ({ body: b, name: this.bodyName(b), n })) },
       path,
       standing,
