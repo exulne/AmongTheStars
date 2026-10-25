@@ -641,6 +641,35 @@ export class Lives {
     return { wealthPct: pct, worth, class: cls, education: this.education(job), health, mood, language, devotion, moves };
   }
 
+  /** The critical beats of a whole life — birth, every move, every mortal event
+   *  survived, death — always computed over the full run, not the asked year. */
+  lifeEvents(idS: string): { year: number; text: string; body?: number }[] {
+    const m = idS.match(/^(\d+)\.(-?\d+)\.(\d+)$/);
+    if (!m) return [];
+    const id: Id = { b: +m[1], q: +m[2], i: +m[3] };
+    const life = this.D.life(id, this.D.lastPeriod);
+    if (!life) return [];
+    const born = this.D.birthYear(id);
+    const out: { year: number; text: string; body?: number }[] = [{ year: born, text: `born on ${this.bodyName(id.b)}`, body: this.home(id.b) }];
+    for (let k = 0; k < life.length; k++) {
+      const s = life[k];
+      const y0 = Math.max(periodStart(s.from), born), y1 = periodStart(s.to + 1);
+      for (const ev of this.eventsBy.get(s.body) ?? []) {
+        const inStay = ev.year >= y0 && (s.end === 'left' ? ev.year < y1 : ev.year <= y1);
+        if (inStay && ev.type in MORTAL) out.push({ year: ev.year, text: `lived through ${MORTAL[ev.type]} on ${this.bodyName(s.body)}`, body: this.home(s.body) });
+      }
+      if (s.end === 'left' && s.flow) out.push({ year: s.flow.depart, text: `left ${this.bodyName(s.body)} aboard the ${this.shipName(s.flow)}`, body: this.home(s.flow.dst) });
+      if (k > 0) {
+        const f = life[k - 1].flow;
+        out.push({ year: f?.arrive ?? periodStart(s.from), text: `arrived at ${this.bodyName(s.body)}${f ? ` aboard the ${this.shipName(f)}` : ''}`, body: this.home(s.body) });
+      }
+    }
+    const last = life[life.length - 1];
+    if (last.end === 'died' && last.diedYear != null) out.push({ year: last.diedYear, text: `died on ${this.bodyName(last.body)} — ${this.deathCause(id, last, Math.max(0, last.diedYear - born))}` });
+    else if (last.end === 'lost') out.push({ year: last.diedYear ?? periodStart(last.to), text: 'lost in deep space' });
+    return out.sort((a, b) => a.year - b.year);
+  }
+
   biography(idS: string, year: number): Biography | null {
     const m = idS.match(/^(\d+)\.(-?\d+)\.(\d+)$/);
     if (!m) return null;

@@ -11,6 +11,7 @@ import { fmtNum, fmtYear, parseCount } from './format.ts';
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 export interface FindResult {
+  life?: { year: number; text: string; body?: number }[];
   person: string | null; brief: PersonBrief | null; total: number; scanned: number; pending?: boolean;
   standing?: Biography['standing'];
 }
@@ -72,7 +73,8 @@ export class LifePick {
       ${sel('lp-edu', 'Education', [['', 'any'], ...EDU_OPTS.map((e) => [e, e] as [string, string])])}
       ${sel('lp-faith', 'Faith', [['', 'any'], ...DEVOTION_OPTS.map((d) => [d, d] as [string, string])])}
       <p class="lp-row"><button class="link lp-go" type="button">Follow their life</button><button class="link lp-rand" type="button">someone at random</button><button class="link lp-clear" type="button">clear</button></p>
-      <p class="lp-result muted" aria-live="polite"></p>`;
+      <p class="lp-result muted" aria-live="polite"></p>
+      <div class="lp-life" role="list"></div>`;
     this.bodySel = this.el.querySelector('.lp-body')!;
     this.nInput = this.el.querySelector('.lp-n')!;
     this.result = this.el.querySelector('.lp-result')!;
@@ -149,6 +151,7 @@ export class LifePick {
     const where = b >= 0 ? this.opts.nameOf(b) : null;
     const want = this.want();
     const n = random ? 0 : Math.max(0, Math.floor(parseCount(this.nInput.value) || 0));
+    this.el.querySelector<HTMLElement>('.lp-life')!.innerHTML = '';
     this.say('Finding them…', seq);
     if (!this.bodiesReady) {
       const r = await this.opts.bodies();
@@ -173,6 +176,12 @@ export class LifePick {
     if (p || st) this.showRoll(p ?? undefined, st ?? null);   // blank fields get filled by whoever was found
     const stats = st ? ` ${esc(st.class)}${st.devotion ? `, ${st.devotion}` : ''}, ${esc(st.mood)}.` : '';
     this.say(p ? `Following <b>${esc(p.name)}</b> — born on ${esc(where ?? p.place)} in ${fmtYear(p.born)}${p.born > this.opts.year() ? ', not yet born.' : p.alive ? `; ${Math.floor(p.age)}, ${esc(p.job)}${p.place && p.place !== where ? ` on ${esc(p.place)}` : ''}.${stats}` : ', now gone.'}` : 'Following them.', seq);
+    // the whole life laid out — including everything after the year being shown
+    if (r.life?.length) {
+      this.el.querySelector<HTMLElement>('.lp-life')!.innerHTML =
+        `<p class="lp-sec">their life, in full</p>` +
+        r.life.map((ev) => `<div class="lp-ev" role="listitem"><span class="y num">${fmtYear(ev.year)}</span><span>${esc(ev.text)}</span></div>`).join('');
+    }
   }
 
   /** Writes the found person's traits into any control the user left blank — blank

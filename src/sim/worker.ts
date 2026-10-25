@@ -48,7 +48,7 @@ export type FromWorker =
   | { type: 'residents'; id: number; pending?: boolean; total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] }
   | { type: 'person'; id: number; pending?: boolean; bio: Biography | null }
   | { type: 'residentAt'; id: number; pending?: boolean; person: string | null }
-  | { type: 'findPerson'; id: number; pending?: boolean; person: string | null; brief: PersonBrief | null; total: number; scanned: number; standing?: Biography['standing'] }
+  | { type: 'findPerson'; id: number; pending?: boolean; person: string | null; brief: PersonBrief | null; total: number; scanned: number; standing?: Biography['standing']; life?: { year: number; text: string; body?: number }[] }
   | { type: 'birthPlaces'; id: number; pending?: boolean; bodies: number[] }
   | { type: 'chronicle'; id: number; pending?: boolean; entries: Entry[] }
   | { type: 'inventions'; id: number; pending?: boolean; list: { tech: number; year: number; entry: Entry | null }[] }
@@ -211,7 +211,7 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
     if (!L) post({ type: 'findPerson', id: m.id, pending: true, person: null, brief: null, total: 0, scanned: 0 });
     else {
       const r = L.pickLife(m.body, Math.floor(m.n), m.kind, m.year, m.want, (m.id * 2654435761) >>> 0);
-      post({ type: 'findPerson', id: m.id, person: r.person ? idStr(r.person) : null, brief: r.person ? L.brief(r.person, m.year) : null, total: r.total, scanned: r.scanned, standing: r.standing });
+      post({ type: 'findPerson', id: m.id, person: r.person ? idStr(r.person) : null, brief: r.person ? L.brief(r.person, m.year) : null, total: r.total, scanned: r.scanned, standing: r.standing, life: r.person ? L.lifeEvents(idStr(r.person)) : undefined });
     }
   } else if (m.type === 'birthPlaces') {
     const L = people();
