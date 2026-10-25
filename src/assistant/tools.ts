@@ -38,6 +38,15 @@ export interface AssistantHost {
   openData(tab: string): boolean;
   openChronicle(): void;
   starship(action: 'board' | 'leave' | 'cockpit' | 'chase'): void;
+  // across futures (optional: main.ts wires them when the features exist)
+  /** run the "What leads to…?" search for a goal; returns a plain-text summary (or an error with suggestions) */
+  whatLeadsTo?(goal: string): Promise<string>;
+  /** the finished sibling futures of the ensemble: seed and global series (step * NGM) */
+  futures?(): { seed: number; series: Float64Array }[];
+  /** switch the screen to another future at a calendar year */
+  enterFuture?(seed: number, calYear?: number): void;
+  /** the psychohistory forecast card as HTML, or "" when none is ready */
+  forecast?(): string;
 }
 
 export interface ToolDef { name: string; description: string; parameters: Record<string, unknown> }
@@ -67,6 +76,12 @@ export const TOOLS: ToolDef[] = [
   { name: 'data_query', description: 'Filter and rank every living settlement at a year with the data desk query language, e.g. where "pop > 1M && stability < 0.4", sort "pop". Fields: ' + SETTLEMENT_FIELDS.join(' ') + ' name system allegiance stageName kind dist hab g temp age independent.', parameters: obj({ where: str('Filter expression, or "" for all'), sort: str('Field or expression to sort by, descending'), year: YEAR, limit: num('Max rows, default 8') }, ['where']) },
   { name: 'data_scan', description: 'A settlement query over the whole run: count/sum/mean/min/max of a field across the settlements matching an expression, sampled through time. e.g. expr "kind == \\"ocean\\"", agg "count".', parameters: obj({ expr: str('Filter expression'), agg: { type: 'string', enum: ['count', 'sum', 'mean', 'min', 'max'] }, of: str('Field to aggregate (not for count)') }, ['expr', 'agg']) },
   { name: 'way_of_war', description: 'How this future fights around a year: wars, deaths and outcomes in the last 500 years against the 500 before, and which trained war-mind generation is in charge.', parameters: obj({ year: YEAR }) },
+  { name: 'what_leads_to', description: 'THE SCENARIO PATHFINDER ("What leads to…?"). Searches across many other futures (not just this one) for a goal and returns which futures reach it, in what year (earliest, median, latest), and the reverse-engineered road: the dated steps and milestones (technologies, settlements, terraforming, swarms, wars) that led there. Use for ANY "what is needed for / what leads to / how could / how do we get / when could / is it possible to have X" question, and whenever X has not happened in the future on screen. Goals it understands: a settlement stage on a world ("colonisation of Mars", "a city on Titan", "megastructure on Europa"), terraforming ("terraforming Venus"), Dyson swarms, optionally around a star ("a Dyson sphere around TRAPPIST-1", "first Dyson swarm"), a technology ("mind uploading", "warp drive"), population ("a trillion people", "Mars passes 1 billion"), Kardashev levels, star-system counts, events ("first contact", "first war", "independence of Mars"). Chain goals with "then" / "and" ("colonisation of Mars then terraforming Venus"). Takes a few seconds.', parameters: obj({ goal: str('The goal in plain words, e.g. "a Dyson sphere around TRAPPIST-1", "colonisation of Mars", "first contact"') }, ['goal']) },
+  { name: 'other_futures', description: 'The multiverse ensemble: 24 sibling futures simulated next to this one. Returns each future\'s number with population, star systems, Kardashev level and era at a calendar year, and where this future ranks. Use for "in other futures", "how unusual is this future", "which future has the most people", "compare futures".', parameters: obj({ year: YEAR, sort: { type: 'string', enum: ['pop', 'systems', 'kardashev', 'energy', 'wars', 'stability'], description: 'Rank by this metric (default pop)' } }) },
+  { name: 'enter_future', description: 'Switch the screen to another future (by its number, from what_leads_to or other_futures), optionally at a calendar year.', parameters: obj({ future: num('Future number (seed)'), year: YEAR }, ['future']) },
+  { name: 'forecast', description: 'The psychohistory forecast: a transformer trained on 360 other futures imagines the next centuries from the year on screen. Odds of war, collapse or golden age, most likely era, population and energy ranges. Use for "what happens next", "odds of", "predict".', parameters: obj({}) },
+  { name: 'orbits', description: 'Real orbital data (Earth orbit today, from a real satellite catalogue snapshot): counts by operator and class, altitude shells, Starlink losses; or search satellites by name. Use for satellites, Starlink, space debris, orbital shells, missions in Earth orbit.', parameters: obj({ search: str('Optional satellite name to search, e.g. "ISS", "HUBBLE", "STARLINK-1007"') }) },
+  { name: 'impact_lab', description: 'The impact lab: Monte Carlo simulation of an asteroid or comet hitting a world (Earth, Mars, Moon…) at a year of this future: energy, outcome odds (airburst, crater), crater size, deaths and capital lost among settlements. Use for "what if an asteroid of N metres hit X".', parameters: obj({ body: str('World hit, e.g. "Earth", "Mars"'), diameter: num('Impactor diameter in metres (e.g. 50, 300, 1000)'), composition: { type: 'string', enum: ['stony', 'carbonaceous', 'iron', 'cometary', 'unknown'] }, year: YEAR }, ['body', 'diameter']) },
   { name: 'go_to', description: 'Fly the view to a place (star, world, moon, galaxy), a technology, "resident 12 of Titan", or a person by id. Optionally also set the year.', parameters: obj({ name: str('Place name, "resident N of World", or a person id'), year: YEAR }, ['name']) },
   { name: 'set_year', description: 'Move the time slider to a calendar year (a chrono trip when aboard the Starship). Returns once the year is loaded.', parameters: obj({ year: num('Calendar year 2040 to 12040') }, ['year']) },
   { name: 'zoom', description: 'Change zoom level: multiverse (every future), universe (Local Group), galaxy, local (nearby stars), system, planet, street (a city).', parameters: obj({ level: { type: 'string', enum: ZOOMS } }, ['level']) },
@@ -470,6 +485,70 @@ export class AssistantTools {
     if (!['board', 'leave', 'cockpit', 'chase'].includes(act)) throw new ToolError('board, leave, cockpit or chase.');
     this.h.starship(act);
     return { ok: true, aboard: this.h.boarded() };
+  }
+
+  // ---------------------------------------------------------------- across futures
+
+  async t_what_leads_to(a: Record<string, unknown>): Promise<unknown> {
+    const g = String(a.goal ?? '').trim();
+    if (!g) throw new ToolError('Which goal?');
+    if (!this.h.whatLeadsTo) throw new ToolError('The pathfinder is not available in this build.');
+    return { summary: clip(await this.h.whatLeadsTo(g), 2400) };
+  }
+
+  t_other_futures(a: Record<string, unknown>): unknown {
+    const h = this.h, fs = h.futures?.() ?? [];
+    if (!fs.length) throw new ToolError('The other futures are still being simulated (they start once this future finishes). Try what_leads_to for a specific goal.');
+    const y = this.simYear(a.year), step = h.sim.stepAt(y);
+    const key = ['pop', 'systems', 'kardashev', 'energy', 'wars', 'stability'].includes(String(a.sort)) ? String(a.sort) : 'pop';
+    const at = (ser: Float64Array, k: string) => { const n = Math.floor(ser.length / NGM); return ser[Math.min(step, n - 1) * NGM + GM[k]]; };
+    const row = (seed: number, ser: Float64Array) => ({ future: seed, v: at(ser, key), pop: fmtUnit(at(ser, 'pop'), metricDef('pop')!.unit), systems: Math.round(at(ser, 'systems')), kardashev: +at(ser, 'kardashev').toFixed(2), era: ERAS[at(ser, 'era')] ?? '' });
+    const rows = fs.map((f) => row(f.seed, f.series));
+    const me = row(h.sim.seed, h.sim.series);
+    rows.push(me);
+    rows.sort((x, y2) => y2.v - x.v);
+    const rank = rows.indexOf(me) + 1;
+    return { year: cal(h.sim.years[step]), rankedBy: key, thisFuture: h.sim.seed, thisRank: `${rank} of ${rows.length}`, futures: rows.slice(0, 10).map(({ v: _v, ...r }) => r) };
+  }
+
+  t_enter_future(a: Record<string, unknown>): unknown {
+    const f = Math.trunc(Number(a.future));
+    if (!(f >= 1)) throw new ToolError('Which future number?');
+    if (!this.h.enterFuture) throw new ToolError('Cannot switch futures here.');
+    const y = typeof a.year === 'number' && isFinite(a.year) ? Math.round(a.year > 1000 ? a.year : a.year + CAL0) : undefined;
+    this.h.enterFuture(f, y);
+    return { ok: true, future: f, ...(y ? { year: y } : {}) };
+  }
+
+  t_forecast(): unknown {
+    const html = this.h.forecast?.() ?? '';
+    if (!html) throw new ToolError('No forecast yet: it appears once this future is fully simulated (and the Forecast toggle is on).');
+    const text = html.replace(/<\/(dd|p)>/g, '\n').replace(/<\/dt>/g, ': ').replace(/<[^>]+>/g, '').replace(/[ \t]+/g, ' ').replace(/\n\s*/g, '\n').trim();
+    return { forecast: clip(text, 1400) };
+  }
+
+  async t_orbits(a: Record<string, unknown>): Promise<unknown> {
+    const q = String(a.search ?? '').trim();
+    if (q) {
+      const m = await this.h.sim.data<'satSearch'>({ type: 'satSearch', q, limit: 6 });
+      return { hits: m.hits.map((x) => ({ name: x.name, norad: x.norad, altitudeKm: Math.round(x.altKm) })) };
+    }
+    const { summary: s } = await this.h.sim.data<'orbitSummary'>({ type: 'orbitSummary' });
+    return { snapshot: s.retrieved, objects: s.count, byOperator: s.byOperator, byClass: s.byClass, starlinkObservedLossShare: +s.starlink.observedLossFraction.toFixed(3) };
+  }
+
+  async t_impact_lab(a: Record<string, unknown>): Promise<unknown> {
+    const d = Number(a.diameter);
+    if (!(d > 0)) throw new ToolError('Impactor diameter in metres?');
+    const comp = ['stony', 'carbonaceous', 'iron', 'cometary'].includes(String(a.composition)) ? String(a.composition) : 'unknown';
+    const body = String(a.body ?? 'Earth').trim() || 'Earth';
+    const year = cal(this.simYear(a.year));
+    const m = await this.h.sim.data<'impactLab'>({ type: 'impactLab', body, diameterM: [d * 0.8, d, d * 1.25], composition: comp as 'stony', year, seed: this.h.sim.seed, n: 400 });
+    if (!m.result) throw new ToolError(m.error ?? 'The impact lab could not run that.');
+    const r = m.result;
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(r.outcomes)) out[k] = +(+v).toFixed(2);
+    return { body: r.body, year: r.year, runs: r.n, energyMt: r.energyMt, outcomeShares: out, craterKm: r.craterKm, deaths: r.deaths, capitalLost: r.capitalLost, typical: r.median.outcome, notes: r.median.notes.slice(0, 3) };
   }
 
   t_end_session(): unknown { setTimeout(() => this.onEnd(), 2500); return { ok: true, note: 'Say a short goodbye; the line closes in a moment.' }; }

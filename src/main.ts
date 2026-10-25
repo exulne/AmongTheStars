@@ -37,6 +37,7 @@ import { ShipConsole } from './ship/console.ts';
 import { Assistant } from './assistant/assistant.ts';
 import { Voyage } from './ship/voyage.ts';
 import { installPaths } from './features/paths.ts';
+import { toolSummary } from './sim/milestones.ts';
 import { installTimelineHand } from './features/timelineHand.ts';
 import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionColor, factionCss, faithCss, stageLegend, type ColorMode } from './view/colorModes.ts';
 import { CLOSEUP, CloseUp } from './view/closeup.ts';
@@ -1559,7 +1560,7 @@ search.onPick = (h) => {
 
 // ------------------------------------------------------------------ what leads to…?
 
-installPaths(api, follow);
+const pathsH = installPaths(api, follow);
 
 // ------------------------------------------------------------------ the Starship
 
@@ -1669,6 +1670,10 @@ assistant = new Assistant({
     if (!voyage.boarded) board(true);
     shipConsole.setView(a);
   },
+  whatLeadsTo: async (g) => { const r = await pathsH.paths.ask(g); return 'error' in r ? `${r.error} Try: ${r.suggestions.join(', ')}.` : toolSummary(r.chain, r.results, r.tried); },
+  futures: () => ensemble.futures(),
+  enterFuture: (seed, calYear) => pathsH.showFuture(seed, calYear ?? Math.round(2040 + ctx.year)),
+  forecast: () => (fc ? oddsHtml(fc, (k) => sim.series[Math.max(0, sim.stepAt(ctx.year)) * NGM + GM[k]]) : ''),
 });
 {
   const ai = assistant;
