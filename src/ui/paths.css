@@ -1,5 +1,5 @@
 /* The "What leads to…?" rail: same docking as the life-pick panel (style.css .lifepick). */
-.paths { position: absolute; z-index: 6; top: 0; right: 0; bottom: var(--bottom-h, 200px); width: min(24rem, 38vw); padding: 0.9rem 1.1rem; overflow-y: auto;
+.paths { position: absolute; z-index: 6; top: 0; right: 0; bottom: var(--bottom-h, 200px); width: min(22rem, 34vw); box-sizing: border-box; padding: 0.9rem 1.1rem; overflow-y: auto;
   background: rgba(10,12,18,0.82); backdrop-filter: blur(10px); border-left: 1px solid var(--rule); }
 .paths[hidden] { display: none; }
 .paths .pf-title { margin: 0 0 0.5rem; }
