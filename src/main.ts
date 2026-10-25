@@ -578,7 +578,7 @@ function seekTo(y: number, b?: number): void {
   // events past the simulated frontier can't be shown yet: park the year, go as far
   // as we can, and the loop lands on the real year once it's simulated
   const front = sim.done ? 10000 : (sim.years[sim.frontier] ?? 0);
-  if (y > front) pendingYear = y;
+  pendingYear = y > front ? y : null;
   timeline.set(Math.min(y, front), true);
   if (b != null) select(asPick({ kind: 'body', id: b }));
 }
