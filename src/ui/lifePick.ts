@@ -105,6 +105,7 @@ export class LifePick {
   private nInput: HTMLInputElement;
   private result: HTMLElement;
   private seq = 0;
+  private popTimer = 0;
   private bodiesReady: number[] | null = null;
 
   constructor(opts: LifePickOpts) {
@@ -154,7 +155,12 @@ export class LifePick {
   onToggle: (open: boolean) => void = () => {};
 
   toggle(): void { this.el.hidden ? this.show() : this.hide(); }
-  hide(): void { this.el.hidden = true; this.onToggle(false); }
+  hide(): void {
+    this.bodiesReady = null;
+    clearTimeout(this.popTimer);
+    this.el.hidden = true;
+    this.onToggle(false);
+  }
   show(): void {
     this.populate();
     this.el.hidden = false;
@@ -170,18 +176,27 @@ export class LifePick {
     this.result.textContent = '';
   }
 
-  /** Refill the birthplace list as settlements appear over time. Only worlds that saw a birth. */
+  /** Refill the birthplace list as settlements appear over time. Only worlds that saw a birth.
+   *  While the run is pending it shows just "anywhere at random" and asks again every second. */
   private populate(): void {
-    const keep = this.bodySel.value;
+    clearTimeout(this.popTimer);
     void this.opts.bodies().then((r) => {
-      if (r.pending || this.el.hidden) return;
-      this.bodiesReady = r.bodies;
-      const bodies = [...new Set(r.bodies)]
-        .map((id) => ({ id, name: this.opts.nameOf(id) }))
-        .sort((a, b) => (a.id === this.opts.home ? -1 : b.id === this.opts.home ? 1 : a.name.localeCompare(b.name)));
-      this.bodySel.innerHTML = `<option value="-1">anywhere at random</option>` + bodies.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('');
-      if (keep && [...this.bodySel.options].some((o) => o.value === keep)) this.bodySel.value = keep;
+      if (this.el.hidden) return;
+      this.bodiesReady = r.pending ? null : r.bodies;
+      this.fillBodies(r.pending ? null : r.bodies);
+      if (r.pending) this.popTimer = window.setTimeout(() => this.populate(), 1000);
     });
+  }
+
+  /** Fill the birthplace select: `bodies` null lists only "anywhere at random" (the run is
+   *  still simulating); otherwise Earth first, then by name, keeping a selection that survives. */
+  private fillBodies(bodies: number[] | null): void {
+    const keep = this.bodySel.value;
+    const list = bodies === null ? [] : [...new Set(bodies)]
+      .map((id) => ({ id, name: this.opts.nameOf(id) }))
+      .sort((a, b) => (a.id === this.opts.home ? -1 : b.id === this.opts.home ? 1 : a.name.localeCompare(b.name)));
+    this.bodySel.innerHTML = `<option value="-1">anywhere at random</option>` + list.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('');
+    if (keep && [...this.bodySel.options].some((o) => o.value === keep)) this.bodySel.value = keep;
   }
 
   /** A control's submitted value; rolled values (shown but not chosen) read as blank. */
