@@ -43,7 +43,6 @@ export class FuturePaths {
   private goal: Goal | null = null;
   private results: FutureResult[] = [];
   private seq = 0;
-  private askedViaMic = false;
   private tried = 0;
   onToggle: (open: boolean) => void = () => {};
 
@@ -133,7 +132,7 @@ export class FuturePaths {
     this.micBtn.classList.add('on');
     try {
       const text = await v.listen(() => {});
-      if (text) { this.askedViaMic = true; this.input.value = text; void this.ask(text, { speak: true }); }
+      if (text) { this.input.value = text; void this.ask(text); }
       else this.status('Didn\'t hear anything.');
     } catch (e) { this.status((e as Error).message); }
     finally { this.micBtn.classList.remove('on'); }
@@ -143,7 +142,7 @@ export class FuturePaths {
    * Ask "what leads to X": parses the goal, simulates futures until six reach
    * it, streams the cards in. Resolves for the console/agent with the outcome.
    */
-  ask(text: string, opts: { speak?: boolean } = {}): Promise<AskResult> {
+  ask(text: string): Promise<AskResult> {
     const seq = ++this.seq;
     const pr = parseGoal(text, this.opts.world);
     this.results = [];
@@ -177,10 +176,7 @@ export class FuturePaths {
         const got = results.filter((r) => r.reached);
         this.status(got.length ? `${got.length} futures reach ${pr.goal.label}.` : `No future reached ${pr.goal.label}.`);
         this.render(true);
-        if (opts.speak || (this.askedViaMic && this.opts.voice.speak) || this.opts.voice.speak) {
-          if (!this.agent?.active) void this.opts.voice.say(narrateOverview(pr.goal, results, tried));
-        }
-        this.askedViaMic = false;
+        if (this.opts.voice.speak && !this.agent?.active) void this.opts.voice.say(narrateOverview(pr.goal, results, tried));
         resolve({ goal: pr.goal, results, tried });
       });
     });
@@ -195,7 +191,7 @@ export class FuturePaths {
   }
 
   private seekStep(r: FutureResult, s: Step): void {
-    this.opts.show(r.seed, s.year, { body: s.body ?? (this.goal?.system !== undefined ? undefined : undefined), system: this.goal?.system });
+    this.opts.show(r.seed, s.year, { body: s.body, system: this.goal?.system });
   }
 
   private render(final = false): void {
