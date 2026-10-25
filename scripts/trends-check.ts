@@ -7,7 +7,7 @@ import { Engine } from '../src/sim/engine.ts';
 import { FLOW, NPERIODS, isShipBody, periodOf, periodStart } from '../src/sim/ledger.ts';
 import { GLOBAL_METRICS, GM, HIST_FIELDS, NGM } from '../src/sim/metrics.ts';
 import { MARKET_WINDOW, buildTrends, type Trends } from '../src/sim/trends.ts';
-import { REPORT_COLUMNS, SECTIONS, buildReport, countSignal, marketsAt, metricInfo, metricSignal, reportTable, rowAt, seriesTable, signalAt, topDestinationAt, type Ctx, type TrendMetric } from '../src/sim/trendSignals.ts';
+import { REPORT_COLUMNS, SECTIONS, buildReport, countSignal, crossAt, crossMetric, marketsAt, metricInfo, metricSignal, reportTable, rowAt, seriesTable, signalAt, topDestinationAt, type Ctx, type TrendMetric } from '../src/sim/trendSignals.ts';
 import { toCsv } from '../src/ui/exporter.ts';
 import { buildWorld } from '../src/sim/world.ts';
 
@@ -210,6 +210,28 @@ ok(!/faith|belief/i.test(JSON.stringify(t)), 'payload mentions no faith or belie
   const ls2 = metricSignal(lm, { ...ctx, t: lagT }, 140)!;
   ok(ls2 && ls2.to === 7 && ls2.from === 5, `lag @140 edges: ${JSON.stringify(ls2)}`);
   ok(metricSignal(lm, { ...ctx, t: lagT }, 20) === null, 'lag @20: empty earlier window → null');
+  // cross-future stats on a synthetic ramp
+  {
+    const mk = (f: number) => {
+      const s = new Float64Array(ny * NGM);
+      for (let i = 0; i < ny; i++) { s[i * NGM + GM.pop] = f * (1 + 0.01 * i); s[i * NGM + GM.shipsLaunched] = 10; s[i * NGM + GM.shipsLost] = i * f * 0.05; }
+      return s;
+    };
+    const mine = mk(100);
+    const nan = mk(60); for (let i = 0; i < ny; i++) { nan[i * NGM + GM.pop] = NaN; nan[i * NGM + GM.shipsLost] = NaN; }
+    const sib = [mk(50), mk(60), mk(70), mk(80), mk(90), mk(110), mk(120), mk(130), mk(100), nan]; // 10, one tied value, one null
+    const pm: TrendMetric = { src: 'series', key: 'pop' };
+    const c0: Ctx = { years, series: mine, n: ny, t: null };
+    const cs = crossAt(pm, c0, sib, 150)!;
+    // value at row 150: 250 vs siblings 125..350 with one NaN → below: 125,150,175,200,225 → 5 of 9
+    ok(cs && cs.compared === 10 && Math.abs(cs.percentile! - 5 / 9) < 1e-12, `crossAt pop pct ${cs?.percentile} vs ${5 / 9}`);
+    ok(cs.dirKnown === 9 && cs.sameDir === 9, `crossAt dirs ${cs.dirKnown}/${cs.sameDir} (want 9/9, NaN sibling excluded)`);
+    ok(crossAt(pm, c0, sib.slice(0, 4), 150) === null, 'crossAt null below 5 siblings');
+    ok(crossAt({ src: 'count', key: 'founded', label: 'c', unit: 'e' }, c0, sib, 150) === null, 'crossAt null for count metrics');
+    const rm2: TrendMetric = { src: 'ratio', key: 'shipLoss', label: 'r', unit: '%', num: 'shipsLost', den: 'shipsLaunched', scale: 100, flat: 0.5 };
+    const cr = crossAt(rm2, c0, sib, 150)!;
+    ok(cr && Math.abs(cr.percentile! - 5 / 9) < 1e-12, `crossAt ratio pct ${cr?.percentile} (own 7500)`);
+  }
 }
 
 // ---- signalAt basics on a synthetic series (kept) ----
@@ -271,6 +293,69 @@ ok(!/faith|belief/i.test(JSON.stringify(t)), 'payload mentions no faith or belie
   let recent = 0;
   for (const ev of main.events) if (dwant.has(ev.type) && ev.year > 3000 - 50 && ev.year <= 3000) recent++;
   ok(countSignal(dis.years, 3000, 50).recent === recent, `countSignal disaster recent ${countSignal(dis.years, 3000, 50).recent} vs events ${recent}`);
+
+  // crossAt: no look-ahead inside a sibling's own series either
+  const sibReal = Array.from({ length: 8 }, (_, k) => {
+    const s = main.series.slice();
+    const f = 0.6 + 0.08 * k;
+    for (let i = 0; i < s.length; i++) s[i] *= f;
+    return s;
+  });
+  for (const Y of [137, 1500, 6000]) {
+    const mut = sibReal.map((s) => { const m = s.slice(); for (let i = 0; i < n; i++) if (main.years[i] > Y) for (let k = 0; k < NGM; k++) m[i * NGM + k] = m[i * NGM + k] * 3 + 1; return m; });
+    const c0: Ctx = { years: main.years, series: main.series, n, t };
+    for (const sec of SECTIONS) {
+      const cm = crossMetric(sec);
+      if (!cm) continue;
+      ok(JSON.stringify(crossAt(cm, c0, sibReal, Y)) === JSON.stringify(crossAt(cm, c0, mut, Y)),
+        `look-ahead: crossAt(${cm.key}, ${Y}) changes when sibling rows after ${Y} do`);
+    }
+  }
+
+  // report + CSV with the same siblings
+  {
+    const rows = buildReport(main.years, main.series, n, t, sibReal);
+    const iLast = rowAt(main.years, n, main.years[n - 1]);
+    const mm = (r: (typeof rows)[number]) => SECTIONS.find((s) => s.title === r.section)?.metrics.find((x) => x.key === r.key && (x.src === 'series' || x.src === 'ratio')) as (TrendMetric & { src: 'series' | 'ratio' }) | undefined;
+    const rval = (m: TrendMetric & { src: 'series' | 'ratio' }, ser: ArrayLike<number>): number => m.src === 'series'
+      ? ser[iLast * NGM + GM[m.key]]
+      : (ser[iLast * NGM + GM[m.den]] > 0 ? m.scale * ser[iLast * NGM + GM[m.num]] / ser[iLast * NGM + GM[m.den]] : NaN);
+    let badX = 0;
+    for (const r of rows) {
+      const m = mm(r);
+      if (!m) {   // count, lag and sample rows: NaN fields
+        if (!(Number.isNaN(r.futures) && Number.isNaN(r.endPct) && Number.isNaN(r.medianRunChange) && Number.isNaN(r.sameDir))) { badX++; console.log(`   cross NaN expected: ${r.section}|${r.key}`); }
+        continue;
+      }
+      const mv = rval(m, main.series);
+      let ranked = 0, below = 0;
+      for (const s of sibReal) { const v = rval(m, s); if (Number.isFinite(v) && Number.isFinite(mv)) { ranked++; if (v < mv) below++; } }
+      const wantPct = ranked ? below / ranked : NaN;
+      const pctOk = Number.isNaN(wantPct) ? Number.isNaN(r.endPct) : Math.abs(r.endPct - wantPct) < 1e-12;
+      if (!(r.futures === sibReal.length && pctOk && Number.isFinite(r.sameDir) && (Number.isFinite(r.medianRunChange) || Number.isNaN(r.medianRunChange)))) { badX++; console.log(`   cross row bad: ${r.section}|${r.key} endPct=${r.endPct} want=${wantPct}`); }
+    }
+    ok(badX === 0, `cross fields on rows (${badX} bad)`);
+    const repCsv2 = toCsv(REPORT_COLUMNS, reportTable(rows), `Trends report, future #${seed}`);
+    const rl2 = repCsv2.split('\n').filter((l) => l && !l.startsWith('#'));
+    ok(rl2[0].endsWith('futures_compared,end_percentile_among_futures,median_run_change_other_futures,last50_same_direction_futures'), 'report CSV new columns');
+    // spot-check gdp's medianRunChange by hand
+    const gr = rows.find((r) => r.key === 'gdp')!;
+    const g = GM.gdp, mrc: number[] = [];
+    for (const s of sibReal) {
+      let j0 = -1;
+      for (let i = 0; i < n; i++) if (s[i * NGM + g] > 0) { j0 = i; break; }
+      const st2 = s[j0 * NGM + g], en2 = s[(n - 1) * NGM + g];
+      mrc.push(100 * (Math.pow(en2 / st2, 1 / (main.years[n - 1] - main.years[j0])) - 1));
+    }
+    mrc.sort((a, b) => a - b);
+    const want = (mrc[3] + mrc[4]) / 2;
+    ok(Math.abs(gr.medianRunChange - want) < 1e-9 * Math.max(1, Math.abs(want)), `gdp medianRunChange ${gr.medianRunChange} vs ${want}`);
+    // count/lag/sample rows → empty cells in the CSV
+    const dl = rl2.find((l) => l.startsWith('Shocks,shock:disaster'));
+    ok(!!dl && dl.endsWith(',,,,'), 'count row has empty cross cells');
+    const nl = rl2.find((l) => l.includes(',newsLag,'));
+    ok(!!nl && nl.endsWith(',,,,'), 'lag row has empty cross cells');
+  }
 }
 
 // ---- markets (kept) ----

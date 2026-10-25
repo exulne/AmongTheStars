@@ -4,16 +4,14 @@
 
 import PathWorker from '../sim/pathWorker.ts?worker&inline';
 import type { FromPaths, ToPaths } from '../sim/pathWorker.ts';
-import { lineageSeeds, type Chain, type FutureResult } from '../sim/milestones.ts';
+import type { Chain, FutureResult } from '../sim/milestones.ts';
 
 export class Pathfinder {
   private workers: Worker[] = [];
   private idle: Worker[] = [];
   private token = 0;
   private goal: Chain | null = null;
-  private first = 1;
-  private k = 0;
-  private used = new Set<number>();
+  private next: () => number = () => 0;
   private want = 0;
   private limit = 0;
   private found = 0;
@@ -29,7 +27,7 @@ export class Pathfinder {
    * `onResult` fires for every verdict; `onDone` fires once with all results —
    * reached futures first by year, then the misses. A new run() cancels the old.
    */
-  run(chain: Chain, firstSeed: number, want: number, limit: number, onResult: (r: FutureResult) => void, onDone: (results: FutureResult[], t: { found: number; simulated: number; capped: boolean }) => void): void {
+  run(chain: Chain, next: () => number, want: number, limit: number, onResult: (r: FutureResult) => void, onDone: (results: FutureResult[], t: { found: number; simulated: number; capped: boolean }) => void): void {
     const t = ++this.token;
     this.goal = chain;
     this.onResult = onResult;
@@ -40,9 +38,7 @@ export class Pathfinder {
     this.found = 0;
     this.want = want;
     this.limit = limit;
-    this.first = firstSeed;
-    this.k = 0;
-    this.used = new Set();
+    this.next = next;
     // any job still running is the old search's: cancel it and take the worker back
     for (const w of this.workers) w.postMessage({ type: 'cancel', token: t } satisfies ToPaths);
     const nWorkers = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 2));
@@ -59,11 +55,8 @@ export class Pathfinder {
     if (this.doneSent || !this.goal) return;
     while (this.idle.length && this.found < this.want && this.results.length + this.running < this.limit) {
       const w = this.idle.pop()!;
-      const b = lineageSeeds(this.first, this.k, 1, this.used);
-      this.k = b.nextK;
-      this.used.add(b.seeds[0]);
       this.running++;
-      w.postMessage({ type: 'find', chain: this.goal, seed: b.seeds[0], token: this.token } satisfies ToPaths);
+      w.postMessage({ type: 'find', chain: this.goal, seed: this.next(), token: this.token } satisfies ToPaths);
     }
     if (this.running === 0 && (this.found >= this.want || this.results.length >= this.limit)) this.finish();
   }

@@ -4,7 +4,7 @@
 
 import './paths.css';
 import { Pathfinder } from './pathfinder.ts';
-import { chainFrom, chainLabel, compareFutures, countLine, parseEvent, searchLimit, shownFutures, tagLabel, type Chain, type FutureResult, type Goal, type Joint, type Step } from '../sim/milestones.ts';
+import { chainFrom, chainLabel, compareFutures, countLine, huntLine, isExtension, lineageSeeds, narrowPlan, parseEvent, searchLimit, shownFutures, tagLabel, type Chain, type FutureResult, type Goal, type Joint, type Step } from '../sim/milestones.ts';
 import type { World } from '../sim/world.ts';
 import type { Voice } from '../ship/voice.ts';
 import type { OracleAgent } from '../ship/agent.ts';
@@ -24,7 +24,7 @@ export interface PathsOpts {
   show: (seed: number, calYear: number, opts?: { body?: number; system?: number; play?: boolean }) => void;
 }
 
-export type AskResult = { chain: Chain; results: FutureResult[]; tried: number } | { error: string; suggestions: string[] };
+export type AskResult = { chain: Chain; results: FutureResult[]; tried: number; narrowed?: { x: number; y: number }; hunt?: { found: number; simulated: number; capped: boolean } } | { error: string; suggestions: string[] };
 
 export class FuturePaths {
   el: HTMLElement;
@@ -51,6 +51,11 @@ export class FuturePaths {
   private tried = 0;
   private showAll = false;
   private newFind: number | null = null;   // seed of the most recently found future this search
+  private lineage = { first: 1, k: 0, used: new Set<number>() };
+  private pool = new Map<number, FutureResult>();
+  private checking = new Set<number>();    // extension: seeds being re-played against the longer chain
+  private newSeeds = new Set<number>();    // extension hunt: seeds found in the hunt
+  private huntEl: HTMLElement;
   private futuresEl: HTMLInputElement;
   onToggle: (open: boolean) => void = () => {};
 
@@ -75,6 +80,7 @@ export class FuturePaths {
       <div class="pf-mode" role="status" hidden></div>
       <div class="pf-transcript" hidden></div>
       <p class="pf-status" aria-live="polite"></p>
+      <p class="pf-hunt muted" aria-live="polite"></p>
       <div class="pf-cards"></div>
       <p class="pf-footer muted"></p>`;
     this.input = this.el.querySelector('.pf-tags input')!;
@@ -88,6 +94,7 @@ export class FuturePaths {
     this.oracleBtn = this.el.querySelector('.pf-oracle')!;
     this.auxEl = this.el.querySelector('.pf-aux')!;
     this.futuresEl = this.el.querySelector('.pf-n input')!;
+    this.huntEl = this.el.querySelector('.pf-hunt')!;
     this.futuresEl.value = String(this.futures());
     this.futuresEl.addEventListener('change', () => this.readFutures());
 
@@ -244,26 +251,45 @@ export class FuturePaths {
     return this.run();
   }
 
-  /** Run the whole tag row as one chain, left to right. */
+  /** The next seed in this lineage — never a seed already used (so never a pool seed). */
+  private nextSeed(): number {
+    const b = lineageSeeds(this.lineage.first, this.lineage.k, 1, this.lineage.used);
+    this.lineage.k = b.nextK;
+    this.lineage.used.add(b.seeds[0]);
+    return b.seeds[0];
+  }
+
+  /** Run the whole tag row as one chain, left to right — a fresh hunt, or an extension of the last row. */
   run(): Promise<AskResult> {
     if (!this.tags.length) { this.status('Type an event and press Enter.'); return Promise.resolve({ error: 'Type an event and press Enter.', suggestions: [] }); }
     const seq = ++this.seq;
     const chain = this.chain = chainFrom(this.tags.map((t) => t.goal), [...this.joints]);
-    this.lastRun = { ids: this.tags.map((t) => t.goal.id), joints: [...this.joints] };
+    const row = { ids: this.tags.map((t) => t.goal.id), joints: [...this.joints] };
+    const ext = isExtension(this.lastRun, row) && this.pool.size > 0;
+    this.lastRun = row;
     const label = chainLabel(chain);
     this.results = [];
     this.tried = 0;
+    this.newFind = null;
+    this.checking.clear();
+    this.newSeeds.clear();
     // a live Oracle conversation keeps its transcript; only cold asks clear it
     if (!this.agent?.active) { this.transcriptEl.hidden = true; this.transcriptEl.innerHTML = ''; }
     this.showAll = false;
     this.cardsEl.innerHTML = '';
     this.footerEl.textContent = '';
-    const want = this.readFutures();
-    const limit = searchLimit(want);
+    this.huntEl.textContent = '';
+    if (ext) return this.extend(chain, label, seq);
+
+    // a fresh hunt: new lineage, new pool, until `want` are found or the limit
+    this.pool.clear();
+    this.lineage = { first: this.opts.seed(), k: 0, used: new Set() };
+    const want = this.readFutures(), limit = searchLimit(want);
     this.status(`Searching: ${label}… (until ${want} are found, at most ${limit} futures)`);
     return new Promise((resolve) => {
-      this.pathfinder.run(chain, this.opts.seed(), want, limit, (r) => {
+      this.pathfinder.run(chain, () => this.nextSeed(), want, limit, (r) => {
         if (seq !== this.seq) return;
+        this.pool.set(r.seed, r);
         this.results.push(r);
         this.tried++;
         if (r.reached) this.newFind = r.seed;
@@ -279,6 +305,53 @@ export class FuturePaths {
         this.status(countLine(t.found, t.simulated, label, { near }) + (t.capped ? ` Stopped at the limit of ${limit} futures.` : ''));
         this.render(true);
         resolve({ chain, results, tried: this.tried });
+      });
+    });
+  }
+
+  /** An extension: narrow the pool to the futures that reached the old chain, re-check
+   *  them against the longer one, then hunt the lineage for new futures. */
+  private extend(chain: Chain, label: string, seq: number): Promise<AskResult> {
+    return new Promise((resolve) => {
+      const plan = narrowPlan([...this.pool.values()]);
+      const y = this.pool.size;
+      let x = 0;
+      const near = [...this.pool.values()].filter((r) => !r.reached).map((r) => r.progress).filter(Boolean)[0];
+      for (const s of plan.check) this.checking.add(s);
+      this.results = [...this.pool.values()];
+      this.status(countLine(0, y, label, { live: true, near }));
+      this.render();
+      let ci = 0;
+      this.pathfinder.run(chain, () => plan.check[ci++], Infinity, plan.check.length, (r) => {
+        if (seq !== this.seq) return;
+        this.checking.delete(r.seed);
+        this.pool.set(r.seed, r);
+        this.results = [...this.pool.values()];
+        if (r.reached) x++;
+        this.status(countLine(x, y, label, { live: this.checking.size > 0, near }));
+        this.render();
+      }, (checkResults) => {
+        if (seq !== this.seq) return resolve({ chain, results: [], tried: checkResults.length });
+        // every check resolved — hunt the lineage for new futures
+        const want = this.readFutures(), limit = searchLimit(want);
+        this.status(countLine(x, y, label, { near }));
+        let z = 0, m = 0;
+        this.huntEl.textContent = huntLine(0, 0, { live: true });
+        this.pathfinder.run(chain, () => this.nextSeed(), want, limit, (r) => {
+          if (seq !== this.seq) return;
+          m++;
+          this.pool.set(r.seed, r);
+          this.results = [...this.pool.values()];
+          if (r.reached) { z++; this.newSeeds.add(r.seed); this.newFind = r.seed; }
+          this.huntEl.textContent = huntLine(z, m, { live: true });
+          this.render();
+        }, (huntResults, t) => {
+          if (seq !== this.seq) return resolve({ chain, results: [], tried: huntResults.length });
+          this.newFind = null;
+          this.huntEl.textContent = huntLine(t.found, t.simulated) + (t.capped ? ` Stopped at the limit of ${limit} futures.` : '');
+          this.render(true);
+          resolve({ chain, results: [...this.pool.values()], tried: this.pool.size, narrowed: { x, y }, hunt: t });
+        });
       });
     });
   }
@@ -315,7 +388,7 @@ export class FuturePaths {
     this.cardsEl.innerHTML = '';
     for (const r of shown) {
       const card = document.createElement('div');
-      card.className = 'pf-card';
+      card.className = `pf-card${this.checking.has(r.seed) ? ' pf-is-checking' : ''}`;
       const delta = got.length < 2 || r.year === undefined ? ''
         : r === got[0] ? 'the earliest'
         : r === got[got.length - 1] ? 'the latest'
@@ -324,7 +397,7 @@ export class FuturePaths {
       const hl = highlights.get(r.seed);
       const parts = r.parts.length > 1 ? r.parts.filter((p) => p.year !== undefined) : [];
       card.innerHTML = `
-        <div class="pf-card-head"><b>Future #${r.seed} — ${r.year}</b>${r.seed === this.newFind && !final ? '<span class="pf-new-find">just found</span>' : ''}<span class="pf-delta">${esc(delta)}</span></div>
+        <div class="pf-card-head"><b>Future #${r.seed} — ${r.year}</b>${this.checking.has(r.seed) ? '<span class="pf-checking">checking…</span>' : ''}${this.newSeeds.has(r.seed) ? '<span class="pf-card-new">new</span>' : ''}${r.seed === this.newFind && !final ? '<span class="pf-new-find">just found</span>' : ''}<span class="pf-delta">${esc(delta)}</span></div>
         ${hl ? `<p class="pf-hl">${esc(hl)}</p>` : ''}
         ${parts.length ? `<div class="pf-parts">${parts.map((p, i) => `<div class="pf-part" role="button" tabindex="0" data-i="${i}"><span class="y num">${p.year}</span><span>${esc(p.label)}${p.already ? ' (already true)' : ''}</span></div>`).join('')}</div>` : ''}
         <canvas class="pf-spark" aria-hidden="true"></canvas>

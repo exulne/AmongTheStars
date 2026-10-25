@@ -8,11 +8,12 @@
 import type { Annals } from '../sim/chronicle.ts';
 import { NPERIODS, periodOf } from '../sim/ledger.ts';
 import { GLOBAL_METRICS, GM } from '../sim/metrics.ts';
-import { buildReport, countSignal, marketsAt, metricSeries, metricSignal, REPORT_COLUMNS, reportTable, SECTIONS, seriesTable, topDestinationAt, turningPoints, type Ctx, type Dir, type MetricSignal, type ReportRow, type TrendSection } from '../sim/trendSignals.ts';
+import { buildReport, countSignal, crossAt, crossMetric, marketsAt, metricInfo, metricSeries, metricSignal, REPORT_COLUMNS, reportTable, SECTIONS, seriesTable, topDestinationAt, turningPoints, type Ctx, type Dir, type MetricSignal, type ReportRow, type TrendSection } from '../sim/trendSignals.ts';
 import { MARKET_WINDOW, type Trends } from '../sim/trends.ts';
-import { AnalystChart, type AData, type ALine } from './analystChart.ts';
+import { AnalystChart, type ABand, type AData, type ALine } from './analystChart.ts';
 import { globalSeries } from './charts.ts';
 import { esc, type DataHost, type DataTab } from './dataPanel.ts';
+import { ENSEMBLE_SIZE } from './ensemble.ts';
 import { copyText, toCsv } from './exporter.ts';
 import { fmtNum, fmtUnit, fmtYear } from './format.ts';
 import { PALETTE } from './miniChart.ts';
@@ -38,12 +39,20 @@ export class TrendsTab implements DataTab {
   private busy = false;
   private dirty = true;
   private repBody: HTMLElement;
+  private ensLine: HTMLElement;
   private painted = new WeakMap<HTMLElement, string>();
   private report: ReportRow[] | null = null;
+  private sib: ArrayLike<number>[] = [];
+  private lastEnsCount = -1;
+  private ensTimer = 0;
 
   constructor(host: DataHost) {
     this.host = host;
     this.el = document.createElement('div');
+    this.ensLine = document.createElement('p');
+    this.ensLine.className = 'muted tr-ens';
+    this.ensLine.hidden = true;
+    this.el.append(this.ensLine);
     const rep = document.createElement('section');
     rep.className = 'tr-sec tr-report';
     rep.innerHTML = `<h3>End-of-run report</h3><div class="tr-rep-body"></div>`;
@@ -100,9 +109,15 @@ export class TrendsTab implements DataTab {
 
   refresh(): void {
     if (this.el.hidden) return;
+    const ens = this.host.ensemble?.() ?? null;
+    const ec = ens?.count ?? 0;
+    if (ec !== this.lastEnsCount) { this.lastEnsCount = ec; this.dirty = true; }
     this.fetch();
     if (this.dirty) { this.dirty = false; this.render(); }
     this.paintCursor();
+    if (this.host.sim.done && ec < ENSEMBLE_SIZE && !this.ensTimer) {
+      this.ensTimer = setTimeout(() => { this.ensTimer = 0; if (!this.el.hidden) this.refresh(); }, 2000) as unknown as number;
+    }
   }
 
   /** Trends and annals, cached per run state; refetch while the run is live, at most every 5 s. */
@@ -156,9 +171,9 @@ export class TrendsTab implements DataTab {
     return this.pt(s.xs[idx], body, text);
   }
 
-  private fill(s: Sec, lines: ALine[] | null, pts: (string | '')[], waiting: boolean): void {
+  private fill(s: Sec, lines: ALine[] | null, pts: (string | '')[], waiting: boolean, bands?: ABand[]): void {
     if (s.chart) {
-      s.data = { lines: lines ?? [] };
+      s.data = { lines: lines ?? [], bands };
       s.chart.set({ ...s.data, cursor: this.host.year() });
     }
     this.paint(s.list, pts.some(Boolean)
@@ -176,7 +191,10 @@ export class TrendsTab implements DataTab {
 
   private render(): void {
     const a = this.annals, S = this.secs, sim = this.host.sim;
-    this.report = sim.done && this.trends ? buildReport(sim.years, sim.series, Math.min(sim.years.length, sim.frontier + 1), this.trends) : null;
+    const ens = this.host.ensemble?.() ?? null;
+    this.sib = ens ? ens.futures().map((f) => f.series) : [];
+    this.report = sim.done && this.trends
+      ? buildReport(sim.years, sim.series, Math.min(sim.years.length, sim.frontier + 1), this.trends, this.sib.length >= 5 ? this.sib : undefined) : null;
     for (const s of S) if (s.def) this.renderData(s);
 
     // ages
@@ -196,6 +214,14 @@ export class TrendsTab implements DataTab {
         const l = this.line(k, i ? PALETTE[(i - 1) % PALETTE.length] : '#f2f2f2');
         return l ? { ...l, label: GLOBAL_METRICS[GM[k]].label } : null;
       }).filter((l): l is ALine => !!l);
+    }
+    // the sibling-futures band rides on the section's crossMetric line (series metrics only)
+    let bands: ABand[] | undefined;
+    const cm = crossMetric(def);
+    if (cm && cm.src === 'series' && Array.isArray(def.chart) && this.sib.length >= 5) {
+      const i = def.chart.indexOf(cm.key), s2 = this.vals(cm.key);
+      const b = i >= 0 && s2 ? this.host.ensemble?.()?.band(cm.key, s2.xs.length) : null;
+      if (b && s2) bands = [{ label: 'other futures, 10–90%', color: i ? PALETTE[(i - 1) % PALETTE.length] : '#f2f2f2', xs: s2.xs, lo: b.lo, hi: b.hi }];
     }
     switch (def.id) {
       case 'market': {
@@ -333,7 +359,7 @@ export class TrendsTab implements DataTab {
         break;
       }
     }
-    this.fill(s, lines, pts, waiting);
+    this.fill(s, lines, pts, waiting, bands);
   }
 
   // ------------------------------------------------------------------ cursor repaint (year changed)
@@ -392,6 +418,14 @@ export class TrendsTab implements DataTab {
       return html;
     }
     let html = `<b>${CAP[head.dir]}</b> ${esc(head.label)} ${headM.src !== 'count' && headM.level ? `${this.level(head)}, ` : ''}${this.chg(head)} over the ${Math.round(head.toYear - head.fromYear)} years to ${fmtYear(head.toYear)}`;
+    const cm = crossMetric(def);
+    if (cm && this.sib.length >= 5) {
+      const ms = metricSignal(cm, ctx, y), cs = ms ? crossAt(cm, ctx, this.sib, y) : null;
+      if (ms && cs) {
+        html += ` · ${CAP[ms.dir]} here and in ${cs.sameDir} of ${cs.dirKnown} other futures over the same ${metricInfo(cm).span} years`;
+        if (cs.percentile !== null) html += ` · higher than ${Math.round(100 * cs.percentile)}% of them`;
+      }
+    }
     for (const m of def.metrics.slice(1)) {
       const s = metricSignal(m, ctx, y);
       if (!s) continue;
@@ -443,6 +477,10 @@ export class TrendsTab implements DataTab {
       const tps = ([['Peak', row.peakYear], ['low', row.troughYear], ['steepest rise', row.riseYear], ['steepest fall', row.fallYear]] as [string, number][])
         .filter(([, y]) => Number.isFinite(y));
       if (tps.length) s += `. ${tps.map(([w, y]) => `${w} ${yb(y)}`).join(', ')}.`;
+      if (Number.isFinite(row.endPct)) {
+        s += ` · end of run: higher than ${Math.round(row.endPct * 100)}% of other futures`;
+        if (Number.isFinite(row.medianRunChange)) s += `; their median change ${this.fmtChg(row.kind, row.medianRunChange, row.unit)}`;
+      }
       lis.push(`<li>${s}</li>`);
     }
     return `<ol class="tr-rep">${lis.join('')}</ol><p class="tr-rep-tools"><button class="link" type="button" data-act="report-csv">Copy report (CSV)</button> <button class="link" type="button" data-act="series-csv">Copy series (CSV)</button> <span class="copy-status muted" aria-live="polite"></span></p>`;
@@ -463,6 +501,10 @@ export class TrendsTab implements DataTab {
       ? `<p class="muted">The report is ready when this future's run ends. The run has reached ${fmtYear(sim.years[sim.frontier] ?? 0)}.</p>`
       : !this.report ? '<p class="muted">Preparing the report…</p>' : this.reportHtml();
     this.paint(this.repBody, rep);
+    const ens = this.host.ensemble?.() ?? null;
+    const ec = ens?.count ?? 0;
+    this.ensLine.hidden = !sim.done;
+    if (sim.done) this.paint(this.ensLine, ec >= ENSEMBLE_SIZE ? `Compared with ${ec} other futures` : `Comparing with other futures: ${ec} of ${ENSEMBLE_SIZE} played`);
     for (const s of this.secs) {
       if (s.signal) this.paint(s.signal, this.signalLine(s.def!, y));
       if (s.live) this.paint(s.live, this.marketLive(y));

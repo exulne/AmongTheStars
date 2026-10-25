@@ -223,6 +223,7 @@ const dataPanel = installDataDesk({
   showSeries: (key) => { if (charts.el.hidden) chartsToggle.click(); charts.show(key); },
   pickYear: (y) => seekTo(y),
   visualize: (src, opts) => visualize(src, opts),
+  ensemble: () => ensemble,
 });
 // a permanent notice: what this is not
 {

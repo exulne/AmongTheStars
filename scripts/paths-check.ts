@@ -5,7 +5,7 @@ import { Engine, YEAR0 } from '../src/sim/engine.ts';
 import { STAGE, TECHS } from '../src/sim/catalog.ts';
 import { EV } from '../src/sim/catalog.ts';
 import { buildWorld } from '../src/sim/world.ts';
-import { ChainTracker, chainFrom, chainLabel, chainOf, chainParts, compareFutures, countLine, goalYear, huntLine, lineageSeeds, parseEvent, parseGoal, reached, searchLimit, resultOf, tagLabel, toolSummary, type FutureResult, type Goal } from '../src/sim/milestones.ts';
+import { ChainTracker, chainFrom, chainLabel, chainOf, chainParts, compareFutures, countLine, goalYear, huntLine, isExtension, lineageSeeds, narrowPlan, parseEvent, parseGoal, reached, searchLimit, resultOf, tagLabel, toolSummary, type FutureResult, type Goal } from '../src/sim/milestones.ts';
 
 let fails = 0;
 const fail = (m: string) => { fails++; console.log('  FAIL', m); };
@@ -58,6 +58,21 @@ eq('countLine live 4', countLine(4, 9, 'the colonisation of Mars', { live: true 
 eq('countLine live 1', countLine(1, 9, 'the colonisation of Mars', { live: true }), '1 future from 9 simulated so far leads to the colonisation of Mars.');
 eq('huntLine 3', huntLine(3, 16), 'Found 3 other futures (from 16 more simulated).');
 eq('huntLine 1', huntLine(1, 16), 'Found 1 other future (from 16 more simulated).');
+eq('huntLine 0', huntLine(0, 16), 'Found 0 other futures (from 16 more simulated).');
+eq('huntLine live 2', huntLine(2, 9, { live: true }), 'Found 2 other futures (from 9 more simulated so far).');
+eq('huntLine live 1', huntLine(1, 9, { live: true }), 'Found 1 other future (from 9 more simulated so far).');
+
+// isExtension: the row continues the last search on the right
+{
+  const L = { ids: ['a', 'b'], joints: ['then'] as ('then'|'and')[] };
+  eq('extension +then', isExtension(L, { ids: ['a', 'b', 'c'], joints: ['then', 'then'] }), true);
+  eq('extension +and', isExtension(L, { ids: ['a', 'b', 'c'], joints: ['then', 'and'] }), true);
+  eq('identical not extension', isExtension(L, { ids: ['a', 'b'], joints: ['then'] }), false);
+  eq('fewer not extension', isExtension(L, { ids: ['a'], joints: [] }), false);
+  eq('toggled joint not extension', isExtension(L, { ids: ['a', 'b', 'c'], joints: ['and', 'then'] }), false);
+  eq('reordered not extension', isExtension(L, { ids: ['b', 'a', 'c'], joints: ['then', 'then'] }), false);
+  eq('null not extension', isExtension(null, { ids: ['a', 'b', 'c'], joints: ['then', 'then'] }), false);
+}
 eq('huntLine 0', huntLine(0, 16), 'Found 0 other futures (from 16 more simulated).');
 
 console.log('\nlineageSeeds');
@@ -386,6 +401,44 @@ if (poolOk) {
   if (!cover.ended) fail('case4 (true-then-ended before open) never exercised');
   if (!cover.already) fail('case5 (permanent already-true) never exercised');
   console.log('  coverage:', Object.entries(cover).map(([k, v]) => `${k}=${v}`).join(' '), '|', coverBy.slice(0, 6).join('; '));
+}
+
+// ------------------------------------------------------------------ E5: narrowing an extension equals a fresh hunt
+{
+  const C = chainOf(gp('first contact'));
+  const CX = chainFrom([gp('first contact'), gp('a trillion people')], ['then']);
+  const seeds6 = lineageSeeds(1, 0, 6).seeds;
+  const run1 = (chain: Chain | Goal, seed: number): FutureResult => {
+    const e = new Engine(world, seed); e.ledger = null;
+    const c = 'stages' in chain ? chain : chainOf(chain);
+    const tr = new ChainTracker(c, e);
+    while (!e.done) tr.advance();
+    return resultOf(c, e, tr);
+  };
+  const pool = seeds6.map((s) => run1(C, s));
+  const plan = narrowPlan(pool);
+  eq('narrowPlan covers pool', plan.check.length + plan.drop.length, pool.length);
+  if (!plan.check.length || !plan.drop.length) fail(`narrowPlan wants a mix: ${JSON.stringify(plan)}`);
+  const fresh = seeds6.map((s) => run1(CX, s));
+  const narrowed: FutureResult[] = [];
+  for (const s of plan.check) narrowed.push(run1(CX, s));
+  for (const s of plan.drop) {
+    const e = new Engine(world, s); e.ledger = null;
+    while (!e.done) e.step();
+    const c = C.stages[0][0];
+    narrowed.push({ seed: s, reached: false, parts: CX.stages.flat().map((g) => ({ label: g.label, stage: 0 })), steps: [], spark: { years: [], pop: [] }, progress: `it never got there` } as FutureResult);
+  }
+  const bySeed = new Map(narrowed.map((r) => [r.seed, r]));
+  for (const fr of fresh) {
+    const nr = bySeed.get(fr.seed)!;
+    if (nr.reached !== fr.reached || nr.year !== fr.year) fail(`seed ${fr.seed}: narrow ${nr.reached}/${nr.year} != fresh ${fr.reached}/${fr.year}`);
+    else if (JSON.stringify(nr.parts.map((p) => p.year)) !== JSON.stringify(fr.parts.map((p) => p.year)) && nr.reached) fail(`seed ${fr.seed}: part years differ`);
+  }
+  ok(`narrow == fresh on 6 seeds (check=${plan.check.length}, drop=${plan.drop.length})`);
+  for (const pr2 of pool) if (!pr2.reached && bySeed.get(pr2.seed)!.reached) fail(`seed ${pr2.seed}: failed C but completed C+X`);
+  const nextB = lineageSeeds(1, 6, 20, new Set(pool.map((r) => r.seed)));
+  if (nextB.seeds.some((s) => pool.some((r) => r.seed === s))) fail('lineage continuation returned a pool seed');
+  else ok('lineage continuation: no pool seeds');
 }
 
 // ------------------------------------------------------------------ run futures to the goals

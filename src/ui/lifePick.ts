@@ -24,8 +24,8 @@ export interface LifePickOpts {
   nameOf: (b: number) => string;
   year: () => number;
   find: (body: number, n: number, kind: string, year: number, want?: PickWant) => Promise<FindResult>;
-  /** jump the simulation clock to a year and focus a body, when one is given */
-  seek: (year: number, body?: number) => void;
+  /** jump the simulation clock to a year and focus a body, when one is given; `pid` is whose life a clicked beat belongs to */
+  seek: (year: number, body?: number, pid?: string) => void;
   /** open the chosen person's biography */
   open: (pid: string) => void;
 }
@@ -107,6 +107,8 @@ export class LifePick {
   private seq = 0;
   private popTimer = 0;
   private bodiesReady: number[] | null = null;
+  /** whose life the listed beats are */
+  private lifeOf: string | null = null;
 
   constructor(opts: LifePickOpts) {
     this.opts = opts;
@@ -143,7 +145,7 @@ export class LifePick {
     this.el.querySelector('.lp-clear')!.addEventListener('click', () => this.clear());
     this.el.addEventListener('click', (e) => {
       const ev = (e.target as HTMLElement).closest<HTMLElement>('.lp-ev');
-      if (ev?.dataset.y) this.opts.seek(Number(ev.dataset.y), ev.dataset.b === undefined ? undefined : Number(ev.dataset.b));
+      if (ev?.dataset.y) this.opts.seek(Number(ev.dataset.y), ev.dataset.b === undefined ? undefined : Number(ev.dataset.b), this.lifeOf ?? undefined);
     });
     // typing over a rolled value makes it a real filter again
     for (const ev of ['input', 'change']) this.el.addEventListener(ev, (e) => {
@@ -220,6 +222,7 @@ export class LifePick {
     const want = this.want();
     const n = random ? 0 : Math.max(0, Math.floor(parseCount(this.nInput.value) || 0));
     this.el.querySelector<HTMLElement>('.lp-life')!.innerHTML = '';
+    this.lifeOf = null;
     this.say('Finding them…', seq);
     if (!this.bodiesReady) {
       const r = await this.opts.bodies();
@@ -245,6 +248,7 @@ export class LifePick {
     // the whole life laid out — including everything after the year being shown;
     // click a beat to be taken to it
     if (r.life?.length) {
+      this.lifeOf = r.person;
       this.el.querySelector<HTMLElement>('.lp-life')!.innerHTML =
         `<p class="lp-sec">their life, in full</p>` +
         r.life.map((ev) => `<div class="lp-ev" role="listitem" data-y="${Math.round(ev.year)}"${ev.body != null ? ` data-b="${ev.body}"` : ''}><span class="y num">${fmtYear(ev.year)}</span><span>${esc(ev.text)}</span></div>`).join('');
