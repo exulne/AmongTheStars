@@ -35,6 +35,7 @@ export type ToWorker =
   | { type: 'inventions'; id: number }
   | { type: 'society'; id: number; body: number; step: number }
   | { type: 'placeNames'; id: number }
+  | { type: 'faithNames'; id: number }
   | DataReq
   | { type: 'ship'; id: number; from: number; to: number; depart: number }
   | { type: 'annals'; id: number }
@@ -55,6 +56,8 @@ export type FromWorker =
   | { type: 'society'; id: number; pending?: boolean; society: Society | null }
   /** places whose people call them something other than the catalogue name: [body, name] */
   | { type: 'placeNames'; id: number; pending?: boolean; names: [number, string][] }
+  /** every faith by number (0: Earth's old faiths): [n, name] — narrative only, not data */
+  | { type: 'faithNames'; id: number; pending?: boolean; names: [number, string][] }
   | DataRes
   | { type: 'ship'; id: number; pending?: boolean; ship: ShipInfo | null }
   | { type: 'annals'; id: number; pending?: boolean; annals: Annals | null }
@@ -182,7 +185,7 @@ function wayOfWar(year: number, span: number): WayOfWar {
   };
 }
 
-const dataEnv = { world, main: () => main, snaps: () => snaps, stateAt, post: (m: DataRes, t: Transferable[] = []) => post(m, t), faithName: (f: number) => (people() && chron ? chron.faithName(f) : null), minds: (e: Engine) => minds(e, e.seed, warGens) };
+const dataEnv = { world, main: () => main, snaps: () => snaps, stateAt, post: (m: DataRes, t: Transferable[] = []) => post(m, t), minds: (e: Engine) => minds(e, e.seed, warGens) };
 
 self.onmessage = (ev: MessageEvent<ToWorker>) => {
   const m = ev.data;
@@ -239,6 +242,14 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
     const L = people(), names: [number, string][] = [];
     if (L) world.bodies.forEach((b, i) => { const n = L.placeName(i); if (n && n !== b.name) names.push([i, n]); });
     post({ type: 'placeNames', id: m.id, pending: !L, names });
+  } else if (m.type === 'faithNames') {
+    // a place's culture is its biggest faith: 0 for Earth's old faiths, else 1 + its row in the faith table
+    const ok = !!(people() && chron && main), names: [number, string][] = [[0, "Earth's old faiths"]];
+    if (ok) {
+      const nF = main!.st.hx.hg[HG.nFaith];
+      for (let f = 0; f < nF; f++) names.push([f + 1, chron!.faithName(f)]);
+    }
+    post({ type: 'faithNames', id: m.id, pending: !ok, names: ok ? names : [] });
   } else if (m.type === 'ship') {
     const L = people();
     post({ type: 'ship', id: m.id, pending: !L, ship: L ? shipInfo(L, m.from, m.to, m.depart) : null });

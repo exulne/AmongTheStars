@@ -44,6 +44,9 @@ ok(tbl.bodies.length > 10 && tbl.rows.length === tbl.bodies.length * NF, 'table 
 let popSum = 0;
 for (let i = 0; i < tbl.bodies.length; i++) popSum += tbl.rows[i * NF + F.pop];
 ok(popSum > 1e9, `table population ${popSum.toExponential(2)}`);
+let cult = 0;
+for (let i = 0; i < tbl.bodies.length; i++) if (!Number.isNaN(tbl.rows[i * NF + F.culture])) cult++;
+ok(cult === 0, `table: culture column is NaN in every row (${cult} non-NaN)`);
 
 // scans: the snapshot fast path and the replay path must agree where they overlap
 const fast = await ask<'scan'>({ type: 'scan', expr: 'stage >= 4', agg: 'count', stride: 20 });
@@ -59,7 +62,7 @@ const err = await ask<'scan'>({ type: 'scan', expr: 'pop >', agg: 'count', strid
 ok(!!err.error, 'a bad query reports an error');
 
 // groups: the top groups plus everyone else add up to the total, which is sum(pop)
-for (const by of ['faction', 'culture', 'system', 'stage'] as const) {
+for (const by of ['faction', 'system', 'stage'] as const) {
   const g = await ask<'groups'>({ type: 'groups', by, stride: 20, top: 8 });
   const K = g.keys.length, T = g.steps.length;
   let worst = 0;

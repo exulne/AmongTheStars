@@ -1,7 +1,7 @@
 // Every global number the engine records each step. The order here is the
 // column order of the series buffer.
 
-export interface MetricDef { key: string; label: string; unit: string; log?: boolean; group: string }
+export interface MetricDef { key: string; label: string; unit: string; log?: boolean; group: string; /** kept in the series for the engine but never offered as data */ internal?: true }
 
 export const GLOBAL_METRICS: MetricDef[] = [
   { key: 'pop', label: 'Population', unit: 'people', log: true, group: 'People' },
@@ -47,7 +47,7 @@ export const GLOBAL_METRICS: MetricDef[] = [
   { key: 'factions', label: 'Independent factions', unit: '', group: 'Society' },
   { key: 'wars', label: 'Wars (total)', unit: '', group: 'Society' },
   { key: 'military', label: 'Military spending', unit: '$/yr', log: true, group: 'Society' },
-  { key: 'faiths', label: 'Faiths', unit: '', group: 'Society' },
+  { key: 'faiths', label: 'Faiths', unit: '', group: 'Society', internal: true },
   { key: 'era', label: 'Era', unit: '', group: 'Society' },
   // launch and mission economics (launchEconomics.ts): fully burdened cost, 2024 USD, booked when a mission or service departs
   { key: 'transportSpend', label: 'Transport spending', unit: '$/yr', log: true, group: 'Transport' },
@@ -78,6 +78,8 @@ export const GLOBAL_METRICS: MetricDef[] = [
 ];
 export const GM = Object.fromEntries(GLOBAL_METRICS.map((m, i) => [m.key, i])) as Record<string, number>;
 export const NGM = GLOBAL_METRICS.length;
+/** The metrics the data channel offers: the series minus the engine-only ones. */
+export const DATA_METRICS = GLOBAL_METRICS.filter((m) => !m.internal);
 
 // Per-settlement fields (columns of the settlement state table).
 export const SETTLEMENT_FIELDS = [
@@ -93,6 +95,9 @@ export const SETTLEMENT_FIELDS = [
 export type SField = typeof SETTLEMENT_FIELDS[number];
 export const F = Object.fromEntries(SETTLEMENT_FIELDS.map((k, i) => [k, i])) as Record<SField, number>;
 export const NF = SETTLEMENT_FIELDS.length;
+/** The settlement fields the data channel offers: the state table minus 'culture' (faith is kept for the narrative, never exported). */
+export const DATA_FIELDS = SETTLEMENT_FIELDS.filter((f) => f !== 'culture');
+export const DATA_FIELD_IDX = DATA_FIELDS.map((f) => F[f]);
 
 export const SETTLEMENT_LABELS: Partial<Record<SField, [string, string]>> = {
   pop: ['Population', 'people'], energy: ['Energy use', 'W'], gdp: ['Product', '$/yr'], capital: ['Capital', '$'],

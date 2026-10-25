@@ -67,6 +67,8 @@ export class SimClient {
   society(body: number, step: number) { return this.ask<Msg<'society'>>({ type: 'society', body, step }); }
   ship(from: number, to: number, depart: number) { return this.ask<Msg<'ship'>>({ type: 'ship', from, to, depart }); }
   placeNames() { return this.ask<Msg<'placeNames'>>({ type: 'placeNames' }); }
+  /** every faith by number (0: Earth's old faiths): [n, name], once the run's people exist */
+  faithNames() { return this.ask<Msg<'faithNames'>>({ type: 'faithNames' }); }
   inventions() { return this.ask<Msg<'inventions'>>({ type: 'inventions' }); }
   /** ages, faiths, polities and wars of this future, with their names */
   annals() { return this.ask<Msg<'annals'>>({ type: 'annals' }); }

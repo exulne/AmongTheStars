@@ -8,7 +8,7 @@
 //   functions abs sqrt log (base 10) ln exp min max floor ceil round pow if(c, a, b)
 
 import { STAGE_NAMES } from './catalog.ts';
-import { F, GLOBAL_METRICS, GM, NGM, SETTLEMENT_FIELDS } from './metrics.ts';
+import { DATA_FIELDS, DATA_FIELD_IDX, DATA_METRICS, F, GLOBAL_METRICS, GM, NGM } from './metrics.ts';
 import type { World } from './world.ts';
 
 export type Val = number | string;
@@ -214,22 +214,22 @@ export function tryCompile<R>(src: string, bind: Binder<R>): Compiled<R> | Query
 /** One settlement (body b) at one moment: its fields are S[o], S[o + 1], ... (o = b * NF in a full state). */
 export interface PlaceRow { S: Float64Array; b: number; o: number; year: number }
 
-const ALIASES: Record<string, string> = { faith: 'culture', population: 'pop', people: 'pop', loyal: 'allegiance', ruler: 'allegiance' };
+const ALIASES: Record<string, string> = { population: 'pop', people: 'pop', loyal: 'allegiance', ruler: 'allegiance' };
 
 /** Extra per-place columns beyond SETTLEMENT_FIELDS, with what they mean. */
 export const PLACE_EXTRAS: [string, string][] = [
   ['name', 'name of the world'], ['system', 'star system name'], ['allegiance', 'name of the capital it answers to (capital is its capital stock in $)'], ['stageName', 'stage as a word'],
   ['kind', 'kind of world'], ['dist', 'light years from the Sun'], ['sys', 'star system id'], ['id', 'body id'],
   ['age', 'years since founded'], ['independent', '1 if it is its own capital'], ['hab', 'habitability 0–1'], ['g', 'surface gravity'],
-  ['temp', 'temperature (K)'], ['faith', 'same as culture'], ['year', 'years after 2040'],
+  ['temp', 'temperature (K)'], ['year', 'years after 2040'],
 ];
 
 export function placeBinder(world: World): Binder<PlaceRow> {
   const B = world.bodies, Sy = world.systems;
   return (raw) => {
     const name = ALIASES[raw] ?? raw;
-    const k = (SETTLEMENT_FIELDS as readonly string[]).indexOf(name);
-    if (k >= 0) return (r) => r.S[r.o + k];
+    const k = (DATA_FIELDS as readonly string[]).indexOf(name);
+    if (k >= 0) return (r) => r.S[r.o + DATA_FIELD_IDX[k]];
     switch (name) {
       case 'name': return (r) => B[r.b].name;
       case 'system': return (r) => Sy[B[r.b].system].name;
@@ -257,11 +257,11 @@ export interface GlobalRow { series: Float64Array; i: number; year: number }
 export function globalBinder(): Binder<GlobalRow> {
   return (name) => {
     const col = GM[name];
-    if (col !== undefined) return (r) => r.series[r.i * NGM + col];
+    if (col !== undefined && !GLOBAL_METRICS[col].internal) return (r) => r.series[r.i * NGM + col];
     if (name === 'year') return (r) => r.year;
     return null;
   };
 }
 
-export const GLOBAL_NAMES = [...GLOBAL_METRICS.map((m) => m.key), 'year'];
-export const PLACE_NAMES = [...SETTLEMENT_FIELDS, ...PLACE_EXTRAS.map(([k]) => k)];
+export const GLOBAL_NAMES = [...DATA_METRICS.map((m) => m.key), 'year'];
+export const PLACE_NAMES = [...DATA_FIELDS, ...PLACE_EXTRAS.map(([k]) => k)];

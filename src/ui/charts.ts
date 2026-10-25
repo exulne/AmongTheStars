@@ -2,7 +2,7 @@
 // warped time axis so the slider and every chart line up vertically.
 
 import { ERAS } from '../sim/catalog.ts';
-import { GLOBAL_METRICS, GM, type MetricDef } from '../sim/metrics.ts';
+import { DATA_METRICS, GLOBAL_METRICS, GM, type MetricDef } from '../sim/metrics.ts';
 import { globalBinder, tryCompile, type GlobalRow } from '../sim/query.ts';
 import { fmtUnit, fmtYear } from './format.ts';
 
@@ -75,7 +75,7 @@ export class ChartStrip {
         select.innerHTML = '';
         let group = '';
         let og: HTMLOptGroupElement | null = null;
-        for (const m of GLOBAL_METRICS) {
+        for (const m of DATA_METRICS) {
           if (m.group !== group) { og = document.createElement('optgroup'); og.label = m.group; select.append(og); group = m.group; }
           og!.append(new Option(m.label, m.key));
         }
@@ -356,7 +356,7 @@ export function globalSeries(years: number[], series: Float64Array, frontier: nu
   const reg = registry.get(key);
   if (reg) return reg;
   const col = GM[key];
-  if (col === undefined) return null;
+  if (col === undefined || GLOBAL_METRICS[col].internal) return null;
   const n = Math.min(years.length, frontier + 1);
   const NG = GLOBAL_METRICS.length;
   return { years, n, def: GLOBAL_METRICS[col], values: (i) => series[i * NG + col] };
