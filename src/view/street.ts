@@ -13,6 +13,7 @@ import type { PersonBrief } from '../sim/lives.ts';
 import { Rng, hash01 } from '../sim/rng.ts';
 import { ARCH_NAME, changes, styleOf, type History, type Style } from './epoch.ts';
 import { CALM, makeAgent, place, type Agent, type Dest, type Mood, type Places } from './life.ts';
+import { StreetWar } from './streetWar.ts';
 import { glowTex, pointsMaterial, specColor } from './textures.ts';
 import { cultureLight, societyLook } from './societyLook.ts';
 import { alive, cityCount, citySplit, makeSky, popOf, stageOf, type Ctx, type Label, type Level, type Pickable, type Ref, type View } from './views.ts';
@@ -290,6 +291,8 @@ export class StreetView implements View {
   // light and motion
   private sun: THREE.DirectionalLight | null = null;
   private hemi: THREE.HemisphereLight | null = null;
+  private hemiBase = new THREE.Color();
+  private war = new StreetWar(personGeometry(), personMaterial());
   private star: THREE.Sprite | null = null;
   private blockMats: THREE.MeshStandardMaterial[] = [];
   private blockU: BlockUniforms = { lit: { value: 0.5 }, night: { value: 0 }, warm: { value: new THREE.Color() } };
@@ -389,6 +392,7 @@ export class StreetView implements View {
     const gnd = groundOf(b.kind, st.open);
     const outpost = pl.count < 300;
     const R = (this.R = outpost ? 3.2 : Math.min(36, Math.max(5, 3.4 * Math.log10(pl.count) - 3)));
+    this.war.attach(this.city, R);
     const big = pl.st >= STAGE.CITY;
     const small = pl.st <= STAGE.BASE || pl.count < 3000;
 
@@ -396,6 +400,7 @@ export class StreetView implements View {
     this.sunCol.copy(specColor(sys.spec));
     this.sun = new THREE.DirectionalLight(this.sunCol, 2.4);
     this.hemi = new THREE.HemisphereLight(st.open ? 0x7a96b8 : 0x5a6a88, 0x101014, 1.1);
+    this.hemiBase.copy(this.hemi.color);
     this.star = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: specColor(sys.spec), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.35 }));
     this.star.scale.setScalar(R * 0.9);
     this.group.add(this.sun, this.hemi, this.star, makeSky(pl.body + 11, 9000, 'skyst', () => ({ name: this.cityName, x: sys.x, y: sys.y, z: sys.z, sol: sys.id === 0 })));
@@ -429,6 +434,7 @@ export class StreetView implements View {
     // lots on a grid; the culture sets how often a street cuts through, the era how regular it is
     const cell = small ? 0.7 : 1.1;
     const G = st.grid;
+    this.war.attach(this.city, R, cell * G, cell * 0.3);
     const lots = Math.PI * (R / cell) ** 2 * (1 - 1 / G) ** 2;
     const fill = Math.min(1, pl.count / 40 / lots) * (0.75 + 0.25 * st.wealth);
     const n = Math.ceil(R / cell);
@@ -851,6 +857,13 @@ export class StreetView implements View {
       const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(slim, tall, slim), kidS = new THREE.Vector3(slim * 0.75, tall * 0.7, slim * 0.75), zero = new THREE.Vector3(0, 0, 0), p = new THREE.Vector3(), c = new THREE.Color(), upv = new THREE.Vector3(0, 1, 0);
       (this.figures.material as THREE.MeshStandardMaterial).userData.time.value = ctx.t;
       const walk = this.walk!.array as Float32Array;
+      // a world at war: the battle, the rockets, the sky lit by fires
+      this.war.material.userData.time.value = ctx.t;
+      this.war.update(ctx.world, ctx.snap, this.body, ctx.year, ctx.t, Math.min(1, night * 2.2), near, tall);
+      if (this.hemi) {
+        this.hemi.color.copy(this.hemiBase).lerp(RAID_SKY, this.war.raid * 0.7);
+        this.hemi.intensity += this.war.raid * 0.35;
+      }
       if (ctx.t - this.lastCycle > 1.5 && this.pool.length) {
         this.lastCycle = ctx.t;
         for (let tries = 0; tries < 12 && this.pool.length; tries++) {
@@ -863,6 +876,7 @@ export class StreetView implements View {
       for (let k = 0; k < n; k++) {
         const a = this.agents[k];
         place(a, this.hour, ctx.t, this.places);
+        if (!a.patrol) this.war.shelter(a, k);
         const kid = a.p.age < 16;
         if (a.patrol) c.setRGB(1, 0.42, 0.35);
         else if (this.mood.plague) c.setRGB(0.8, 0.95, 0.85);
@@ -932,6 +946,8 @@ export class StreetView implements View {
       const th = (s.a0 + s.a1) / 2;
       out.push({ pos: this.w(new THREE.Vector3(Math.cos(th) * this.R * 0.8, 0.4, Math.sin(th) * this.R * 0.8)), text: DISTRICT_NAMES[s.d], prio: 2 });
     }
+    const wl = this.war.label();
+    if (wl) out.push({ pos: this.w(wl.pos), text: wl.text, sub: wl.sub, strong: true, prio: 13 });
     const f = this.agents[this.follow];
     if (f) out.push({ pos: this.w(new THREE.Vector3(f.x, 0.35, f.z)), text: f.p.name, sub: f.doing, strong: true, prio: 12 });
     return out;
@@ -940,6 +956,7 @@ export class StreetView implements View {
 
 const FIGURE = 1.8;
 const DUSK = new THREE.Color(1, 0.55, 0.3);
+const RAID_SKY = new THREE.Color(1, 0.36, 0.14);
 const cultC = new THREE.Color();
 /** Lit-window colour: the era's lamp colour, pulled toward the society's own light once the worker has sent its look. */
 function windowColour(st: Style, body: number): THREE.Color {

@@ -29,6 +29,8 @@ import { Timeline } from './ui/timeline.ts';
 import { LocalCalendar } from './ui/calendar.ts';
 import { EraBanner, eraRun, eraTitle } from './ui/eraBanner.ts';
 import { wayOfWarHtml } from './ui/wayOfWar.ts';
+import { setWarAnnals } from './view/warLayer.ts';
+import { bodyWars } from './view/warState.ts';
 import { EraMood } from './view/eraMood.ts';
 import { CameraRig, PRESETS, easeInOutCubic, easeInOutSine, easeOutCubic, type MotionPreset } from './view/camRig.ts';
 import { ShipConsole } from './ship/console.ts';
@@ -750,7 +752,7 @@ inspector.api = {
   residentAt: (b, y, k) => sim.residentAt(b, y, k),
   annals: () => sim.annals(),
 };
-inspector.onAnnals = (a) => { timeline.setAges(a?.ages ?? []); calendar.annals = a; timeline.refresh(); };
+inspector.onAnnals = (a) => { setWarAnnals(a); timeline.setAges(a?.ages ?? []); calendar.annals = a; timeline.refresh(); };
 inspector.onSelect = (p) => { select(p); if (p) travelTo(p); };
 setShipApi((f, t, d) => sim.ship(f, t, d), () => refreshPanels(), (b, y) => sim.residents(b, y, 0, 6));
 setMissionApi((id) => sim.data<'mission'>({ type: 'mission', mission: id }));
@@ -1039,7 +1041,7 @@ function streetMood(): void {
   sim.events(ctx.year - 15, ctx.year, b, 40).then((evs) => {
     if (g !== runGen || !ctx.snap) return;
     const has = (n: string) => evs.some((e) => EVENT_NAMES[e.type] === n);
-    const war = era === 'War' || has('War');
+    const war = era === 'War' || has('War') || bodyWars(world, ctx.snap, b, ctx.year).length > 0;
     const plague = era === 'Pandemic' || has('Plague');
     const short = S[o + F.shortage] > 0.15 || has('Famine');
     const happy = S[o + F.happiness], stab = S[o + F.stability];

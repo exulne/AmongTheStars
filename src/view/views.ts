@@ -19,6 +19,9 @@ import { EarthOrbitLayers } from './orbitLayers.ts';
 import { BEAM, SCOOP, shipStyle } from './shipStyles.ts';
 import { applyCultureLights, cultureLight, cultureSkin, lookKey, societyLook } from './societyLook.ts';
 import { REDUCED_MOTION, applyPlanetLook } from './timeLook.ts';
+import { WarLayer } from './warLayer.ts';
+import { BattleLayer } from './battle.ts';
+import { PlanetWar } from './planetWar.ts';
 import { STAGE_COLORS, flareTex, galaxySpriteTex, glowTex, pointsMaterial, specColor } from './textures.ts';
 import { explainGalaxy } from '../explain/galaxy.ts';
 import { addCpuSet, addGpuSet, nearestPoint, pxPerUnit } from '../explain/picker.ts';
@@ -557,8 +560,10 @@ export class LocalView implements View {
   private shipIds: number[] = [];      // ship id per line segment
   private shipHeadIds: number[] = [];  // ship id per head point
   private shipAt = new Map<number, THREE.Vector3>();
+  private wars: WarLayer;
 
   constructor(world: World) {
+    this.wars = new WarLayer((sys, out) => { const s = world.systems[sys]; return out.copy(toScene(s.x, s.y, s.z)); }, 'warl');
     this.ids = world.systems.filter((s) => s.region === 'local' || s.region === 'sol').map((s) => s.id);
     this.stars = pointCloud(this.ids.length, pointsMaterial({ minPx: 1.1 }));
     this.base = new Float32Array(this.ids.length * 3);
@@ -593,6 +598,7 @@ export class LocalView implements View {
     explainShips('shipl', { heads: this.shipHeads.pts, headIds: this.shipHeadIds, lines: this.shipLines, segIds: this.shipIds, segCount: () => this.shipIds.length, at: this.shipAt });
     const sun = glowSprite(0xfff1d6, 1.6, 1, flareTex);
     this.group.add(sun);
+    this.group.add(this.wars.group);
   }
 
   enter(ctx: Ctx): void {
@@ -677,6 +683,7 @@ export class LocalView implements View {
     this.shipLines.geometry.attributes.position.needsUpdate = true;
     this.shipLines.geometry.attributes.color.needsUpdate = true;
     dirty(this.shipHeads.pts);
+    this.wars.draw(ctx.world, snap, ctx.year, ctx.t);
   }
 
   private picks: Pickable[] | null = null;
@@ -716,6 +723,7 @@ export class LocalView implements View {
         });
     }
     for (const l of this.ranked) if (l.pos.distanceTo(cam) < 900) out.push(l);
+    for (const w of this.wars.labels(ctx.world, ctx.year)) if (w.pos.distanceTo(cam) < 900) out.push({ pos: w.pos, text: w.text, sub: w.sub, strong: true, ref: { kind: 'system', id: w.sys }, prio: w.prio });
     return out;
   }
 }
@@ -751,6 +759,19 @@ export class SystemView implements View {
   private comet: { head: THREE.Sprite; tail: THREE.Line; orbit: THREE.LineLoop; au: number; seed: number } | null = null;
   /** planets' (AU, scene radius), to place anything else on the same squeezed scale */
   private scale: [number, number][] = [];
+  private wars = new WarLayer(() => new THREE.Vector3(), 'wary', {
+    here: () => this.builtFor,
+    body: (b) => this.vis.find((v) => v.id === b)?.mesh.position ?? null,
+    size: (b) => this.vis.find((v) => v.id === b)?.visR ?? 0.5,
+    edge: (sys, from, out) => {
+      const w = this.world!, here = w.systems[this.builtFor], o = w.systems[sys];
+      const dir = toScene(o.x - here.x, o.y - here.y, o.z - here.z);
+      dir.y *= 0.25;
+      return out.copy(dir.normalize()).multiplyScalar(Math.min(this.edge * 0.5, 22)).add(from);
+    },
+  });
+  private world: World | null = null;
+  private battle = new BattleLayer((b) => this.vis.find((v) => v.id === b)?.mesh.position ?? null, (id, c) => this.wars.card(id, c));
 
   enter(ctx: Ctx): void {
     this.build(ctx);
@@ -810,6 +831,8 @@ export class SystemView implements View {
     this.edge = Math.max(40, ...this.vis.map((v) => v.orbitR)) * 1.35;
     this.trails.addTo(this.group);
     this.trails.explain('shipy');
+    this.world = ctx.world;
+    this.group.add(this.wars.group, this.battle.group);
     explainWorks('starw', this.group, () => this.star.children, () => ({ body: -1, sys: this.builtFor }), 1);
     this.scale = planets.map((b) => [b.a, this.vis.find((v) => v.id === b.id)!.orbitR] as [number, number]);
     this.comet = null;
@@ -964,6 +987,8 @@ export class SystemView implements View {
     this.works.frame(ctx.tm, REDUCED_MOTION);
     this.moveComet(yr);
     this.drawShips(ctx);
+    this.wars.draw(ctx.world, ctx.snap, ctx.year, ctx.t);
+    this.battle.draw(ctx.world, ctx.snap, ctx.year, ctx.t, this.builtFor);
   }
 
   /** Interstellar ships leaving or reaching this system: a trail from the world to the edge, toward the other star, with motes flowing along it. */
@@ -1025,7 +1050,8 @@ export class SystemView implements View {
   }
 
   labels(ctx: Ctx): Label[] {
-    return this.vis.filter((v) => v.parent < 0 || alive(stageOf(ctx.snap, v.id)) || v.visR > 0.3).map((v) => {
+    const wars: Label[] = this.wars.labels(ctx.world, ctx.year, 3).map((w) => ({ pos: w.pos, text: w.text, sub: w.sub, strong: true, prio: w.prio + 14 }));
+    return [...wars, ...this.vis.filter((v) => v.parent < 0 || alive(stageOf(ctx.snap, v.id)) || v.visR > 0.3).map((v) => {
       const st = stageOf(ctx.snap, v.id);
       const b = ctx.world.bodies[v.id];
       return {
@@ -1036,7 +1062,7 @@ export class SystemView implements View {
         ref: { kind: 'body' as const, id: v.id },
         prio: alive(st) ? 10 + Math.log10(1 + popOf(ctx.snap, v.id)) : v.parent < 0 ? 5 + v.visR : v.visR,
       };
-    });
+    })];
   }
 }
 
@@ -1076,6 +1102,7 @@ export class PlanetView implements View {
   private haze = 0;
   /** labels the impact visualization adds while it runs */
   extraLabels: (() => Label[]) | null = null;
+  private war = new PlanetWar();
 
   enter(ctx: Ctx): void {
     this.build(ctx);
@@ -1135,6 +1162,7 @@ export class PlanetView implements View {
     this.group.add(this.orbit);
     explainElevators('elev', this.pivot, () => this.elevators, () => this.builtFor);
     explainWorks('work', this.group, () => this.works.works, () => ({ body: this.builtFor, sys: ctx.world.bodies[this.builtFor].system }));
+    this.pivot.add(this.war.group);
     this.cities = null; this.works.reset(); this.sats = null; this.elevators = [];
     this.cityKey = ''; this.satKey = -1; this.elevKey = -1; this.archKey = ''; this.arch = null;
     this.feats = []; this.geoYear = NaN;
@@ -1228,6 +1256,7 @@ export class PlanetView implements View {
       }
       dirty(this.cities.pts);
       this.pivot.add(this.cities.pts);
+      this.war.setCities(this.cityPos);
     }
     const on = alive(st);
     // the cities' buildings, seen from orbit: domes early, towers and spires later, in the culture's colours
@@ -1342,6 +1371,7 @@ export class PlanetView implements View {
       c.position.copy(c.userData.dir as THREE.Vector3).multiplyScalar(10.2 + (TETHER - 10.4) * (0.5 - 0.5 * Math.cos(u * Math.PI * 2)));
     }
     if (this.cities) (this.cities.pts.material as THREE.ShaderMaterial).uniforms.uOpacity.value = 0.75 + 0.25 * Math.sin(ctx.t * 1.5);
+    this.war.draw(ctx.world, ctx.snap, ctx.body, ctx.year, ctx.t);
   }
 
   pickables(ctx: Ctx): Pickable[] {
@@ -1375,6 +1405,8 @@ export class PlanetView implements View {
       const top = (this.elevators[0].children[1] as THREE.Sprite).position.clone().applyMatrix4(this.pivot.matrixWorld);
       out.push({ pos: top, text: this.elevators.length > 1 ? `${this.elevators.length} space elevators` : 'Space elevator', sub: `since ${Math.round(2040 + this.elevSince)}`, prio: 4, ref: { kind: 'thing', id: 0, ex: 'elev', name: 'Space elevator' } });
     }
+    const war = this.war.label();
+    if (war) out.push({ pos: new THREE.Vector3(11.5, -1.5, 3), text: war.text, sub: war.sub, strong: true, prio: 9 });
     out.push({ pos: new THREE.Vector3(0, 11.5, 0), text: b.name, sub: alive(st) ? `${STAGE_NAMES[st]} · ${fmtNum(popOf(ctx.snap, ctx.body))} people` : st >= 0 ? STAGE_NAMES[st] : 'never settled', strong: true, ref: { kind: 'body', id: ctx.body }, prio: 10 });
     if (this.extraLabels) out.push(...this.extraLabels());
     return out;
