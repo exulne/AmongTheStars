@@ -1111,6 +1111,21 @@ timeline.onChange = (y) => {
   charts.setYear(y);
 };
 
+// a hand on the timeline (the slider and its keys, a typed year, an age, Play, the Space and arrow
+// shortcuts) drops a year parked by a link, the URL or Watch; seeks made in code keep it
+const dropParked = (): void => { pendingYear = null; };
+timeline.el.addEventListener('input', (e) => { if ((e.target as HTMLElement).matches('input[type=range]')) dropParked(); });
+timeline.el.addEventListener('keydown', (e) => {
+  const t = e.target as HTMLElement;
+  if (t.matches('input[type=range]') ? e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.code === 'Space' : t.matches('.tl-big') && e.key === 'Enter') dropParked();
+});
+timeline.el.addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('[data-age], .tl-play')) dropParked(); });
+window.addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.code === 'Space' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') dropParked();
+});
+
 sim.onProgress = () => {
   const era = GM.era;
   timeline.setData(sim.done ? 10000 : sim.years[sim.frontier], { years: sim.years, n: sim.frontier + 1, era: (i) => sim.series[i * NGM + era] });
