@@ -12,6 +12,8 @@ export interface ObservedImpact {
   /** published impactor estimates */
   diameterM: [number, number, number];
   speedKms?: number; angleDeg?: number; densityKgM3?: number;
+  /** bulk strength (Pa) and target material the validation uses, where the published case needs them (scripts/impact-check.ts) */
+  strengthPa?: number; material?: import('./bodies.ts').Material;
   energyMt?: [number, number, number];
   outcome: 'airburst' | 'ground-impact' | 'deep-deposition' | 'small-crater';
   observed: string;
@@ -40,7 +42,7 @@ export const OBSERVED_IMPACTS: ObservedImpact[] = [
   },
   {
     id: 'meteor-crater', body: 'Earth', date: '−50,000 (approx.)', name: 'Barringer (Meteor) Crater',
-    diameterM: [40, 50, 60], speedKms: 12.8, angleDeg: 45, densityKgM3: 7800, outcome: 'ground-impact',
+    diameterM: [40, 50, 60], speedKms: 12.8, angleDeg: 45, densityKgM3: 7800, strengthPa: 2e8, material: 'soft-rock', outcome: 'ground-impact',
     observed: 'A 1.2 km simple crater in Arizona made by an iron impactor about 50 m across, roughly 50,000 years ago.',
     check: { craterM: [800, 1500] },
     sources: [src('USGS / Kring 2007, Guidebook to the Geology of Barringer Meteorite Crater', 'https://www.lpi.usra.edu/publications/books/barringer_crater_guidebook/')],
@@ -60,14 +62,14 @@ export const OBSERVED_IMPACTS: ObservedImpact[] = [
   },
   {
     id: 'mars-2021', body: 'Mars', date: '2021-12-24', name: 'Amazonis Planitia impact (InSight-detected)',
-    diameterM: [5, 8, 12], speedKms: 10, angleDeg: 45, densityKgM3: 3000, outcome: 'ground-impact',
+    diameterM: [5, 8, 12], speedKms: 10, angleDeg: 45, densityKgM3: 3000, strengthPa: 5e6, outcome: 'ground-impact',
     observed: 'InSight recorded a magnitude-4 marsquake; Mars Reconnaissance Orbiter found a fresh crater about 150 m across with ice blocks in its ejecta.',
     check: { craterM: [80, 300] },
     sources: [src('NASA JPL news, 2022-10-27', 'https://www.jpl.nasa.gov/news/nasas-insight-lander-detects-stunning-meteoroid-impact-on-mars/')],
   },
   {
     id: 'moon-2013', body: 'Moon', date: '2013-03-17', name: 'Lunar impact flash (NASA Meteoroid Environment Office)',
-    diameterM: [0.3, 0.35, 0.4], speedKms: 25.6, angleDeg: 45, densityKgM3: 3000, outcome: 'small-crater',
+    diameterM: [0.3, 0.35, 0.4], speedKms: 25.6, angleDeg: 45, densityKgM3: 3000, material: 'sand', outcome: 'small-crater',
     observed: 'A 40 kg meteoroid made a flash visible from Earth; Lunar Reconnaissance Orbiter later found its crater, about 18 m across.',
     check: { craterM: [8, 40] },
     sources: [src('NASA, "Bright Explosion on the Moon" (2013)', 'https://science.nasa.gov/science-research/planetary-science/17may_lunarimpact/')],

@@ -44,6 +44,10 @@ import { StreetView } from './view/street.ts';
 import { Picker } from './explain/picker.ts';
 import { explainLocate, explainName, explainerFor } from './explain/registry.ts';
 import { resetShips, setMissionApi, setShipApi, shipId } from './explain/ships.ts';
+import { ImpactDirector, type PlanetHost, type SavedView } from './view/impactDirector.ts';
+import { ImpactPlayer } from './ui/impactPlayer.ts';
+import type { VisualScenario } from './impact/visual.ts';
+import { demoApproach } from './impact/vizApproach.ts';
 import { GalaxyView, LocalView, LEVELS, PLANET_SUN, PlanetView, SystemView, UniverseView, alive, cityCount, cityDir, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
 
 // ------------------------------------------------------------------ DOM
@@ -211,6 +215,7 @@ const dataPanel = installDataDesk({
   selectBody: (b) => select(asPick({ kind: 'body', id: b })),
   showSeries: (key) => { if (charts.el.hidden) chartsToggle.click(); charts.show(key); },
   pickYear: (y) => seekTo(y),
+  visualize: (src, opts) => visualize(src, opts),
 });
 // a permanent notice: what this is not
 {
@@ -281,6 +286,72 @@ micro.onChange = () => {
   const w = micro.bio?.where;
   if (placeFromBio && w && world.bodies[w.body]) { placeFromBio = false; ctx.body = w.body; ctx.system = world.bodies[w.body].system; ctx.city = 0; writeHash(); }
   if (!isMicro(level)) return; views[level].sync(ctx); renderCrumbs(); refreshPanels(); };
+
+// ------------------------------------------------------------------ impact visualization
+
+// Plays one impact, close approach or deflection on the planet view (src/view/impactDirector.ts): the
+// director saves where we are, pauses the timeline, travels to the world with the app's own moves and
+// directs the camera through the rig; exiting puts everything back.
+const planetView = views.planet as PlanetView;
+let planetAdapter: { pivot: THREE.Object3D; host: PlanetHost } | null = null;
+let restoreAfter: SavedView | null = null;
+const director = new ImpactDirector({
+  rig, camera,
+  save: () => ({ level, body: ctx.body, system: ctx.system, selected: ctx.selected, cam: camera.position.clone(), target: controls.target.clone(), fov: camera.fov, playing: timeline.playing, year: ctx.year, extra: { city: ctx.city } }),
+  restore: (sv) => {
+    if (Math.abs(ctx.year - sv.year) > 1e-6) timeline.set(sv.year, true);
+    const back = sv.level as Level, ex = sv.extra as { city: number };
+    if (back !== level || sv.body !== ctx.body) setLevel(back, null, () => { ctx.body = sv.body; ctx.system = sv.system; ctx.city = ex.city; });
+    restoreAfter = sv; // the camera pose, selection and clock once the level has settled (loop)
+  },
+  goToBody: (b) => goToBody(b),
+  planet: (b) => {
+    if (level !== 'planet' || ctx.body !== b || busy) return null;
+    const pivot = planetView.impactFrame();
+    if (planetAdapter?.pivot !== pivot) planetAdapter = { pivot, host: {
+      frame: pivot,
+      setTransientScars: (x) => planetView.setTransientScars(x), setCityShade: (x) => planetView.setCityShade(x), setCutaway: (on) => planetView.setCutaway(on),
+      holdSpin: (on) => planetView.holdSpin(on), faceSun: (d) => planetView.faceSun(d),
+      get extraLabels() { return planetView.extraLabels; }, set extraLabels(f) { planetView.extraLabels = f; },
+    } };
+    return planetAdapter.host;
+  },
+  playing: () => timeline.playing, togglePlay: () => timeline.toggle(), seekYear: (y) => seekTo(y),
+  setLimits: (lo, hi) => rig.setLimits(lo, hi),
+  reduced: () => reducedMotion || rig.reduced,
+  pixelRatio: () => renderer.getPixelRatio(),
+  viewportH: () => canvas.clientHeight || 800,
+});
+const player = new ImpactPlayer(director, () => reducedMotion || rig.reduced);
+app.append(player.el);
+director.onChange = () => player.render();
+
+/** Start a visualization from the Impact Lab (or the debug harness): the desk folds away and comes back on exit. */
+function visualize(src: VisualScenario | Promise<VisualScenario | null>, opts: { alternates?: Parameters<ImpactPlayer['setAlternates']>[0]; replayYear?: number; persistentScar?: boolean } = {}): void {
+  const reopen = !director.active && dataPanel.open;
+  if (reopen) { dataPanel.toggle(); app.querySelector('#data')?.setAttribute('aria-pressed', 'false'); }
+  if (following) stopFollow();
+  player.setAlternates(opts.alternates ?? null);
+  director.start(src, { replayYear: opts.replayYear, persistentScar: opts.persistentScar, onExit: reopen ? () => { if (!dataPanel.open) { dataPanel.toggle(); app.querySelector('#data')?.setAttribute('aria-pressed', 'true'); } } : undefined });
+}
+
+// debug harness: ?impact=chelyabinsk (or barringer, moon-100m, mars-surface, venus-airburst, sl9, deflection, close-approach)
+{
+  const demo = new URLSearchParams(location.search).get('impact');
+  if (demo) setTimeout(() => visualize(demo === 'close-approach' ? Promise.resolve(demoApproach(world)) : sim.data<'impactViz'>({ type: 'impactViz', case: 'demo', key: demo as never }).then((r) => r.visual)), 1200);
+}
+
+/** After an exit: once any level change has landed, the camera goes back to where it was, the selection and the clock too. */
+function finishRestore(): void {
+  const sv = restoreAfter;
+  if (!sv || busy || level !== sv.level || ctx.body !== sv.body) return;
+  restoreAfter = null;
+  const l = views[level].limits;
+  rig.setLimits(l[0], l[1]);
+  fly(sv.cam, sv.target, 1, easeInOut, undefined, true);
+  select(sv.selected as Pickable | null);
+  if (sv.playing && !timeline.playing) timeline.toggle();
+}
 
 // ------------------------------------------------------------------ legend and colour modes
 
@@ -379,7 +450,7 @@ const sideV = new THREE.Vector3(), UPV = new THREE.Vector3(0, 1, 0);
 
 /** Travel to a thing in this view and keep it centred as it moves. False if it isn't somewhere to travel. */
 function travelTo(r: Ref, done?: () => void): boolean {
-  if (busy) return false;
+  if (busy || (director.active && director.status !== 'focusing')) return false; // the impact visualization directs the camera once it plays
   const lv = level;
   if (lv === 'planet' && r.kind === 'city') {
     // a settlement: turn the globe under us until it faces the camera, at a distance that shows its region
@@ -803,6 +874,7 @@ inspector.onPerson = (id) => { if (following && id !== following.pid) stopFollow
 let pull: Ref | null = null, lastWheel = 0;
 canvas.addEventListener('wheel', (e) => {
   rig.interrupt(); // a travel hands over to the wheel; a flight between levels hurries
+  if (director.active) { director.userInput(); return; } // zoom only: no diving into a city mid-impact
   if (busy) return;
   const gesture = e.timeStamp - lastWheel < 700;
   lastWheel = e.timeStamp;
@@ -843,7 +915,7 @@ function enterableRef(r: Ref): Ref {
 }
 canvas.addEventListener('pointerdown', () => { pull = null; });
 // grabbing the view stops a travel where it is (capture: before OrbitControls sees the press, so the drag starts at once)
-canvas.addEventListener('pointerdown', () => { rig.interrupt(); }, { capture: true });
+canvas.addEventListener('pointerdown', () => { rig.interrupt(); director.userInput(); }, { capture: true });
 labelsEl.addEventListener('pointerdown', () => { rig.interrupt(); }); // a press on a label is a hand on the view too
 
 /** Where a selected thing sits in a view: explained things (stars, asteroids, ships…) know their own place. */
@@ -932,7 +1004,7 @@ function openResident(k: number): void {
   inspector.el.classList.add('open');
 }
 canvas.addEventListener('dblclick', (e) => {
-  if (busy) return;
+  if (busy || director.active) return;
   const p = pickAny(e.clientX, e.clientY);
   if (p?.kind === 'person') { openResident(p.id); dive(p); }
   else if (p) { if (isMicro(level) && inspector.personId) inspector.openPerson(null); select(p); dive(p); }
@@ -1362,6 +1434,13 @@ window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement && e.target.type === 'range' && e.code === 'Space') { e.preventDefault(); timeline.toggle(); return; }
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
+  // while an impact plays, Space plays and pauses it, the arrows scrub it and Esc leaves it
+  if (director.active) {
+    if (e.code === 'Space') { e.preventDefault(); director.toggle(); return; }
+    if (e.key === 'Escape') { director.exit(); return; }
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); director.seek(director.t + (e.key === 'ArrowRight' ? 1 : -1)); return; }
+    if (e.key === 'Backspace' || e.key === 'Enter') return;
+  }
   // typing a name anywhere goes to search, so letters never fire shortcuts
   if (e.key.length === 1 && /[\p{L}\p{N}#]/u.test(e.key)) { e.preventDefault(); search.focus(e.key); return; }
   if (e.code === 'Space') { e.preventDefault(); timeline.toggle(); }
@@ -1656,12 +1735,16 @@ function loop(now: number): void {
   timeline.tick(dt);
   // the world moves first, so the camera follows where things are this frame, not where they were
   views[level].frame(ctx, dt);
-  if (!rig.flying) {
+  director.frame(dt);
+  if (!director.active) finishRestore();
+  if (!rig.flying && !director.active) {
     // wheel-in target drifts to the thing under the cursor
     const at = pull ? locateRef(views[level], pull) : null;
     if (at) controls.target.lerp(at, 1 - Math.exp(-dt * 6));
   }
   rig.frame(dt);
+  director.afterRig();
+  player.frame();
   drawHud();
   sky.position.copy(camera.position);
   yearRate = dt > 0 ? (ctx.year - lastYear) / dt : 0;
@@ -1680,4 +1763,4 @@ function loop(now: number): void {
 }
 requestAnimationFrame(loop);
 
-if (import.meta.env.DEV) Object.assign(window, { __app: { ctx, views, setLevel, dive, select, timeline, camera, controls, micro, multiverse, enterPerson, street, inspector, sim, get level() { return level; }, get busy() { return busy; }, get flying() { return rig.flying; }, rig, travelTo, goToBody, zoomStep, get following() { return following; }, get pull() { return pull; } } });
+if (import.meta.env.DEV) Object.assign(window, { __app: { ctx, views, setLevel, dive, select, timeline, camera, controls, micro, multiverse, enterPerson, street, inspector, sim, get level() { return level; }, get busy() { return busy; }, get flying() { return rig.flying; }, rig, travelTo, goToBody, zoomStep, get following() { return following; }, get pull() { return pull; }, director, visualize } });

@@ -46,7 +46,14 @@ export interface EntryResult {
   deposition: [number, number][];
   /** altitude–speed track: [altKm, km/s] */
   track: [number, number][];
+  /** the same integration sampled for display (opts.trace): time, altitude, speed, mass and spread along the path; empty unless asked */
+  trace: TracePoint[];
+  /** seconds from the top of the atmosphere to the end of the integration */
+  durationS: number;
 }
+
+/** [seconds since the top of the atmosphere, altitude km, speed km/s, mass / initial mass, cloud radius / initial radius, energy deposited J per km of altitude since the last point] */
+export type TracePoint = [number, number, number, number, number, number];
 
 export const KT_TNT = 4.184e12; // J
 export const CD = 2;
@@ -55,14 +62,14 @@ export const FP = 7;
 
 export const strengthLaw = (rho: number) => 10 ** (2.107 + 0.0624 * Math.sqrt(rho));
 
-export function entry(body: BodyProfile, imp: Impactor, opts: { season?: number; densityScale?: number; floorKm?: number; lite?: boolean } = {}): EntryResult {
+export function entry(body: BodyProfile, imp: Impactor, opts: { season?: number; densityScale?: number; floorKm?: number; lite?: boolean; trace?: boolean } = {}): EntryResult {
   const r0 = imp.diameterM / 2, rhoI = imp.densityKgM3;
   const m0 = (4 / 3) * Math.PI * r0 ** 3 * rhoI, v0 = imp.speedKms * 1e3;
   const E0 = 0.5 * m0 * v0 * v0;
   const theta = (Math.max(5, Math.min(90, imp.angleDeg)) * Math.PI) / 180;
   const atm = body.atmosphere;
   if (atm.kind === 'none') {
-    return { outcome: 'no-atmosphere', burstAltKm: null, breakupAltKm: null, initialEnergyJ: E0, atmosphereEnergyJ: 0, groundSpeedKms: imp.speedKms, groundMassKg: m0, groundEnergyJ: E0, spreadAtGround: 1, deposition: [], track: [] };
+    return { outcome: 'no-atmosphere', burstAltKm: null, breakupAltKm: null, initialEnergyJ: E0, atmosphereEnergyJ: 0, groundSpeedKms: imp.speedKms, groundMassKg: m0, groundEnergyJ: E0, spreadAtGround: 1, deposition: [], track: [], trace: [], durationS: 0 };
   }
   const Y = imp.strengthPa ?? strengthLaw(rhoI);
   const scale = opts.densityScale ?? 1;
@@ -79,6 +86,10 @@ export function entry(body: BodyProfile, imp: Impactor, opts: { season?: number;
   const track: [number, number][] = [];
   let lastTrack = Infinity;
   let deposited = 0, peakE = 0, peakAlt = 0;
+  // the display trace only reads the state after each step: it never changes the integration
+  const trace: TracePoint[] = [], traceKm = giant ? 5 : 1;
+  let time = 0, lastTraceH = h, sinceTrace = 0;
+  if (opts.trace) trace.push([0, h / 1000, v / 1000, 1, 1, 0]);
   for (let it = 0; it < 400000; it++) {
     const ra = rhoA(h / 1000);
     const A = Math.PI * r * r;
@@ -92,7 +103,8 @@ export function entry(body: BodyProfile, imp: Impactor, opts: { season?: number;
     // integrate (semi-implicit Euler is enough at these step sizes)
     v = Math.max(0, v + (-decel + g * Math.sin(theta)) * dt);
     m = Math.max(m * 1e-6, m + dmdt * dt);
-    if (!broken && ra * v * v >= Y) { broken = true; breakupAlt = h / 1000; }
+    const breaking = !broken && ra * v * v >= Y;
+    if (breaking) { broken = true; breakupAlt = h / 1000; }
     if (broken) {
       const rdd = (CD * ra * v * v) / (2 * rhoI * r);
       rdot += rdd * dt; r += rdot * dt;
@@ -101,6 +113,11 @@ export function entry(body: BodyProfile, imp: Impactor, opts: { season?: number;
     const ke1 = 0.5 * m * v * v;
     const dE = Math.max(0, ke0 - ke1);
     deposited += dE;
+    time += dt;
+    if (opts.trace) {
+      sinceTrace += dE;
+      if (breaking || lastTraceH - h >= traceKm * 1000) { trace.push([time, h / 1000, v / 1000, m / m0, r / r0, sinceTrace / Math.max(1e-3, (lastTraceH - h) / 1000)]); lastTraceH = h; sinceTrace = 0; }
+    }
     if (!opts.lite) {
       const bin = Math.floor(h / 1000 / binKm) * binKm;
       dep.set(bin, (dep.get(bin) ?? 0) + dE / binKm);
@@ -111,6 +128,7 @@ export function entry(body: BodyProfile, imp: Impactor, opts: { season?: number;
     if (ke1 < 0.005 * E0 || v < 300) break;
     if (h <= floor * 1000) break;
   }
+  if (opts.trace && lastTraceH !== h) trace.push([time, h / 1000, v / 1000, m / m0, r / r0, sinceTrace / Math.max(1e-3, (lastTraceH - h) / 1000)]);
   const deposition = [...dep.entries()].sort((a, b) => b[0] - a[0]) as [number, number][];
   const peak = opts.lite ? [peakAlt, peakE] as [number, number] : deposition.reduce((a, b) => (b[1] > a[1] ? b : a), [0, 0] as [number, number]);
   const groundE = 0.5 * m * v * v;
@@ -130,7 +148,7 @@ export function entry(body: BodyProfile, imp: Impactor, opts: { season?: number;
     groundMassKg: reached ? m : outcome === 'decelerated' ? m : 0,
     groundEnergyJ: reached ? groundE : 0,
     spreadAtGround: r / r0,
-    deposition, track,
+    deposition, track, trace, durationS: time,
   };
 }
 

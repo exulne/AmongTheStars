@@ -36,3 +36,11 @@
 .lab-checks { font-size: 0.7rem; color: var(--quiet); }
 .app-disclaimer { position: absolute; z-index: 5; left: 50%; bottom: max(2px, env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); font-size: 0.62rem; color: rgba(220, 225, 235, 0.55); pointer-events: none; white-space: nowrap; max-width: calc(100vw - 32px); overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 640px) { .app-disclaimer { white-space: normal; text-align: center; font-size: 0.58rem; } }
+/* Impact Lab: the visual workflow first, the tables folded beneath it */
+.il-steps { margin: 0.4rem 0 0.2rem; padding-left: 1.2rem; font-size: 0.75rem; color: var(--quiet); display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 0.05rem 1.4rem; }
+.il-sec { border-top: 1px solid var(--faint); margin-top: 0.35rem; }
+.il-sec > summary { cursor: pointer; font-size: 0.8rem; color: var(--quiet); padding: 0.25rem 0; }
+.il-sec > summary:hover { color: var(--ink); }
+.il-viz { border-left: 2px solid #c98500; padding-left: 0.6rem; margin: 0.4rem 0 0.6rem; }
+.il-reps { display: grid; gap: 0.15rem; font-size: 0.78rem; }
+.il-go { font-size: 0.9rem; color: var(--accent); }

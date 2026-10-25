@@ -40,6 +40,10 @@ export interface ScenarioSpec {
   label?: string;
   /** engine use: skip the deposition profile and track */
   lite?: boolean;
+  /** record the entry integration for display (entry.ts trace); never changes the result */
+  trace?: boolean;
+  /** Earth only: land in the ocean or on land, as a statistical category (the geography is not mapped). Unset: by surface share. */
+  earthSurface?: 'ocean' | 'land';
 }
 
 export interface Draw { impactor: Impactor; point: [number, number, number]; material: Material; ocean: boolean; fx: Effects; exposure: Exposure; vImpKms: number }
@@ -82,7 +86,15 @@ export function sampleInputs(spec: ScenarioSpec, seed: number, i: number): DrawI
   const point = spec.point ?? spherePoint(u(8), u(9));
   // what it lands on: by surface share
   let x = u(10), material: Material = p.materials[0]?.m ?? 'dry-soil';
-  for (const m of p.materials) { if (x < m.share) { material = m.m; break; } x -= m.share; }
+  const surface = p.name === 'Earth' ? spec.earthSurface : undefined;
+  if (surface === 'ocean') material = 'water';
+  else if (surface === 'land') {
+    // the same uniform spread over the land materials only, in their proportions
+    const land = p.materials.filter((m) => m.m !== 'water'), tot = land.reduce((a, m) => a + m.share, 0);
+    x *= tot;
+    material = land[0]?.m ?? 'dry-soil';
+    for (const m of land) { if (x < m.share) { material = m.m; break; } x -= m.share; }
+  } else for (const m of p.materials) { if (x < m.share) { material = m.m; break; } x -= m.share; }
   const ocean = p.name === 'Earth' && material === 'water';
   return { impactor: { diameterM: D, densityKgM3: rho, speedKms: vImp, angleDeg: angle, strengthPa: strength, kind }, point, material, ocean, season: 2 * u(11) - 1, vImpKms: vImp, earthU: [ocean ? 0.99 : u(12) * 0.29, u(13), u(14)] };
 }
@@ -90,7 +102,7 @@ export function sampleInputs(spec: ScenarioSpec, seed: number, i: number): DrawI
 /** Effects and exposure for given inputs. `upperBound`: no atmosphere, surface blast at full energy (rules events out cheaply, never in). */
 export function evaluateDraw(spec: ScenarioSpec, inp: DrawInputs, upperBound = false): Draw {
   const p = profileOf(spec.body);
-  const fx = effects(p, inp.impactor, { material: inp.material, ocean: inp.ocean, season: inp.season, lite: spec.lite, upperBound });
+  const fx = effects(p, inp.impactor, { material: inp.material, ocean: inp.ocean, season: inp.season, lite: spec.lite, upperBound, trace: spec.trace && !upperBound });
   const exposure = spec.earth ? earthExposure(fx, spec.earth.pop, spec.earth.capital, inp.earthU)
     : siteExposure(fx, spec.sites ?? [], inp.point, p.radiusKm, spec.orbitalShare ?? 0);
   return { impactor: inp.impactor, point: inp.point, material: inp.material, ocean: inp.ocean, fx, exposure, vImpKms: inp.vImpKms };
@@ -122,7 +134,31 @@ export interface ScenarioResult {
   capitalLost: Band;
   /** the median draw, kept whole for display (energy deposition profile, notes) */
   median: Draw;
+  /** every draw, in order (draw i is drawOne(spec, seed, i)) */
+  draws: Draw[];
+  /** indices of whole, internally coherent draws chosen to show: see representatives() */
+  representatives: Representatives;
   limitations: string[];
+}
+
+export interface Representatives { low: number; nominal: number; high: number; modal: string }
+
+/**
+ * Three real draws to show, never a composite of percentiles from different draws: `nominal` is the
+ * median-energy draw among those with the most likely outcome; `low` and `high` are the draws at the
+ * 10th and 90th percentile of impact energy. Each keeps its own size, density, speed, angle, point,
+ * outcome and consequences. They illustrate the spread; they are not confidence bounds on every quantity.
+ */
+export function representatives(draws: Draw[]): Representatives {
+  const n = draws.length, count: Record<string, number> = {};
+  for (const d of draws) count[d.fx.entry.outcome] = (count[d.fx.entry.outcome] ?? 0) + 1;
+  // ties go to the outcome seen first, so the choice is stable
+  let modal = draws[0]?.fx.entry.outcome ?? 'ground-impact';
+  for (const d of draws) if (count[d.fx.entry.outcome] > count[modal]) modal = d.fx.entry.outcome;
+  const byE = (ix: number[]) => [...ix].sort((a, b) => draws[a].fx.energyMt - draws[b].fx.energyMt || a - b);
+  const all = byE(draws.map((_, i) => i)), mod = byE(draws.map((_, i) => i).filter((i) => draws[i].fx.entry.outcome === modal));
+  const at = (ix: number[], f: number) => ix[Math.min(ix.length - 1, Math.max(0, Math.round(f * (ix.length - 1))))] ?? 0;
+  return { low: n ? at(all, 0.1) : 0, nominal: n ? at(mod, 0.5) : 0, high: n ? at(all, 0.9) : 0, modal };
 }
 
 export function runScenario(spec: ScenarioSpec, seed: number, n = 120): ScenarioResult {
@@ -147,6 +183,7 @@ export function runScenario(spec: ScenarioSpec, seed: number, n = 120): Scenario
     deaths: band(draws.map((d) => d.exposure.deaths)),
     capitalLost: band(draws.map((d) => d.exposure.capitalLost)),
     median: byE[Math.floor(n / 2)],
+    draws, representatives: representatives(draws),
     limitations: limitationsFor(body),
   };
 }

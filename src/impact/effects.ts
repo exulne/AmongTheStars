@@ -100,10 +100,10 @@ const step = (r: number, zones: [number, number, number][]): [number, number] =>
   return [0, 0];
 };
 
-export function effects(body: BodyProfile, imp: Impactor, opts: { material?: Material; ocean?: boolean; season?: number; densityScale?: number; lite?: boolean; upperBound?: boolean } = {}): Effects {
+export function effects(body: BodyProfile, imp: Impactor, opts: { material?: Material; ocean?: boolean; season?: number; densityScale?: number; lite?: boolean; upperBound?: boolean; trace?: boolean } = {}): Effects {
   const notes: string[] = [];
   // upperBound: skip the atmosphere (everything arrives at full speed) but keep a surface blast from the full energy; used only to rule events out cheaply
-  const e = opts.upperBound ? entry({ ...body, atmosphere: { ...body.atmosphere, kind: 'none' } }, imp) : entry(body, imp, { season: opts.season, densityScale: opts.densityScale, lite: opts.lite });
+  const e = opts.upperBound ? entry({ ...body, atmosphere: { ...body.atmosphere, kind: 'none' } }, imp) : entry(body, imp, { season: opts.season, densityScale: opts.densityScale, lite: opts.lite, trace: opts.trace });
   const energyMt = e.initialEnergyJ / MT, groundMt = e.groundEnergyJ / MT;
   const base = { body: body.name, cls: body.cls, entry: e, energyMt, groundEnergyMt: groundMt, plume: null as Plume | null, tsunami: null as Tsunami | null, orbitalEjectaKg: 0, escapingEjectaKg: 0, globalFatality: 0 };
 

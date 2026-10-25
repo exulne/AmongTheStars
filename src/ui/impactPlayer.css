@@ -1,0 +1,26 @@
+/* The impact visualization's playback overlay: a wash over the lower left of the 3D view. */
+.ivz { position: absolute; left: 1rem; bottom: calc(var(--bottom-h, 8rem) + 0.75rem); z-index: 30; width: min(27rem, calc(100vw - 2rem)); max-height: calc(100vh - var(--bottom-h, 8rem) - 7rem); overflow: auto; background: var(--wash); backdrop-filter: blur(6px); border-left: 2px solid #c98500; padding: 0.5rem 0.75rem 0.6rem; font-size: 0.78rem; display: flex; flex-direction: column; gap: 0.35rem; }
+.ivz[hidden] { display: none; }
+.ivz-head { display: flex; justify-content: space-between; gap: 0.6rem; align-items: baseline; }
+.ivz-phase { margin: 0; font: 600 0.72rem/1.3 var(--mono); color: var(--accent); text-align: right; white-space: nowrap; }
+.ivz-banners { margin: 0; padding: 0 0 0 1rem; color: var(--quiet); font-size: 0.7rem; display: grid; gap: 0.1rem; }
+.ivz-row { display: flex; flex-wrap: wrap; gap: 0.3rem 0.9rem; align-items: center; }
+.ivz-row select { background: transparent; border: 0; border-bottom: 1px solid var(--rule); color: var(--ink); font: 0.75rem var(--mono); }
+.ivz-row select option { background: #111; }
+.ivz-row input[type="range"] { flex: 1 1 10rem; min-width: 8rem; accent-color: var(--accent); }
+.ivz-ctl .link { font-size: 0.8rem; }
+.ivz-tog { font-size: 0.72rem; color: var(--quiet); }
+.ivz-time { color: var(--quiet); font: 0.7rem var(--mono); }
+.ivz-tele { display: flex; gap: 0.6rem; align-items: flex-start; }
+.ivz-dl { display: grid; grid-template-columns: auto 1fr; gap: 0.05rem 0.7rem; margin: 0; flex: 1; }
+.ivz-dl dt { color: var(--quiet); }
+.ivz-dl dd { margin: 0; font-family: var(--mono); font-size: 0.72rem; }
+.ivz-gauge { width: 70px; height: 150px; flex: none; font: 8px var(--mono); }
+.ivz-cons { border-top: 1px solid var(--faint); padding-top: 0.3rem; }
+.ivz-cons p { margin: 0.2rem 0 0; font-size: 0.7rem; }
+.ivz-legend { margin: 0; font-size: 0.68rem; }
+.ivz-status { margin: 0; color: var(--quiet); }
+@media (max-width: 40rem) {
+  .ivz { left: 0.5rem; right: 0.5rem; width: auto; bottom: calc(var(--bottom-h, 8rem) + 0.5rem); max-height: 45vh; }
+  .ivz-gauge { display: none; }
+}

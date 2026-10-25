@@ -13,7 +13,7 @@ import { fmtNum } from '../ui/format.ts';
 import { ageColor, factionColor, faithColor, heatColor, type ColorMode } from './colorModes.ts';
 import { styleOf } from './epoch.ts';
 import { makeGalaxy } from './galaxyPoints.ts';
-import { atmosphereMaterial, planetMaterial, setCityLights } from './planetShader.ts';
+import { atmosphereMaterial, planetMaterial, setCityLights, setScars } from './planetShader.ts';
 import { Orbitals, StarWorks, tierRank } from './orbitals.ts';
 import { EarthOrbitLayers } from './orbitLayers.ts';
 import { BEAM, SCOOP, shipStyle } from './shipStyles.ts';
@@ -120,10 +120,10 @@ export function citySplit(pop: number, n: number, i: number): { count: number; o
 }
 
 /** Night lights of body b's settlements: where each one is and how big (0..1), for the planet shader. */
-export function lightCities(mat: THREE.ShaderMaterial, b: number, stage: number, pop: number): void {
+export function lightCities(mat: THREE.ShaderMaterial, b: number, stage: number, pop: number, shade?: readonly number[] | null): void {
   const n = cityCount(stage, pop), dirs: THREE.Vector3[] = [];
   for (let i = 0; i < n; i++) dirs.push(cityDir(b, i));
-  setCityLights(mat, dirs, (i) => (Math.log10(1 + citySplit(pop, n, i).count) - 3) / 7 + 0.15);
+  setCityLights(mat, dirs, (i) => ((Math.log10(1 + citySplit(pop, n, i).count) - 3) / 7 + 0.15) * (shade?.[i] ?? 1));
 }
 
 /** Where the star sits in the planet view: off to the side and a little behind, so the night side and its lights show. */
@@ -1066,6 +1066,16 @@ export class PlanetView implements View {
   /** surface features worth a card (polar caps, scars, storms, lakes, plumes), and the date they were drawn for */
   private feats: Feature[] = [];
   private geoYear = NaN;
+  // the impact visualization's hold on this globe (impactFrame and the setters below; src/view/impactLayer.ts)
+  private spin = NaN; private lastTm = NaN; private spinHeld = false;
+  private persistScars: { x: number; y: number; z: number; rad: number; kind: number; amp: number }[] = [];
+  private transientScars: { x: number; y: number; z: number; rad: number; kind: number; amp: number }[] = [];
+  private cityShade: readonly number[] | null = null;
+  private lit = { st: -2, pop: 0 }; // the stage and people the night lights were last drawn for (-2: not yet)
+  private atmo: THREE.Mesh | null = null;
+  private haze = 0;
+  /** labels the impact visualization adds while it runs */
+  extraLabels: (() => Label[]) | null = null;
 
   enter(ctx: Ctx): void {
     this.build(ctx);
@@ -1085,10 +1095,12 @@ export class PlanetView implements View {
     this.planet = new THREE.Mesh(new THREE.SphereGeometry(R, 128, 96), mat);
     if (b.kind === 'asteroid') this.planet.scale.set(1, 0.72, 0.86);
     this.pivot.add(this.planet);
+    this.atmo = null; this.haze = hazeOf(b); this.transientScars = []; this.cityShade = null; this.spinHeld = false;
     if (b.kind !== 'asteroid' && b.kind !== 'dwarf') {
       // airless worlds get a black (invisible) shell that turns blue if they are ever terraformed
       const airless = b.kind === 'moon' || b.kind === 'rocky';
-      this.planet.add(new THREE.Mesh(new THREE.SphereGeometry(R * 1.05, 96, 64), atmosphereMaterial(airless ? 0x000000 : b.kind === 'ocean' ? 0x5aa0ff : b.color)));
+      this.atmo = new THREE.Mesh(new THREE.SphereGeometry(R * 1.05, 96, 64), atmosphereMaterial(airless ? 0x000000 : b.kind === 'ocean' ? 0x5aa0ff : b.color));
+      this.planet.add(this.atmo);
     }
     if (b.kind === 'gas' && (b.name === 'Saturn' || hash01(b.id, 5) < 0.4)) {
       const ring = new THREE.Mesh(new THREE.RingGeometry(R * 1.35, R * 2.3, 160), new THREE.MeshBasicMaterial({ color: 0xd8c39a, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }));
@@ -1141,6 +1153,48 @@ export class PlanetView implements View {
     this.geoYear = ctx.year;
     const now = applyGeo(this.planet.material as THREE.ShaderMaterial, ctx.world, ctx.snap, ctx.body, ctx.year);
     this.feats = features(ctx.world, ctx.body, now);
+    this.persistScars = [...now.scars].sort((p, q) => q.rad * q.amp - p.rad * p.amp);
+    if (this.transientScars.length) this.mergeScars();
+  }
+
+  // ---------------------------------------------------------------- the impact visualization's interface
+
+  /** The rotating body frame (radius 10 = the body's radius; y the spin axis), for things fixed to the surface. */
+  impactFrame(): THREE.Object3D { return this.pivot; }
+
+  /** Marks drawn only while a visualization runs, on top of the world's own lasting scars (which are never replaced). */
+  setTransientScars(s: { x: number; y: number; z: number; rad: number; kind: number; amp: number }[]): void {
+    this.transientScars = s;
+    this.mergeScars();
+  }
+  private mergeScars(): void {
+    if (!this.planet) return;
+    setScars(this.planet.material as THREE.ShaderMaterial, this.transientScars.length ? [...this.transientScars, ...this.persistScars] : this.persistScars);
+  }
+
+  /** Night light left at each settlement (1 = untouched), or null for the world as the simulation has it. */
+  setCityShade(shade: readonly number[] | null): void {
+    this.cityShade = shade;
+    if (this.planet && this.lit.st >= -1) lightCities(this.planet.material as THREE.ShaderMaterial, this.builtFor, this.lit.st, this.lit.pop, shade);
+  }
+
+  /**
+   * Turn the globe so a body-frame direction faces the star, a little toward the morning terminator. The spin
+   * phase of this view is presentation, not a simulated time of day, so an impact need not play out in the dark.
+   */
+  faceSun(dir: [number, number, number]): void {
+    this.spin = Math.atan2(dir[2], dir[0]) - Math.atan2(PLANET_SUN.z, PLANET_SUN.x) - 0.45;
+    this.pivot.rotation.y = this.spin;
+  }
+
+  /** Stop the globe turning (a paused visualization keeps ground zero where it is) or let it turn again. */
+  holdSpin(on: boolean): void { this.spinHeld = on; }
+
+  /** A visualization aid: thin a thick atmosphere's veil so what happens beneath it can be seen. */
+  setCutaway(on: boolean): void {
+    if (!this.planet) return;
+    (this.planet.material as THREE.ShaderMaterial).uniforms.uHaze.value = on ? 0 : this.haze;
+    if (this.atmo) this.atmo.visible = !on;
   }
 
   sync(ctx: Ctx): void {
@@ -1148,7 +1202,8 @@ export class PlanetView implements View {
     const b = ctx.body;
     const st = stageOf(ctx.snap, b), pop = popOf(ctx.snap, b);
     applyPlanetLook(this.planet, ctx.snap, b, ctx.year, alive(st) ? cityLights(pop) : 0);
-    lightCities(this.planet.material as THREE.ShaderMaterial, b, st, pop);
+    this.lit.st = st; this.lit.pop = pop;
+    lightCities(this.planet.material as THREE.ShaderMaterial, b, st, pop, this.cityShade);
     this.geoLook(ctx);
     // the society's architecture (from the worker, when it has one): its colour, height, curves, crowding and glow
     const look = alive(st) ? societyLook(b) : null;
@@ -1268,7 +1323,11 @@ export class PlanetView implements View {
   }
 
   frame(ctx: Ctx): void {
-    this.pivot.rotation.y = ctx.tm * 0.02;
+    // the spin accumulates so it can be held (impact visualization) without a jump when it lets go
+    if (!Number.isFinite(this.spin)) this.spin = ctx.tm * 0.02;
+    else if (!this.spinHeld) this.spin += (ctx.tm - this.lastTm) * 0.02;
+    this.lastTm = ctx.tm;
+    this.pivot.rotation.y = this.spin;
     (this.planet.material as THREE.ShaderMaterial).uniforms.uTime.value = ctx.t;
     // seasons turn as the slider moves (Mars's caps, storms), between the steps the state arrives at
     if (!(Math.abs(ctx.year - this.geoYear) < 0.01)) this.geoLook(ctx);
@@ -1317,6 +1376,7 @@ export class PlanetView implements View {
       out.push({ pos: top, text: this.elevators.length > 1 ? `${this.elevators.length} space elevators` : 'Space elevator', sub: `since ${Math.round(2040 + this.elevSince)}`, prio: 4, ref: { kind: 'thing', id: 0, ex: 'elev', name: 'Space elevator' } });
     }
     out.push({ pos: new THREE.Vector3(0, 11.5, 0), text: b.name, sub: alive(st) ? `${STAGE_NAMES[st]} · ${fmtNum(popOf(ctx.snap, ctx.body))} people` : st >= 0 ? STAGE_NAMES[st] : 'never settled', strong: true, ref: { kind: 'body', id: ctx.body }, prio: 10 });
+    if (this.extraLabels) out.push(...this.extraLabels());
     return out;
   }
 }
