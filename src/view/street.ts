@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { STAGE } from '../sim/catalog.ts';
+import { infraOf, type Infra } from '../sim/infra.ts';
 import type { PersonBrief } from '../sim/lives.ts';
 import { Rng, hash01 } from '../sim/rng.ts';
 import { ARCH_NAME, changes, styleOf, type History, type Style } from './epoch.ts';
@@ -16,6 +17,7 @@ import { CALM, makeAgent, place, type Agent, type Dest, type Mood, type Places }
 import { StreetWar } from './streetWar.ts';
 import { glowTex, pointsMaterial, specColor } from './textures.ts';
 import { cultureLight, societyLook } from './societyLook.ts';
+import { StreetInfra, infraSig, peopleTech } from './streetInfra.ts';
 import { alive, cityCount, citySplit, makeSky, popOf, stageOf, type Ctx, type Label, type Level, type Pickable, type Ref, type View } from './views.ts';
 
 export type ResidentsFetch = (body: number, year: number, offset: number, count: number) => Promise<{ pending?: boolean; people: PersonBrief[]; total: number }>;
@@ -303,6 +305,9 @@ export class StreetView implements View {
   private carLights: ReturnType<typeof dotCloud> | null = null;
   private hour = 7;
   private sunCol = new THREE.Color();
+  // what the place has built around it: skyline, transit, traffic, and what is overhead (streetInfra.ts)
+  private infra = new StreetInfra();
+  private tech = { robots: 0, neon: 0 };
   focus = -1;  // resident whose biography is open
   follow = -1; // resident the camera is following
   /** a person the app wants shadowed wherever they live — injected as an agent if the census didn't draw them */
@@ -319,12 +324,18 @@ export class StreetView implements View {
   }
 
   private framedR = 0;
+  private framedLow = -1;
+  private framedAt = 0;
   private frameCamera(ctx: Ctx): void {
     const R = (this.framedR = this.R);
+    this.framedAt = performance.now();
     ctx.controls.target.set(0, 0, 0);
     // low and close enough that the residents read as people, with the skyline behind them
     const d = Math.max(7, R * 0.62) / R;
-    ctx.camera.position.set(R * 0.36 * d, R * 0.58 * d, R * 0.72 * d);
+    // a city with a skyline beyond it is framed lower, so the towers and what is overhead stand against the sky
+    const low = (this.framedLow = this.infra.topH > R * 0.3 ? 0.3 : 0);
+    const back = 1 + low * 1.4;
+    ctx.camera.position.set(R * 0.36 * d * back, R * (0.58 - low * 0.6) * d * back, R * 0.72 * d * back);
     this.limits = [0.6, R * 3.2];
     ctx.controls.minDistance = this.limits[0];
     ctx.controls.maxDistance = this.limits[1];
@@ -364,7 +375,8 @@ export class StreetView implements View {
     const st = styleOf(ctx.world, ctx.snap, pl.body, ctx.year, this.hist);
     const scale = Math.round(Math.log10(1 + pl.count) * 2);
     const placeKey = `${pl.body}:${pl.city}`;
-    const key = `${placeKey}:${pl.st}:${scale}:${st.sig}`;
+    const I: Infra | null = ctx.snap ? infraOf(ctx.world, ctx.snap, pl.body, ctx.year) : null;
+    const key = `${placeKey}:${pl.st}:${scale}:${st.sig}:${infraSig(I)}`;
     if (key === this.key) return;
     // same place, new look: say what changed and let the city rise into its new form
     if (placeKey === this.placeKey && this.style) {
@@ -414,7 +426,16 @@ export class StreetView implements View {
       this.city.add(deck);
     }
 
-    if (outpost) { this.buildOutpost(pl.body, gnd.dome, st); this.buildPeople(); this.city.updateMatrixWorld(true); return; }
+    this.tech = peopleTech(I);
+    const addInfra = () => {
+      if (!I) return;
+      const facade = blockMaterial(this.blockU);
+      this.blockMats.push(facade);
+      // the skyline stands across the settlement from where the camera first looks
+      this.infra.build({ infra: I, R, body: pl.body, city: pl.city, style: st, facade, domed: gnd.dome, outpost, camAz: Math.atan2(0.72, 0.36) });
+      this.group.add(this.infra.group);
+    };
+    if (outpost) { this.buildOutpost(pl.body, gnd.dome, st); addInfra(); this.buildPeople(); this.city.updateMatrixWorld(true); return; }
 
     const shares: [District, number][] = [['homes', 0.55], ['farms', small ? 0.2 : 0.14], ['industry', big ? 0.2 : 0.12], ['port', big ? 0.12 : 0.08]];
     const total = shares.reduce((a, [, wt]) => a + wt, 0);
@@ -659,6 +680,7 @@ export class StreetView implements View {
       depot: [pickOne(byDistrict.port.length ? byDistrict.port : works, 0.6)],
     };
     this.places = { node: [...homes, ...centre], at, homes, ring: R * 0.62, R };
+    addInfra();
     this.buildVehicles(pl.st, b.g, gnd.dome, at);
     this.buildPeople();
     if (keepPeople) this.agents = this.agents.map((a, i) => makeAgent(a.p, i, this.places, this.mood));
@@ -741,7 +763,9 @@ export class StreetView implements View {
   sync(ctx: Ctx): void {
     this.build(ctx);
     if (this.style && this.body >= 0) this.blockU.warm.value.copy(windowColour(this.style, this.body));
-    if (Math.abs(this.R - this.framedR) > this.framedR * 0.3) this.frameCamera(ctx);
+    // reframe when the place grows or shrinks a lot, or when its skyline arrives just after we got here (the run caught up)
+    const low = this.infra.topH > this.R * 0.3 ? 0.3 : 0;
+    if (Math.abs(this.R - this.framedR) > this.framedR * 0.3 || (low !== this.framedLow && performance.now() - this.framedAt < 6000)) this.frameCamera(ctx);
     const pl = this.where(ctx);
     if (!alive(pl.st)) return;
     const want = `${pl.body}:${pl.city}:${Math.floor(ctx.year / 10)}`;
@@ -825,6 +849,7 @@ export class StreetView implements View {
     this.blockU.lit.value = lit;
     this.blockU.night.value = Math.min(1, night * 2.2);
     if (this.lampMat) this.lampMat.uniforms.uOpacity.value = 0.15 + 0.85 * night;
+    this.infra.frame(ctx.t, night);
 
     if (this.cars && this.carLights) {
       const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(1, 1, 1), p = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
@@ -885,6 +910,10 @@ export class StreetView implements View {
         // clothes in the culture's colours, each person their own shade
         if (st && !a.patrol) c.copy(st.cloth).offsetHSL((hash01(k, 71) - 0.5) * 0.3, (hash01(k, 72) - 0.5) * 0.3, (hash01(k, 73) - 0.5) * 0.35);
         if (this.mood.plague && !a.patrol) c.lerp(new THREE.Color(0.85, 0.95, 0.88), 0.5);
+        // in a high-tech age some of the walkers are machines (brushed steel, a cyan eye), and clothes carry light
+        const robot = !kid && !a.patrol && hash01(k, 79) < this.tech.robots;
+        if (robot) c.setRGB(0.62, 0.68, 0.78);
+        else if (this.tech.neon > 0 && !a.patrol) c.lerp(NEON[k % NEON.length], 0.25 * this.tech.neon);
         if (k === this.focus) c.setRGB(0.5, 0.92, 1);
         // face the way they're going; swing limbs when walking
         const dx = a.x - this.prevX[k], dz = a.z - this.prevZ[k], moved = Math.hypot(dx, dz);
@@ -895,9 +924,11 @@ export class StreetView implements View {
         m.compose(p.set(a.x, 0, a.z), q, a.vis && near ? (kid ? kidS : s) : zero);
         this.figures.setMatrixAt(k, m);
         this.figures.setColorAt(k, c);
-        this.glows.pos.set([a.x, 0.09, a.z], k * 3);
-        this.glows.col.set([c.r, c.g, c.b], k * 3);
-        this.glows.size[k] = a.vis ? (k === this.focus ? 2.6 + 0.6 * Math.sin(ctx.t * 4) : near ? 0.3 : 0.9) : 0;
+        this.glows.pos.set([a.x, robot ? 0.2 : 0.09, a.z], k * 3);
+        if (robot) this.glows.col.set([0.3, 0.9, 1], k * 3);
+        else if (this.tech.neon > 0) this.glows.col.set([c.r * 1.3, c.g * 1.3, c.b * 1.3], k * 3);
+        else this.glows.col.set([c.r, c.g, c.b], k * 3);
+        this.glows.size[k] = a.vis ? (k === this.focus ? 2.6 + 0.6 * Math.sin(ctx.t * 4) : near ? (robot ? 0.45 : 0.3 + 0.25 * this.tech.neon) : 0.9) : 0;
       }
       this.figures.count = n;
       this.walk!.needsUpdate = true;
@@ -955,6 +986,7 @@ export class StreetView implements View {
 }
 
 const FIGURE = 1.8;
+const NEON = [new THREE.Color(0.3, 0.85, 1), new THREE.Color(1, 0.35, 0.85), new THREE.Color(0.55, 1, 0.6), new THREE.Color(1, 0.75, 0.3)];
 const DUSK = new THREE.Color(1, 0.55, 0.3);
 const RAID_SKY = new THREE.Color(1, 0.36, 0.14);
 const cultC = new THREE.Color();

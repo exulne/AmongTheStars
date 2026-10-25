@@ -38,7 +38,8 @@ import { Assistant } from './assistant/assistant.ts';
 import { Voyage } from './ship/voyage.ts';
 import { installPaths } from './features/paths.ts';
 import { installTimelineHand } from './features/timelineHand.ts';
-import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionCss, faithCss, stageLegend, type ColorMode } from './view/colorModes.ts';
+import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionColor, factionCss, faithCss, stageLegend, type ColorMode } from './view/colorModes.ts';
+import { CLOSEUP, CloseUp } from './view/closeup.ts';
 import { names as naming } from './ui/names.ts';
 import { StreetView } from './view/street.ts';
 import { Picker } from './explain/picker.ts';
@@ -127,6 +128,7 @@ if (phone.matches) chartsToggle.click();
 // ------------------------------------------------------------------ 3D
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
+renderer.localClippingEnabled = true; // a shipyard's hull grows along its dock in close-up (closeup.ts)
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.92; // each level sets its own (view/eraMood.ts LEVEL_LOOKS)
@@ -443,14 +445,20 @@ function framing(r: Ref): { dist: number; limits: [number, number]; side: 'star'
   if (level === 'system' && r.kind === 'body') { const s = v.size?.(ctx, r) || 0.5; return { dist: Math.max(v.diveDist(ctx, r) * 1.8, s * 6), limits: [s * 1.2, hi], side: 'star' }; }
   if (level === 'system' && r.kind === 'system') return { dist: (v.size?.(ctx, r) || 1) * 9, limits: [lo, hi], side: null };
   if (level === 'local' && r.kind === 'system') return { dist: v.diveDist(ctx, r) * 1.8, limits: [lo, hi], side: null };
+  const cu = level === 'planet' && r.kind === 'thing' && r.ex ? CLOSEUP[r.ex] : undefined;
+  if (cu) return { dist: cu.dist, limits: [cu.dist * 0.2, cu.dist * 14], side: 'out' };
   // craft, stations, facilities, comets: close in (backdrop stars are not destinations)
   if (r.kind === 'thing' && (level === 'system' || level === 'planet') && !/^(sky|bgal|dust)/.test(r.ex ?? '')) return { dist: level === 'planet' ? 5 : 3, limits: [0.35, hi], side: level === 'planet' ? 'out' : 'star' };
   return null;
 }
 
+// the close-up model and what it stands on (see close-ups below); declared before anything can unfocus
+const closeup = new CloseUp(scene);
+let close: { key: string; follow: () => THREE.Vector3 | null; hidden: THREE.Object3D | null } | null = null;
+const PLANET_UP = new THREE.Vector3(0, 1, 0), ORIGIN = new THREE.Vector3();
 let focusKey = ''; // what the camera travelled to and now follows
 const refKey = (r: Ref) => `${r.kind}:${r.ex ?? ''}:${r.id}`;
-function unfocus(): void { focusKey = ''; rig.follow(null); const l = views[level].limits; rig.setLimits(l[0], l[1]); }
+function unfocus(): void { focusKey = ''; hideCloseup(); rig.follow(null); const l = views[level].limits; rig.setLimits(l[0], l[1]); }
 const sideV = new THREE.Vector3(), UPV = new THREE.Vector3(0, 1, 0);
 
 /** Travel to a thing in this view and keep it centred as it moves. False if it isn't somewhere to travel. */
@@ -468,7 +476,8 @@ function travelTo(r: Ref, done?: () => void): boolean {
   }
   const f = framing(r);
   if (!f) return false;
-  const dest = () => (level === lv ? locateRef(views[lv], r) : null);
+  const anchor = anchorOf(r);
+  const dest = () => (level === lv ? (anchor ? anchor() : locateRef(views[lv], r)) : null);
   const at = dest();
   if (!at) return false;
   const key = refKey(r);
@@ -479,6 +488,7 @@ function travelTo(r: Ref, done?: () => void): boolean {
   if (f.side === 'star') sideV.copy(at).negate(); else if (f.side === 'out') sideV.copy(at); else sideV.set(0, 0, 0);
   const name = r.kind === 'body' ? naming.place(world, r.id) : r.kind === 'system' ? world.systems[r.id].name : ctx.selected && refKey(ctx.selected) === key ? ctx.selected.name : r.name ?? '';
   rig.travel({ dest, dist: f.dist, side: sideV, limits: f.limits, label: name, yearRate, done });
+  if (canClose(r)) showCloseup(r, dest); else hideCloseup();
   return true;
 }
 
@@ -580,6 +590,7 @@ let queued: (() => void) | null = null;
  */
 function setLevel(next: Level, focus: Ref | null = null, prep?: () => void, animate = true): void {
   if (busy) { queued = () => setLevel(next, focus, prep, animate); return; }
+  exitCloseup(false);
   if (!animate || reducedMotion) { prep?.(); enterLevel(next); controls.update(); return; }
   busy = true;
   const from = level;
@@ -689,6 +700,7 @@ function enterPerson(pid: string, focus: Ref | null, bio?: Biography | null): vo
 const MICRO_SELECT: Partial<Record<Level, string>> = { cell: 'mcell', molecule: 'mmol', atom: 'matom' };
 
 function dive(p: Ref): void {
+  if (canClose(p) && enterCloseup(p)) return;
   if (p.kind === 'thing' && (p.ex === 'futu' || p.ex === 'futx')) { enterFuture(p.ex === 'futu' ? p.id : foamSeed(p.id), p); return; }
   if (p.kind === 'person' && level === 'street') { const id = street.personId(p.id); if (id) { street.focus = p.id; enterPerson(id, p); } return; }
   if (p.kind === 'thing' && level === 'atom' && p.ex === 'mnuc' && !busy) { const v = micro.views.atom.nucleusView(); fly(v.pos, v.target, 1.4, easeInOut, undefined, true); return; }
@@ -817,6 +829,8 @@ canvas.addEventListener('wheel', (e) => {
   const gesture = e.timeStamp - lastWheel < 700;
   lastWheel = e.timeStamp;
   const v = views[level];
+  // in a close-up the wheel only zooms; out past its range leaves it
+  if (close) { if (e.deltaY > 0 && camera.position.distanceTo(controls.target) >= CLOSEUP[close.key.split(':')[1]].dist * 13) exitCloseup(); return; }
   if (e.deltaY > 0) {
     pull = null;
     const i = LEVELS.indexOf(level);
@@ -827,6 +841,7 @@ canvas.addEventListener('wheel', (e) => {
   const keep = pull && locateRef(v, pull) ? pull : null;
   const sel = ctx.selected && locateRef(v, ctx.selected) ? enterableRef(ctx.selected) : null;
   const p: Ref | null = (gesture && keep) || pickAt(e.clientX, e.clientY) || keep || sel;
+  if (p && canClose(p)) { pull = null; select(asPick(p)); enterCloseup(p); return; }
   if (!p || (level === 'street' && p.kind !== 'person') || (level === 'planet' && p.kind !== 'city')) return;
   pull = p;
   if (focusKey && refKey(p) !== focusKey) unfocus();
@@ -857,6 +872,63 @@ canvas.addEventListener('pointerdown', () => { rig.interrupt(); director.userInp
 labelsEl.addEventListener('pointerdown', () => { rig.interrupt(); }); // a press on a label is a hand on the view too
 
 /** Where a selected thing sits in a view: explained things (stars, asteroids, ships…) know their own place. */
+// ------------------------------------------------------------------ close-ups
+
+// In the planet view what is in orbit can be zoomed into: click, double-click or wheel into a
+// satellite, station, power satellite, shipyard, defence platform, tug or the orbital ring and the
+// camera rig travels in and rides along as it orbits (travelTo), while a detailed model (closeup.ts)
+// stands in for the coarse one. Wheel out past its range, or Escape, to come back.
+
+function canClose(r: Ref | null): boolean { return !!r && level === 'planet' && r.kind === 'thing' && !!r.ex && !!CLOSEUP[r.ex]; }
+
+/** Where to follow a thing: a point on it that stays put as it moves (for the ring, the stretch nearest the camera). */
+function anchorOf(r: Ref): (() => THREE.Vector3 | null) | null {
+  const e = r.kind === 'thing' && r.ex ? explainerFor(r.ex) : undefined;
+  const a = e?.anchor?.(r.id, camera.position);
+  if (!a) return null;
+  const out = new THREE.Vector3();
+  return () => a(out)?.clone() ?? null;
+}
+
+function enterCloseup(r: Ref): boolean {
+  if (!canClose(r)) return false;
+  if (close?.key === refKey(r)) return true;
+  return travelTo(r);
+}
+
+/** Called by travelTo once the rig is on its way: put the model on the thing. */
+function showCloseup(r: Ref, follow: () => THREE.Vector3 | null): void {
+  hideCloseup();
+  const e = explainerFor(r.ex!);
+  const hidden = e?.objectOf?.(r.id) ?? null;
+  if (hidden) hidden.visible = false;
+  const f = ctx.snap ? ctx.snap.S[ctx.body * NF + F.faction] : -1;
+  closeup.show(r.ex!, r.id, factionColor(f, world.earth, new THREE.Color()));
+  close = { key: refKey(r), follow, hidden };
+}
+
+function hideCloseup(): void {
+  if (!close) return;
+  if (close.hidden) close.hidden.visible = true;
+  close = null;
+  closeup.hide();
+}
+
+function exitCloseup(flyBack = true): void {
+  if (!close) return;
+  hideCloseup();
+  unfocus();
+  if (flyBack && level === 'planet') fly(camera.position.clone().normalize().multiplyScalar(30), new THREE.Vector3(), 1.4, easeInOut, undefined, true);
+}
+
+/** Each frame, after the world moved: stand the model where its thing is now. */
+function stepCloseup(): void {
+  if (!close) return;
+  const p = close.follow();
+  if (!p) { exitCloseup(false); return; }
+  closeup.frame(p, ORIGIN, PLANET_UP, ctx.t);
+}
+
 function locateRef(v: View, r: Ref): THREE.Vector3 | null {
   return r.kind === 'thing' ? (r.ex ? explainLocate(r.ex, r.id) : null) : v.locate(ctx, r);
 }
@@ -1376,7 +1448,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); timeline.step(e.key === 'ArrowRight' ? 1 : -1, e.shiftKey); }
   else if (e.key === '+' || e.key === '=') zoomStep(-1);
   else if (e.key === '-' || e.key === '_') zoomStep(1);
-  else if (e.key === 'Escape') { if (rig.flying) rig.skip(); else if (!help.hidden) help.hidden = true; else if (!follow.lifePick.el.hidden) follow.lifePick.hide(); else if (follow.following()) follow.stopFollow(); else if (level === 'street' && street.follow >= 0) street.follow = -1; else select(null); }
+  else if (e.key === 'Escape') { if (rig.flying) rig.skip(); else if (!help.hidden) help.hidden = true; else if (close) exitCloseup(); else if (!follow.lifePick.el.hidden) follow.lifePick.hide(); else if (follow.following()) follow.stopFollow(); else if (level === 'street' && street.follow >= 0) street.follow = -1; else select(null); }
   else if (e.key === '/') { e.preventDefault(); search.focus(); }
   else if (e.key === '?') help.hidden = !help.hidden;
   else if (e.key === 'Enter' && ctx.selected && !(e.target instanceof HTMLButtonElement)) dive(ctx.selected);
@@ -1670,6 +1742,7 @@ function loop(now: number): void {
   timeline.tick(dt);
   // the world moves first, so the camera follows where things are this frame, not where they were
   views[level].frame(ctx, dt);
+  stepCloseup();
   director.frame(dt);
   if (!director.active) finishRestore();
   if (!rig.flying && !director.active) {
