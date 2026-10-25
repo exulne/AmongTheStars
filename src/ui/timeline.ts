@@ -5,6 +5,9 @@ import { ERAS } from '../sim/catalog.ts';
 import { ERA_COLORS, HORIZON, eraRuns, posToYear, yearToPos } from './charts.ts';
 import { fmtYear } from './format.ts';
 
+// playback gears, cycled by the speed button — weighted slow; fastest is just past 1×
+const SPEEDS = [0.15, 0.3, 0.5, 0.75, 1, 1.25];
+
 export class Timeline {
   el: HTMLElement;
   private input: HTMLInputElement;
@@ -13,6 +16,9 @@ export class Timeline {
   private progressEl: HTMLElement;
   private subEl: HTMLElement;
   private playBtn: HTMLButtonElement;
+  private speedBtn: HTMLButtonElement;
+  private speedIdx = 4;
+  speed = 1;
   year = 0;
   frontier = 0;
   playing = false;
@@ -25,6 +31,7 @@ export class Timeline {
     this.el.innerHTML = `
       <div class="tl-row">
         <button class="tl-play" type="button" aria-label="Play">Play</button>
+        <button class="tl-speed num link" type="button" aria-label="Playback speed" title="Playback speed">1×</button>
         <div class="tl-year"><input class="tl-big num" id="year-input" inputmode="numeric" value="2040" size="5" aria-label="Go to year" title="Type a year and press Enter"><span class="tl-sub"></span></div>
       </div>
       <div class="tl-track">
@@ -40,6 +47,7 @@ export class Timeline {
     this.yearEl = this.el.querySelector('.tl-big')!;
     this.subEl = this.el.querySelector('.tl-sub')!;
     this.playBtn = this.el.querySelector('.tl-play')!;
+    this.speedBtn = this.el.querySelector('.tl-speed')!;
     this.progressEl = this.el.querySelector('.tl-progress')!;
     // typed years: 3400 means AD 3400; anything under 2040 is years after landing
     // calendar years only: 1999 is before the landing, not "year 1999 after it"
@@ -72,6 +80,12 @@ export class Timeline {
       this.set(Math.round(posToYear(Number(this.input.value) / 10000)), true);
     });
     this.playBtn.addEventListener('click', () => this.toggle());
+    this.speedBtn.addEventListener('click', () => {
+      this.speedIdx = (this.speedIdx + 1) % SPEEDS.length;
+      this.speed = SPEEDS[this.speedIdx];
+      this.speedBtn.textContent = `${this.speed}×`;
+      this.speedBtn.setAttribute('aria-label', `Playback speed ${this.speed}×`);
+    });
     this.el.querySelector('.tl-ages')!.addEventListener('click', (e) => {
       const i = (e.target as HTMLElement).closest<HTMLElement>('[data-age]')?.dataset.age;
       if (i !== undefined) this.set(this.ages[Number(i)].from + 0.5, true);
@@ -98,7 +112,7 @@ export class Timeline {
   /** Called every frame while playing: constant speed in slider space. */
   tick(dt: number): void {
     if (!this.playing) return;
-    const p = yearToPos(this.year) + dt / 90;
+    const p = yearToPos(this.year) + (dt / 90) * this.speed;
     const y = posToYear(p);
     if (y >= this.frontier) { this.set(this.frontier, true); if (this.frontier >= HORIZON) this.toggle(); return; }
     this.set(Math.max(this.year + (this.year < 200 ? 0.25 : 0), y), true);

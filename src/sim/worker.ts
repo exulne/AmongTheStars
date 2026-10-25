@@ -142,6 +142,15 @@ function start(seed: number, token: number, gens: WarGens | null): void {
 
 function stateAt(step: number): Engine {
   if (!main || !replay) throw new Error('not running');
+  // a seek can ask for the future: grind the engine forward until covered, bounded
+  // so the worker stays responsive — whatever's still missing keeps coming via chunks
+  if (step > main.st.step) {
+    const tEnd = performance.now() + 2000;
+    while (!main.done && main.st.step < step && performance.now() < tEnd) {
+      main.step();
+      if (main.st.step % SNAP_EVERY === 0) snaps.push(main.snapshot());
+    }
+  }
   step = Math.min(step, main.st.step);
   if (step === main.st.step) return main;
   if (replay.st.step !== step) {
