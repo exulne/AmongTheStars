@@ -1333,8 +1333,10 @@ const paths = new FuturePaths({
   show: showFuture,
 });
 app.append(paths.el);
-paths.onToggle = (on) => pathsBtn.setAttribute('aria-expanded', String(on));
+// the paths rail and the life picker share the same dock: only one is open at a time
+paths.onToggle = (on) => { pathsBtn.setAttribute('aria-expanded', String(on)); if (on) lifePick.hide(); };
 pathsBtn.addEventListener('click', () => paths.toggle());
+lifePickBtn.addEventListener('click', () => paths.hide());
 
 /** Fly the screen into a future at a calendar year; with play, run time from ~40y before up to it. */
 function showFuture(seed: number, calYear: number, o: { body?: number; system?: number; play?: boolean } = {}): void {
@@ -1351,7 +1353,12 @@ function showFuture(seed: number, calYear: number, o: { body?: number; system?: 
   let started = false;
   const watch = () => {
     if (g !== runGen) return;   // the user switched future
-    if (!started && pendingYear === null && ctx.year >= from - 0.5) { started = true; if (!timeline.playing) timeline.toggle(); }
+    if (!started) {
+      if (pendingYear !== null || ctx.year < from - 0.5) { pathsWatch = requestAnimationFrame(watch); return; }
+      if (timeline.frontier <= ctx.year + 1) { pathsWatch = requestAnimationFrame(watch); return; }   // playing at the frontier would jump back to year 0
+      started = true;
+      if (!timeline.playing) timeline.toggle();
+    } else if (!timeline.playing) return;   // the user paused: hands off
     if (ctx.year >= y) { if (timeline.playing) timeline.toggle(); return; }
     pathsWatch = requestAnimationFrame(watch);
   };
