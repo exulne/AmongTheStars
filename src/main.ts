@@ -43,6 +43,7 @@ import { Picker } from './explain/picker.ts';
 import { explainLocate, explainName, explainerFor } from './explain/registry.ts';
 import { resetShips, setMissionApi, setShipApi, shipId } from './explain/ships.ts';
 import { GalaxyView, LocalView, LEVELS, PLANET_SUN, PlanetView, SystemView, UniverseView, alive, cityCount, cityDir, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
+import type { AppApi } from './app/api.ts';
 
 // ------------------------------------------------------------------ DOM
 
@@ -582,6 +583,20 @@ function seekTo(y: number, b?: number): void {
   timeline.set(Math.min(y, front), true);
   if (b != null) select(asPick({ kind: 'body', id: b }));
 }
+
+// the shared surface the feature modules install against; declared before the
+// first install call, with mutable state read lazily so nothing goes stale
+export const api: AppApi = {
+  app, world, sim, ctx, timeline, inspector, street, naming, seedInput,
+  get search() { return search; },
+  level: () => level,
+  runGen: () => runGen,
+  pendingYear: () => pendingYear,
+  setPendingYear: (y) => { pendingYear = y; },
+  pull: () => pull,
+  setPull: (r) => { pull = r; },
+  seekTo, select, asPick, setLevel, startRun, shipId,
+};
 
 // pick one person and follow their whole life: a quiet panel off the header
 const lifePick = new LifePick({
