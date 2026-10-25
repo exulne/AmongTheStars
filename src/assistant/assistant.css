@@ -1,28 +1,38 @@
-/* The Ask panel: a wash docked bottom-left, like the ship computer it becomes when aboard. */
-.ask { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(var(--bottom-h, 200px) + 12px); width: min(25rem, 44vw); max-height: min(46vh, calc(100vh - var(--bottom-h, 200px) - 10rem)); min-height: 9rem; display: flex; flex-direction: column; gap: 0.4rem; padding: 0.7rem 0.8rem; background: rgba(4, 4, 7, 0.86); border-top: 1px solid var(--faint); z-index: 6; font-size: 0.8125rem; }
-.ask[hidden], .aboard .ask { display: none; }
-.ask header { display: flex; align-items: baseline; gap: 0.8rem; flex-wrap: wrap; }
-.ask header b { font-weight: 400; color: var(--accent); letter-spacing: 0.02em; }
-.ask-state { font-size: 0.72rem; font-variant-numeric: tabular-nums; margin-right: auto; }
-.ask.live .ask-state { color: var(--accent); }
-.ask.connecting .ask-state::after { content: ''; display: inline-block; width: 0.5em; animation: ask-dots 1s steps(3) infinite; }
-@keyframes ask-dots { 0% { content: ''; } 33% { content: '.'; } 66% { content: '..'; } }
-.ask-log { overflow-y: auto; min-height: 3rem; display: grid; gap: 0.3rem; scrollbar-width: thin; }
-.ask-log .msg { margin: 0; line-height: 1.45; }
-.ask-log .you { color: var(--quiet); }
-.ask-log .you::before { content: '› '; }
-.ask-log .sys { color: var(--quiet); font-style: italic; font-size: 0.75rem; }
-.ask-form { display: flex; gap: 0.6rem; align-items: baseline; border-top: 1px solid var(--faint); padding-top: 0.45rem; flex-wrap: wrap; }
-.ask-form input { flex: 1; min-width: 8rem; background: transparent; border: 0; border-bottom: 1px solid var(--rule); color: var(--ink); font: inherit; padding: 0.15rem 0; border-radius: 0; }
-.ask-form input:focus { outline: none; border-bottom-color: var(--accent); }
-.ask-ptt { touch-action: none; user-select: none; -webkit-user-select: none; }
-.ask.listening .ask-ptt, .ask-hands[aria-pressed="true"] { color: var(--accent); text-decoration-color: var(--accent); }
-.ask.listening .ask-ptt::before, .ask.speaking header b::after { content: ''; display: inline-block; width: 0.45em; height: 0.45em; margin: 0 0.35em 0.08em 0; background: var(--accent); border-radius: 50%; animation: ask-pulse 1.1s ease-in-out infinite; }
-.ask.speaking header b::after { margin: 0 0 0.12em 0.4em; }
-@keyframes ask-pulse { 50% { opacity: 0.25; } }
-.ask-foot { margin: 0; font-size: 0.68rem; }
-#ask[aria-pressed="true"] { color: var(--accent); }
-@media (prefers-reduced-motion: reduce) { .ask * { animation: none !important; } }
-@media (max-width: 40rem) {
-  .ask { left: 0; right: 0; width: auto; max-height: 40vh; bottom: calc(var(--bottom-h, 200px) + 2.9rem); background: rgba(4, 4, 7, 0.95); }
+/* Vela: a small glowing orb at the bottom centre, a caption that fades, a text field only when typing. */
+.vela { position: absolute; left: 50%; bottom: calc(var(--bottom-h, 200px) + 14px); transform: translateX(-50%); z-index: 6; display: flex; flex-direction: column; align-items: center; gap: 0.45rem; pointer-events: none; font-family: Georgia, 'Times New Roman', serif; }
+.aboard .vela { display: none; }
+.vela > * { pointer-events: auto; }
+.vela-orb { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; cursor: pointer; background: radial-gradient(circle at 38% 34%, #ffffff 0%, #f2f2f2 22%, rgba(190, 205, 230, 0.75) 52%, rgba(120, 140, 180, 0.25) 78%, transparent 100%); animation: vela-breathe 4.2s ease-in-out infinite; touch-action: none; user-select: none; -webkit-user-select: none; transform-origin: 50% 70%; }
+.vela-orb span { display: block; width: 100%; height: 100%; border-radius: 50%; }
+.vela-orb:focus-visible { outline: 1px solid var(--accent, #f2f2f2); outline-offset: 4px; }
+@keyframes vela-breathe { 0%, 100% { box-shadow: 0 0 8px rgba(242, 242, 242, 0.25), 0 0 20px rgba(170, 190, 230, 0.12); } 50% { box-shadow: 0 0 14px rgba(242, 242, 242, 0.5), 0 0 34px rgba(170, 190, 230, 0.26); } }
+/* the wake-up: springy squash and stretch with a little sway */
+.vela .vela-orb.wiggle { animation: vela-wiggle 0.72s cubic-bezier(0.3, 1.6, 0.5, 1) 1, vela-breathe 4.2s ease-in-out 0.72s infinite; }
+@keyframes vela-wiggle {
+  0% { transform: scale(1, 1) rotate(0); }
+  14% { transform: scale(1.32, 0.7) rotate(-6deg); }
+  30% { transform: scale(0.78, 1.28) rotate(7deg) translateY(-5px); }
+  46% { transform: scale(1.14, 0.88) rotate(-5deg); }
+  62% { transform: scale(0.94, 1.08) rotate(3deg) translateY(-1px); }
+  80% { transform: scale(1.03, 0.97) rotate(-1deg); }
+  100% { transform: scale(1, 1) rotate(0); }
 }
+/* listening (your voice) and speaking (hers): the orb swells and glows in time */
+.vela.listening .vela-orb:not(.wiggle) { animation: vela-listen 0.9s ease-in-out infinite; }
+.vela.speaking .vela-orb:not(.wiggle) { animation: vela-speak 0.42s ease-in-out infinite alternate; }
+.vela.busy .vela-orb:not(.wiggle), .vela.connecting .vela-orb:not(.wiggle) { animation: vela-think 1.4s linear infinite; }
+@keyframes vela-listen { 0%, 100% { transform: scale(1); box-shadow: 0 0 12px rgba(242, 242, 242, 0.5), 0 0 28px rgba(170, 190, 230, 0.25); } 50% { transform: scale(1.18); box-shadow: 0 0 20px rgba(242, 242, 242, 0.75), 0 0 44px rgba(170, 190, 230, 0.4); } }
+@keyframes vela-speak { from { transform: scale(1.02); box-shadow: 0 0 12px rgba(242, 242, 242, 0.5), 0 0 26px rgba(170, 190, 230, 0.22); } to { transform: scale(1.22); box-shadow: 0 0 24px rgba(255, 255, 255, 0.85), 0 0 52px rgba(170, 190, 230, 0.45); } }
+@keyframes vela-think { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.6; transform: scale(0.9); } }
+.vela.hands .vela-orb { outline: 1px solid rgba(242, 242, 242, 0.35); outline-offset: 5px; }
+.vela-cap { order: -2; margin: 0; max-width: min(34rem, 80vw); text-align: center; font-size: 0.8125rem; line-height: 1.45; color: #f2f2f2; text-shadow: 0 0 6px #000, 0 0 2px #000; opacity: 0; transform: translateY(4px); transition: opacity 0.6s ease, transform 0.6s ease; pointer-events: none; }
+.vela-cap.show { opacity: 1; transform: none; }
+.vela-cap.you, .vela-cap.sys { color: var(--quiet, #9a9a9a); }
+.vela-cap.sys { font-style: italic; font-size: 0.75rem; }
+.vela-form { order: -1; margin: 0; }
+.vela-form[hidden] { display: none; }
+.vela-form input { width: min(22rem, 70vw); background: rgba(4, 4, 7, 0.7); border: 0; border-bottom: 1px solid var(--rule, #444); color: #f2f2f2; font: inherit; font-size: 0.8125rem; padding: 0.25rem 0.3rem; border-radius: 0; text-align: center; }
+.vela-form input:focus { outline: none; border-bottom-color: var(--accent, #f2f2f2); }
+.vela-state { font-size: 0.66rem; letter-spacing: 0.06em; color: var(--quiet, #9a9a9a); min-height: 0.9em; }
+#ask[aria-pressed="true"] { color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .vela-orb, .vela .vela-orb.wiggle { animation: none !important; } }

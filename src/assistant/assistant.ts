@@ -12,7 +12,6 @@ import { AssistantTools, TOOLS, type AssistantHost } from './tools.ts';
 
 const IDLE_MS = 2 * 60 * 1000;   // a voice line nobody uses closes itself
 const HOLD_MS = 260;              // longer than this, the backquote key is push-to-talk
-const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 export type Availability = 'unknown' | 'ready' | 'nokey' | 'noserver';
 
@@ -29,10 +28,11 @@ export class Assistant {
   private log: HTMLElement;
   private input: HTMLInputElement;
   private stateEl: HTMLElement;
-  private connectBtn: HTMLButtonElement;
-  private pttBtn: HTMLButtonElement;
-  private handsBtn: HTMLButtonElement;
-  private lines = new Map<string, HTMLElement>();
+  private form: HTMLFormElement;
+  private orb: HTMLButtonElement;
+  private pressAt = 0;
+  private capTimer = 0;
+  private lines = new Map<string, string>();
   private lastActive = 0;
   private ctxTimer = 0;
   private lastCtx = '';
@@ -42,7 +42,6 @@ export class Assistant {
   private keyDown = 0;
   private keyHold = 0;
   private holding = false;
-  private liveSince = 0;
   /** tool calls made, for the status line and tests */
   calls: { name: string; args: Record<string, unknown>; ms: number }[] = [];
 
@@ -53,43 +52,40 @@ export class Assistant {
       state: (s, why) => this.onState(s, why),
       heard: (id, t, final) => { if (final && !t) { this.drop(`u:${id}`); return; } this.line('you', t, `u:${id}`); },
       said: (id, t) => this.line('ship', t, `a:${id}`),
-      speaking: (on) => this.el.classList.toggle('speaking', on),
+      speaking: (on) => { this.el.classList.toggle('speaking', on); if (on) this.lastActive = performance.now(); },
       listening: (on) => this.el.classList.toggle('listening', on),
       tool: (name, args) => this.runTool(name, args),
       error: (m) => this.line('sys', m),
       activity: () => { this.lastActive = performance.now(); },
     });
-    this.el = document.createElement('aside');
-    this.el.className = 'ask';
-    this.el.hidden = true;
+    // a floating orb at the bottom centre: click to talk, double-click for hands-free, tap ` to type
+    this.el = document.createElement('div');
+    this.el.className = 'vela';
     this.el.setAttribute('aria-label', `Ask ${PERSONA_NAME}`);
     this.el.innerHTML = `
-      <header><b>Ask ${PERSONA_NAME}</b><span class="ask-state muted" aria-live="polite">voice off</span>
-        <button type="button" class="link ask-connect">Start voice</button><button type="button" class="link ask-close">Close</button></header>
-      <div class="ask-log" role="log" aria-live="polite"></div>
-      <form class="ask-form">
-        <button type="button" class="link ask-ptt" title="Hold to talk (or hold the \` key)">Hold to talk</button>
-        <button type="button" class="link ask-hands" aria-pressed="false" title="Always listening: just talk, and talk over her to interrupt">Hands-free</button>
-        <input type="text" autocomplete="off" enterkeyhint="send" placeholder="Ask anything about this future…" aria-label="Ask ${PERSONA_NAME}">
-        <button type="submit" class="link">Ask</button>
-      </form>
-      <p class="ask-foot muted">\` to open, hold \` to talk. Voice closes after 2 minutes idle.</p>`;
-    this.log = this.el.querySelector('.ask-log')!;
+      <p class="vela-cap" aria-live="polite"></p>
+      <form class="vela-form" hidden><input type="text" autocomplete="off" enterkeyhint="send" placeholder="Ask ${PERSONA_NAME}…" aria-label="Ask ${PERSONA_NAME}"></form>
+      <button type="button" class="vela-orb" title="${PERSONA_NAME}: click to talk, double-click for hands-free, hold \` to talk, tap \` to type" aria-label="Talk to ${PERSONA_NAME}"><span></span></button>
+      <span class="vela-state" aria-live="polite"></span>`;
+    this.log = this.el.querySelector('.vela-cap')!;
     this.input = this.el.querySelector('input')!;
-    this.stateEl = this.el.querySelector('.ask-state')!;
-    this.connectBtn = this.el.querySelector('.ask-connect')!;
-    this.pttBtn = this.el.querySelector('.ask-ptt')!;
-    this.handsBtn = this.el.querySelector('.ask-hands')!;
-    this.el.querySelector('form')!.addEventListener('submit', (e) => { e.preventDefault(); const t = this.input.value; this.input.value = ''; this.ask(t); });
-    this.el.querySelector('.ask-close')!.addEventListener('click', () => this.close());
-    this.connectBtn.addEventListener('click', () => { if (this.voice.state === 'off') void this.startVoice(this.voice.mode); else this.voice.disconnect('Voice off.'); });
-    this.handsBtn.addEventListener('click', () => this.setMode(this.voice.mode === 'handsfree' ? 'ptt' : 'handsfree'));
-    // push to talk: press and hold (pointer or keyboard)
-    this.pttBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); this.pttBtn.setPointerCapture(e.pointerId); void this.pttDown(); });
-    this.pttBtn.addEventListener('pointerup', () => this.pttUp());
-    this.pttBtn.addEventListener('pointercancel', () => this.pttUp());
-    this.pttBtn.addEventListener('keydown', (e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); void this.pttDown(); } });
-    this.pttBtn.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') this.pttUp(); });
+    this.stateEl = this.el.querySelector('.vela-state')!;
+    this.form = this.el.querySelector('form')!;
+    this.orb = this.el.querySelector('.vela-orb')!;
+    this.form.addEventListener('submit', (e) => { e.preventDefault(); const t = this.input.value; this.input.value = ''; this.ask(t); });
+    this.input.addEventListener('blur', () => { if (!this.input.value) this.close(); });
+    // click: wiggle, then talk (push-to-talk while held; a short click opens the line hands-free-less and listens)
+    let clickT = 0;
+    this.orb.addEventListener('pointerdown', (e) => { e.preventDefault(); this.orb.setPointerCapture(e.pointerId); this.wiggle(); this.pressAt = performance.now(); void this.pttDown(); });
+    this.orb.addEventListener('pointerup', () => {
+      const held = performance.now() - this.pressAt > HOLD_MS;
+      if (held) { this.pttUp(); return; }
+      // a short click: keep listening for a moment like a tap-to-talk, unless a second click makes it hands-free
+      clearTimeout(clickT);
+      clickT = window.setTimeout(() => this.pttUp(), 4000);
+    });
+    this.orb.addEventListener('pointercancel', () => this.pttUp());
+    this.orb.addEventListener('dblclick', (e) => { e.preventDefault(); clearTimeout(clickT); this.holding = false; this.setMode(this.voice.mode === 'handsfree' && this.voice.live ? 'ptt' : 'handsfree'); });
     // keys typed here are the assistant's, not the sim's shortcuts (but the backquote still toggles)
     this.el.addEventListener('keydown', (e) => { if (e.key === 'Escape') { this.close(); return; } if (e.key !== '`') e.stopPropagation(); });
     window.addEventListener('keydown', (e) => this.onKey(e, true));
@@ -116,16 +112,20 @@ export class Assistant {
       : 'Voice assistant needs the local dev server (npm run dev); this page has no server to keep the API key on.';
   }
 
-  get open(): boolean { return !this.el.hidden; }
+  get open(): boolean { return !this.form.hidden; }
   show(focus = true): void {
-    this.el.hidden = false;
-    if (!this.log.childElementCount) {
-      if (this.available === 'nokey' || this.available === 'noserver') this.line('sys', this.unavailableText());
-      else this.line('ship', `Hi, I'm ${PERSONA_NAME}. Ask me anything about this future, or tell me where to take you. Type, hold to talk, or turn on hands-free.`);
-    }
+    this.form.hidden = false;
+    this.el.classList.add('typing');
+    if (this.available === 'nokey' || this.available === 'noserver') this.line('sys', this.unavailableText());
     if (focus) this.input.focus();
   }
-  close(): void { this.el.hidden = true; }
+  close(): void { this.form.hidden = true; this.el.classList.remove('typing'); if (document.activeElement === this.input) this.input.blur(); }
+  /** The playful squash-and-stretch the orb does when woken. */
+  wiggle(): void {
+    this.orb.classList.remove('wiggle');
+    void this.orb.offsetWidth;
+    this.orb.classList.add('wiggle');
+  }
   /** Somewhere else to type instead (the Starship console while aboard): returns true if it took over. */
   redirect: () => boolean = () => false;
   toggle(): void { if (this.open) this.close(); else if (!this.redirect()) this.show(); }
@@ -162,7 +162,7 @@ export class Assistant {
   ask(raw: string, show = true): void {
     const text = raw.trim();
     if (!text) return;
-    if (show) this.show(false);
+    void show;
     this.line('you', text);
     this.lastActive = performance.now();
     if (this.available === 'nokey' || this.available === 'noserver') { this.line('sys', this.unavailableText()); return; }
@@ -227,8 +227,7 @@ export class Assistant {
   async startVoice(mode: MicMode = 'ptt'): Promise<boolean> {
     if (this.voice.state !== 'off') return this.voice.live;
     if (this.available === 'unknown') await this.probe();
-    if (this.available !== 'ready') { if (!this.host.boarded()) this.show(false); this.line('sys', this.unavailableText()); return false; }
-    if (!this.host.boarded()) this.show(false);
+    if (this.available !== 'ready') { this.line('sys', this.unavailableText()); return false; }
     try {
       this.lastCtx = this.context();
       await this.voice.connect(instructions(this.lastCtx), TOOLS, mode);
@@ -268,7 +267,7 @@ export class Assistant {
     if (down) {
       if (e.repeat || this.keyDown) return;
       this.keyDown = performance.now();
-      this.keyHold = window.setTimeout(() => { this.keyHold = 0; void this.pttDown(); }, HOLD_MS);
+      this.keyHold = window.setTimeout(() => { this.keyHold = 0; this.wiggle(); void this.pttDown(); }, HOLD_MS);
     } else if (this.keyDown) {
       this.keyDown = 0;
       if (this.keyHold) { clearTimeout(this.keyHold); this.keyHold = 0; this.toggle(); } else this.pttUp();
@@ -276,49 +275,43 @@ export class Assistant {
   }
 
   private onState(s: VoiceState, why?: string): void {
-    if (s === 'live') this.liveSince = performance.now();
     if (why) this.line('sys', why);
     this.mirror?.live(s === 'live');
     this.renderState();
   }
 
   private tick(): void {
-    if (!this.voice.live) { if (this.busy === 0 && this.stateEl.textContent?.startsWith('voice live')) this.renderState(); return; }
+    if (!this.voice.live) { if (this.busy === 0) this.renderState(); return; }
     if (performance.now() - this.lastActive > IDLE_MS && !this.holding) { this.voice.disconnect('Voice closed after two quiet minutes, to save credits.'); return; }
     this.renderState();
   }
 
   private renderState(): void {
     const v = this.voice, live = v.live;
-    const secs = live ? Math.round((performance.now() - this.liveSince) / 1000) : 0;
-    const clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
-    this.stateEl.textContent = v.state === 'connecting' ? 'connecting…'
-      : live ? `voice live ${clock} · ${v.mode === 'handsfree' ? 'listening' : 'hold to talk'}`
-      : this.busy ? 'thinking…'
-      : this.available === 'ready' ? 'voice off' : this.available === 'unknown' ? '' : 'unavailable';
-    this.connectBtn.textContent = v.state === 'off' ? 'Start voice' : 'Stop voice';
-    this.connectBtn.disabled = this.available === 'noserver' || this.available === 'nokey';
-    this.handsBtn.setAttribute('aria-pressed', String(live && v.mode === 'handsfree'));
+    this.stateEl.textContent = v.state === 'connecting' ? 'connecting'
+      : live ? (v.mode === 'handsfree' ? 'hands-free' : '')
+      : this.busy ? 'thinking'
+      : this.available === 'nokey' || this.available === 'noserver' ? 'unavailable' : '';
+    this.orb.setAttribute('aria-pressed', String(live && v.mode === 'handsfree'));
     this.el.classList.toggle('live', live);
+    this.el.classList.toggle('hands', live && v.mode === 'handsfree');
+    this.el.classList.toggle('busy', this.busy > 0);
     this.el.classList.toggle('connecting', v.state === 'connecting');
   }
 
   // ---------------------------------------------------------------- transcript
 
+  /** The caption under the orb: the latest line, shown briefly, then it fades. */
   private line(who: 'you' | 'ship' | 'sys', text: string, key?: string): void {
-    let p = key ? this.lines.get(key) : undefined;
-    if (!p) {
-      p = document.createElement('p');
-      p.className = `msg ${who}`;
-      // lookups show above the answer they are for
-      const wait = this.waiting && this.lines.get(this.waiting);
-      if (wait && key?.startsWith('tool:')) wait.before(p); else this.log.append(p);
-      if (key) this.lines.set(key, p);
-      while (this.log.childElementCount > 80) { const f = this.log.firstElementChild!; for (const [k, v] of this.lines) if (v === f) this.lines.delete(k); f.remove(); }
-    }
-    p.innerHTML = esc(text);
-    this.log.scrollTop = this.log.scrollHeight;
+    if (key) this.lines.set(key, text);
+    if (this.lines.size > 80) this.lines.delete(this.lines.keys().next().value!);
+    const cap = this.log;
+    cap.textContent = who === 'you' ? `› ${text}` : text;
+    cap.className = `vela-cap show ${who}`;
+    clearTimeout(this.capTimer);
+    const ms = text === '…' ? 60000 : Math.min(16000, 3500 + text.length * 55);
+    this.capTimer = window.setTimeout(() => cap.classList.remove('show'), ms);
     if (who !== 'sys' || !key?.startsWith('tool:')) this.mirror?.line(who, text, key);
   }
-  private drop(key: string): void { this.lines.get(key)?.remove(); this.lines.delete(key); }
+  private drop(key: string): void { this.lines.delete(key); }
 }
