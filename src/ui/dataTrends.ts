@@ -1,14 +1,14 @@
 // "Trends": the run as an analyst's deck — the nine data sections of SECTIONS
-// (market, workforce, moves, consumers, risk, costs, innovation, shocks,
-// divergence), each with a signal line that follows the cursor year, a chart,
-// and a list of the moments it turns. Belief and Ages stay narrative, from the
-// annals. Every chart and every listed year seeks the timeline there (and
-// focuses the world concerned), so a click shows the system changing.
+// (market, costs, pipeline, risk, hotspots, logistics, workforce, shocks,
+// climate), each with a signal line that follows the cursor year, a chart, and
+// a list of the moments it turns. Ages stays narrative, from the annals.
+// Every chart and every listed year seeks the timeline there (and focuses the
+// world concerned), so a click shows the system changing.
 
 import type { Annals } from '../sim/chronicle.ts';
 import { NPERIODS, periodOf } from '../sim/ledger.ts';
 import { GLOBAL_METRICS, GM } from '../sim/metrics.ts';
-import { buildReport, marketsAt, REPORT_COLUMNS, reportTable, SECTIONS, seriesTable, shockSignal, signalAt, turningPoints, type Dir, type ReportRow, type Signal, type TrendSection } from '../sim/trendSignals.ts';
+import { buildReport, countSignal, marketsAt, metricSignal, REPORT_COLUMNS, reportTable, SECTIONS, seriesTable, topDestinationAt, turningPoints, type Ctx, type Dir, type MetricSignal, type ReportRow, type TrendSection } from '../sim/trendSignals.ts';
 import { MARKET_WINDOW, type Trends } from '../sim/trends.ts';
 import { AnalystChart, type AData, type ALine } from './analystChart.ts';
 import { globalSeries } from './charts.ts';
@@ -22,7 +22,6 @@ interface Sec {
   signal: HTMLElement | null; live: HTMLElement | null; def: TrendSection | null;
 }
 
-const BELIEF_HOW = "Faith is kept out of the data channel: these are the record's milestones, not measurements.";
 const ARROW: Record<Dir, string> = { rising: '↑', falling: '↓', flat: '→' };
 const CAP: Record<Dir, string> = { rising: 'Rising', falling: 'Falling', flat: 'Flat' };
 
@@ -54,9 +53,12 @@ export class TrendsTab implements DataTab {
       const el = document.createElement('section');
       el.className = 'tr-sec';
       el.innerHTML = `<h3>${esc(def.title)}</h3><p class="tr-q">${esc(def.question)}</p><p class="tr-signal"></p><p class="muted tr-how">${esc(def.how)}</p>`;
-      const chart = new AnalystChart({ log: def.log, warp: true, label: def.title });
-      chart.onPick = (y) => host.pickYear?.(y);
-      el.append(chart.el);
+      let chart: AnalystChart | null = null;
+      if (def.chart !== 'none') {
+        chart = new AnalystChart({ log: def.log, warp: true, label: def.title });
+        chart.onPick = (y) => host.pickYear?.(y);
+        el.append(chart.el);
+      }
       let live: HTMLElement | null = null;
       if (def.id === 'market') {
         live = document.createElement('div');
@@ -68,10 +70,10 @@ export class TrendsTab implements DataTab {
       this.el.append(el);
       this.secs.push({ el, list, chart, data: null, signal: el.querySelector('.tr-signal'), live, def });
     }
-    for (const [title, how] of [['Belief', BELIEF_HOW], ['Ages', '']] as const) {
+    {
       const el = document.createElement('section');
       el.className = 'tr-sec';
-      el.innerHTML = `<h3>${esc(title)}</h3>${how ? `<p class="muted tr-how">${esc(how)}</p>` : ''}`;
+      el.innerHTML = `<h3>Ages</h3>`;
       const list = document.createElement('div');
       el.append(list);
       this.el.append(el);
@@ -83,7 +85,7 @@ export class TrendsTab implements DataTab {
         const sim = this.host.sim, status = this.repBody.querySelector<HTMLElement>('.copy-status');
         if (act === 'report-csv' && this.report) void copyText(toCsv(REPORT_COLUMNS, reportTable(this.report), `Trends report, future #${sim.seed}`), 'Report as CSV', status);
         if (act === 'series-csv') {
-          const { columns, rows } = seriesTable(sim.years, sim.series, Math.min(sim.years.length, sim.frontier + 1));
+          const { columns, rows } = seriesTable(sim.years, sim.series, Math.min(sim.years.length, sim.frontier + 1), this.trends);
           void copyText(toCsv(columns, rows, `Trends series, future #${sim.seed}`), 'Series as CSV', status);
         }
         return;
@@ -177,19 +179,6 @@ export class TrendsTab implements DataTab {
     this.report = sim.done && this.trends ? buildReport(sim.years, sim.series, Math.min(sim.years.length, sim.frontier + 1), this.trends) : null;
     for (const s of S) if (s.def) this.renderData(s);
 
-    // belief: narrative milestones only, no chart
-    {
-      const pts: string[] = [];
-      if (a) {
-        const faiths = [...a.faiths].sort((x, y) => x.founded - y.founded).slice(0, 12);
-        for (const f of faiths) {
-          pts.push(this.pt(f.founded, f.home, `${esc(f.name)} founded on ${esc(this.name(f.home) || '?')}`));
-          if (f.ended !== null) pts.push(this.pt(f.ended, -1, `${esc(f.name)} dies out`));
-        }
-      }
-      this.fill(S[S.length - 2], null, pts, !a);
-    }
-
     // ages
     {
       const pts: string[] = a ? a.ages.map((ag) => this.pt(ag.from, -1, `${esc(ag.name)} begins`)) : [];
@@ -215,6 +204,9 @@ export class TrendsTab implements DataTab {
         const tg = g ? turningPoints(g.xs, g.ys, true) : null;
         const half = pop && off ? this.first(off.ys, (v, i) => v > 0 && v > pop.ys[i] / 2) : -1;
         const beyond = inter ? this.first(inter.ys, (v) => v > 0) : -1;
+        const sh = t?.shares;
+        const iE = sh ? sh.earthGdp.findIndex((v) => v < 50) : -1;
+        const iT = sh ? sh.top5Gdp.findIndex((v) => v < 50) : -1;
         pts = [
           this.at(pop, tp?.max ?? -1, 'peak population'),
           this.at(pop, tp?.fall ?? -1, 'the steepest fall'),
@@ -222,44 +214,38 @@ export class TrendsTab implements DataTab {
           this.at(inter, beyond, 'first people beyond Sol'),
           this.at(g, tg?.rise ?? -1, 'the steepest rise in product per person'),
           this.at(g, tg?.fall ?? -1, 'the steepest fall in product per person'),
+          iE >= 0 ? this.pt(sh!.year[iE], -1, 'most product is now made off Earth') : '',
+          iT >= 0 ? this.pt(sh!.year[iT], -1, 'the top 5 worlds hold under half of product') : '',
         ];
         waiting = !pop;
         break;
       }
-      case 'workforce': {
-        const le = this.vals('lifeExp'), ma = this.vals('medianAge'), tfr = this.vals('tfr');
-        const below = tfr ? this.first(tfr.ys, (v) => v > 0 && v < 2.1) : -1;
+      case 'costs': {
+        const f = this.vals('costPerKg'), en = this.vals('energyPerCap');
+        const tf = f ? turningPoints(f.xs, f.ys, true) : null;
         pts = [
-          this.at(le, le ? turningPoints(le.xs, le.ys, false).max : -1, 'peak life expectancy'),
-          this.at(ma, ma ? turningPoints(ma.xs, ma.ys, false).max : -1, 'oldest median age'),
-          this.at(tfr, below, 'families fall below replacement'),
+          this.at(f, tf?.min ?? -1, 'freight is cheapest'),
+          this.at(f, tf?.fall ?? -1, 'freight costs fall fastest'),
+          this.at(en, en ? turningPoints(en.xs, en.ys, false).max : -1, 'most energy per person'),
         ];
-        waiting = !le;
+        waiting = !f;
         break;
       }
-      case 'moves': {
-        const xs = t ? t.edges.slice(0, NPERIODS) : [];
-        lines = t ? [
-          { label: 'people setting out', color: '#f2f2f2', xs, ys: t.moved },
-          { label: 'lost in transit', color: '#ff8f7a', xs, ys: t.lost, dash: true },
-        ] : [];
-        pts = t ? [...t.hot].sort((x, y) => y.n - x.n).slice(0, 12)
-          .map((h) => this.pt(h.year, h.body, `${esc(this.name(h.body) || '?')} — ${fmtNum(h.n)} arrivals${h.from >= 0 && this.name(h.from) ? `, mostly from ${esc(this.name(h.from))}` : ''}`)) : [];
-        waiting = !t;
-        break;
-      }
-      case 'consumers': {
-        const h = this.vals('happiness'), gini = this.vals('gini'), sh = this.vals('shortage');
-        const th = h ? turningPoints(h.xs, h.ys, false) : null;
-        const gi = gini ? turningPoints(gini.xs, gini.ys, false) : null;
+      case 'pipeline': {
+        const st = this.vals('settlements'), rc = this.vals('reach');
         pts = [
-          this.at(h, th?.min ?? -1, 'happiness at its lowest'),
-          this.at(h, th?.fall ?? -1, 'happiness falls fastest'),
-          this.at(gini, gi?.max ?? -1, `most unequal (Gini ${gini && gi ? gini.ys[gi.max].toFixed(2) : ''})`),
-          this.at(gini, gi?.min ?? -1, `most equal (Gini ${gini && gi ? gini.ys[gi.min].toFixed(2) : ''})`),
-          this.at(sh, sh ? turningPoints(sh.xs, sh.ys, false).max : -1, 'the worst shortages'),
+          this.at(st, st ? this.first(st.ys, (v) => v >= 100) : -1, 'settlements pass 100'),
+          this.at(rc, rc ? this.first(rc.ys, (v) => v >= 100) : -1, 'the frontier passes 100 light years'),
         ];
-        waiting = !h;
+        if (t) {
+          let best = -1, by = NaN;
+          for (const y of st?.xs ?? []) {
+            const n = countSignal(t.founded, y, 100).recent;
+            if (n > best) { best = n; by = y; }
+          }
+          pts.push(this.pt(by, -1, 'the busiest century for new colonies'));
+        }
+        waiting = !st;
         break;
       }
       case 'risk': {
@@ -284,28 +270,32 @@ export class TrendsTab implements DataTab {
         waiting = !(t && a);
         break;
       }
-      case 'costs': {
-        const f = this.vals('costPerKg'), leo = this.vals('leoCostPerKg'), en = this.vals('energyPerCap');
+      case 'hotspots': {
+        pts = t ? [...t.hot].sort((x, y) => y.n - x.n).slice(0, 12)
+          .map((h) => this.pt(h.year, h.body, `${esc(this.name(h.body) || '?')} — ${fmtNum(h.n)} arrivals${h.from >= 0 && this.name(h.from) ? `, mostly from ${esc(this.name(h.from))}` : ''}`)) : [];
+        waiting = !t;
+        break;
+      }
+      case 'logistics': {
+        const f = this.vals('payloadDispatched'), sl = this.vals('shipsLost');
         const tf = f ? turningPoints(f.xs, f.ys, true) : null;
         pts = [
-          this.at(f, tf?.min ?? -1, 'freight is cheapest'),
-          this.at(f, tf?.fall ?? -1, 'freight costs fall fastest'),
-          this.at(leo, leo ? turningPoints(leo.xs, leo.ys, true).min : -1, 'launch to orbit is cheapest'),
-          this.at(en, en ? turningPoints(en.xs, en.ys, false).max : -1, 'most energy per person'),
+          this.at(f, tf?.max ?? -1, 'the most freight shipped'),
+          this.at(f, tf?.fall ?? -1, 'freight falls fastest'),
+          this.at(sl, sl ? this.first(sl.ys, (v) => v >= 1) : -1, 'the first ship lost'),
         ];
         waiting = !f;
         break;
       }
-      case 'innovation': {
-        const tfp = this.vals('tfp'), res = this.vals('research');
-        const tt = tfp ? turningPoints(tfp.xs, tfp.ys, true) : null;
-        const tr = res ? turningPoints(res.xs, res.ys, true) : null;
+      case 'workforce': {
+        const le = this.vals('lifeExp'), ma = this.vals('medianAge'), tfr = this.vals('tfr');
+        const below = tfr ? this.first(tfr.ys, (v) => v > 0 && v < 2.1) : -1;
         pts = [
-          this.at(tfp, tt?.rise ?? -1, 'productivity jumps fastest'),
-          this.at(res, tr?.max ?? -1, 'research peaks'),
-          this.at(res, tr?.fall ?? -1, 'research falls fastest'),
+          this.at(le, le ? turningPoints(le.xs, le.ys, false).max : -1, 'peak life expectancy'),
+          this.at(ma, ma ? turningPoints(ma.xs, ma.ys, false).max : -1, 'oldest median age'),
+          this.at(tfr, below, 'families fall below replacement'),
         ];
-        waiting = !tfp;
+        waiting = !le;
         break;
       }
       case 'shocks': {
@@ -315,15 +305,16 @@ export class TrendsTab implements DataTab {
         waiting = !t;
         break;
       }
-      case 'divergence': {
-        const d = this.vals('divergence');
-        const h1 = d ? this.first(d.ys, (v) => v >= 0.5) : -1;
-        const h2 = d ? this.first(d.ys, (v) => v >= 1) : -1;
+      case 'climate': {
+        const et = this.vals('earthTemp'), sl = this.vals('seaLevel'), tf = this.vals('terraformed');
+        const te = et ? turningPoints(et.xs, et.ys, false) : null;
         pts = [
-          this.at(d, h1, 'peoples drift measurably apart'),
-          this.at(d, h2, 'peoples become separate species'),
+          this.at(et, te?.max ?? -1, 'Earth at its warmest'),
+          this.at(et, te?.min ?? -1, 'Earth at its coolest'),
+          this.at(sl, sl ? turningPoints(sl.xs, sl.ys, false).max : -1, 'the highest sea level'),
+          this.at(tf, tf ? this.first(tf.ys, (v) => v >= 1) : -1, 'the first world terraformed past half'),
         ];
-        waiting = !d;
+        waiting = !et;
         break;
       }
     }
@@ -332,43 +323,61 @@ export class TrendsTab implements DataTab {
 
   // ------------------------------------------------------------------ cursor repaint (year changed)
 
-  /** A signed change as text: rate as "+1.84 %/yr", delta as signed fmtNum plus its unit (yr or %). */
+  /** A signed change as text: rate as "+1.84 %/yr", delta as signed fmtNum plus a unit suffix. */
   private fmtChg(kind: 'rate' | 'delta', change: number, unit: string): string {
     if (kind === 'rate') return `${change >= 0 ? '+' : ''}${change.toFixed(2)} %/yr`;
     return `${change >= 0 ? '+' : ''}${fmtNum(change)}${unit === 'yr' || unit === '%' ? ` ${unit}` : ''}`;
   }
 
-  /** A signal's change as text: "+1.84 %/yr", "from zero", or a signed delta with its unit. */
-  private chg(s: Signal): string {
+  /** A signal's change as text: "+1.84 %/yr", "from zero", or a signed delta with its suffix. */
+  private chg(s: MetricSignal): string {
     if (s.kind === 'rate') {
       if (s.change === null) return s.to > s.from ? 'from zero' : s.to < s.from ? 'to zero' : 'unchanged';
-      return this.fmtChg('rate', s.change, '');
+      return `${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)} %/yr`;
     }
-    return this.fmtChg('delta', s.change!, GLOBAL_METRICS[GM[s.key]].unit);
+    if (s.kind === 'count') return `${s.change! >= 0 ? '+' : ''}${s.change}`;
+    const suffix = s.unit === '%' ? ' pts' : s.unit === 'yr' || s.unit === 'K' || s.unit === 'm' || s.unit === 'ly' ? ` ${s.unit}` : '';
+    return `${s.change! >= 0 ? '+' : ''}${fmtNum(s.change!)}${suffix}`;
   }
+
+  /** A signal's level as text. */
+  private level(s: MetricSignal): string { return this.val(s.to, s.unit); }
+
+  /** A value with its unit; 'K' here is kelvin (Earth's temperature), not fmtUnit's Kardashev rating. */
+  private val(v: number, unit: string): string { return unit === 'K' ? `${v.toFixed(2)} K` : fmtUnit(v, unit); }
 
   /** The signal line of a data section at cursor year y. */
   private signalLine(def: TrendSection, y: number): string {
     const sim = this.host.sim, t = this.trends;
-    const n = Math.min(sim.years.length, sim.frontier + 1);
-    if (def.id === 'shocks') {
+    const ctx: Ctx = { years: sim.years, series: sim.series, n: Math.min(sim.years.length, sim.frontier + 1), t };
+    if (def.id === 'hotspots') {
       if (!t) return 'Waiting for the run…';
-      const head = shockSignal(t, 'disaster', y);
-      if (!head) return 'No data yet at this year.';
-      let html = `<b>${CAP[head.dir]}</b> Disasters: ${head.recent} in the 50 years to ${fmtYear(y)}, against ${head.before} in the 50 before`;
-      for (const c of t.shocks) {
-        if (c.key === 'disaster') continue;
-        const s = shockSignal(t, c.key, y)!;
-        html += ` · ${esc(c.label)} ${s.recent} (was ${s.before}) ${ARROW[s.dir]}`;
+      const top = topDestinationAt(t, y);
+      if (!top) return 'No arrivals yet.';
+      let s = `Top destination, ${fmtYear(top.from)}–${fmtYear(top.to)}: ${esc(this.name(top.body) || '?')} — ${fmtNum(top.n)} arrivals`;
+      if (top.src >= 0 && this.name(top.src)) s += `, mostly from ${esc(this.name(top.src))}`;
+      const prev = topDestinationAt(t, y - 50);
+      if (prev) s += prev.body === top.body ? '; the same as 50 years earlier' : `; 50 years earlier it was ${esc(this.name(prev.body) || '?')}`;
+      return s;
+    }
+    const headM = def.metrics[0];
+    const head = headM ? metricSignal(headM, ctx, y) : null;
+    if (!head) return headM && headM.src !== 'series' && !t ? 'Waiting for the run…' : 'No data yet at this year.';
+    if (head.kind === 'count') {
+      let html = `<b>${CAP[head.dir]}</b> ${esc(head.label)}: ${head.to} in the ${head.span} years to ${fmtYear(y)}, against ${head.from} in the ${head.span} before`;
+      for (const m of def.metrics.slice(1)) {
+        const s = metricSignal(m, ctx, y);
+        if (s) html += ` · ${esc(s.label)} ${s.to} (was ${s.from}) ${ARROW[s.dir]}`;
       }
       return html;
     }
-    const head = signalAt(sim.years, sim.series, n, def.metrics[0], y);
-    if (!head) return 'No data yet at this year.';
-    let html = `<b>${CAP[head.dir]}</b> ${esc(GLOBAL_METRICS[GM[def.metrics[0]]].label)} ${this.chg(head)} over the ${Math.round(head.toYear - head.fromYear)} years to ${fmtYear(head.toYear)}`;
-    for (const key of def.metrics.slice(1)) {
-      const s = signalAt(sim.years, sim.series, n, key, y);
-      if (s) html += ` · ${esc(GLOBAL_METRICS[GM[key]].label)} ${this.chg(s)} ${ARROW[s.dir]}`;
+    let html = `<b>${CAP[head.dir]}</b> ${esc(head.label)} ${headM.src !== 'count' && headM.level ? `${this.level(head)}, ` : ''}${this.chg(head)} over the ${Math.round(head.toYear - head.fromYear)} years to ${fmtYear(head.toYear)}`;
+    for (const m of def.metrics.slice(1)) {
+      const s = metricSignal(m, ctx, y);
+      if (!s) continue;
+      html += s.kind === 'count'
+        ? ` · ${esc(s.label)} ${s.to} (was ${s.from}) ${ARROW[s.dir]}`
+        : ` · ${esc(s.label)} ${m.src !== 'count' && m.level ? `${this.level(s)} (${this.chg(s)})` : this.chg(s)} ${ARROW[s.dir]}`;
     }
     return html;
   }
@@ -388,23 +397,28 @@ export class TrendsTab implements DataTab {
 
   /** The end-of-run report: one line per section's headline row. */
   private reportHtml(): string {
-    const r = this.report;
+    const r = this.report, t = this.trends;
     if (!r) return '';
     const yb = (y: number) => `<button class="link num" type="button" data-y="${y}" data-b="-1">${fmtYear(y)}</button>`;
     const lis: string[] = [];
     for (const sec of SECTIONS) {
-      const head = sec.id === 'shocks' ? 'shock:disaster' : sec.metrics[0];
+      if (sec.id === 'hotspots') {
+        const top = t?.hot.reduce<Trends['hot'][number] | null>((a, h) => (!a || h.n > a.n ? h : a), null);
+        if (top) lis.push(`<li><b>Migration hotspots</b>: the busiest destination of the run was ${esc(this.name(top.body) || '?')}, ${fmtNum(top.n)} arrivals in the period from ${yb(top.year)}</li>`);
+        continue;
+      }
+      const head = sec.id === 'shocks' ? 'shock:disaster' : sec.metrics[0]?.key;
       const row = r.find((x) => x.section === sec.title && x.key === head);
       if (!row) continue;
       if (row.kind === 'count') {
         const busiest = Number.isFinite(row.peakYear) ? ` Busiest period from ${yb(row.peakYear)} (${row.peak} events).` : '';
-        lis.push(`<li><b>Shocks</b>: Disasters, ${row.runChange} over the run; last 50 years ${row.lastChange! >= 0 ? '+' : ''}${row.lastChange} against the 50 before (${row.lastDir}).${busiest}</li>`);
+        lis.push(`<li><b>Shocks</b>: ${esc(row.label)}, ${row.runChange} over the run; last ${row.span} years ${row.lastChange! >= 0 ? '+' : ''}${row.lastChange} against the ${row.span} before (${row.lastDir}).${busiest}</li>`);
         continue;
       }
-      const from = Number.isFinite(row.startYear) ? `${fmtUnit(row.start, row.unit)} in ${yb(row.startYear)} → ` : '';
-      let s = `<b>${esc(row.section)}</b>: ${esc(row.label)} ${from}${fmtUnit(row.end, row.unit)} in ${yb(row.endYear)}`;
+      const from = Number.isFinite(row.startYear) ? `${this.val(row.start, row.unit)} in ${yb(row.startYear)} → ` : '';
+      let s = `<b>${esc(row.section)}</b>: ${esc(row.label)} ${from}${this.val(row.end, row.unit)} in ${yb(row.endYear)}`;
       if (row.runChange !== null) s += `, ${this.fmtChg(row.kind, row.runChange, row.unit)} over the run`;
-      s += `. Last 50 years: ${CAP[row.lastDir]}`;
+      s += `. Last ${row.span} years: ${CAP[row.lastDir]}`;
       if (row.lastChange !== null) s += ` (${this.fmtChg(row.kind, row.lastChange, row.unit)})`;
       const tps = ([['Peak', row.peakYear], ['low', row.troughYear], ['steepest rise', row.riseYear], ['steepest fall', row.fallYear]] as [string, number][])
         .filter(([, y]) => Number.isFinite(y));

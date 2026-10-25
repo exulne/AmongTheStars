@@ -13,9 +13,10 @@ export interface TrendPoint { year: number; from: number; body: number; n: numbe
 export interface Trends {
   edges: number[];           // periodStart(p) for p = 0..NPERIODS; bucket p = [edges[p], edges[p+1])
   upTo: number;              // year the run has reached
-  moved: number[];           // per departure period: people who set out (all flows but landings)
-  lost: number[];            // same, only the flows that were lost
   hot: { p: number; year: number; body: number; n: number; from: number }[]; // up to 3 busiest destinations per arrival period
+  /** per history sample: Earth's share of product and people, and the top-5 worlds' share of product, in % */
+  shares: { year: number[]; earthGdp: number[]; earthPop: number[]; top5Gdp: number[] };
+  founded: number[];           // every 'Colony founded' event year <= upTo, sorted
   /** for each period p with growthFrom <= edges[p] <= upTo, up to 5 worlds with the largest gain in product
    *  (gdp, $/yr) since the history sample MARKET_WINDOW years before edges[p], or since the first sample
    *  when that window starts before the history (since = the compared sample's year). Only gain > 0.
@@ -46,16 +47,10 @@ export function buildTrends(e: Engine): Trends | null {
   if (!e.ledger) return null;
   const edges = Array.from({ length: NPERIODS + 1 }, (_, p) => periodStart(p));
   const upTo = e.years[e.st.step];
-  const moved = new Array<number>(NPERIODS).fill(0);
-  const lost = new Array<number>(NPERIODS).fill(0);
   const hotBy = new Map<number, Map<number, number>>();      // pArrive → dst → arrivals
   const srcBy = new Map<number, Map<number, Map<number, number>>>(); // pArrive → dst → src → n
   for (const f of e.ledger.flows) {
     if (f.kind === FLOW.LANDING) continue;
-    if (f.p >= 0 && f.p < NPERIODS) {
-      moved[f.p] += f.n;
-      if (f.lost) lost[f.p] += f.n;
-    }
     if (f.lost || isShipBody(f.dst) || f.pArrive < 0 || f.pArrive >= NPERIODS) continue;
     if (periodStart(f.pArrive) > upTo) continue;
     const dsts = hotBy.get(f.pArrive) ?? new Map<number, number>();
@@ -132,6 +127,30 @@ export function buildTrends(e: Engine): Trends | null {
     for (const g of top) markets.push({ p, year: Y, since: sYear[k0], body: g.body, now: g.now, then: g.then });
   }
 
+  // shares per sample: Earth's slice of product and people, the top-5 worlds' of product
+  const popCol = 2 + HIST_FIELDS.indexOf('pop');
+  const shares: Trends['shares'] = { year: [], earthGdp: [], earthPop: [], top5Gdp: [] };
+  for (let k = 0; k < sYear.length; k++) {
+    if (sYear[k] > upTo) break;
+    let g = 0, p = 0, eG = 0, eP = 0, hasE = false;
+    const tops: number[] = [];
+    for (let r = sStart[k]; r < sEnd[k]; r++) {
+      const b = e.hist[r * w + 1], pop = e.hist[r * w + popCol], gdp = e.hist[r * w + gdpCol];
+      if (isShipBody(b) || !(pop > 0)) continue;
+      g += gdp; p += pop;
+      if (b === e.world.earth) { hasE = true; eG = gdp; eP = pop; }
+      let i = tops.length;
+      for (let j = 0; j < tops.length; j++) if (tops[j] < gdp) { i = j; break; }
+      if (i < 5) { tops.splice(i, 0, gdp); if (tops.length > 5) tops.pop(); }
+    }
+    shares.year.push(sYear[k]);
+    shares.earthGdp.push(g > 0 && hasE ? 100 * eG / g : NaN);
+    shares.earthPop.push(p > 0 && hasE ? 100 * eP / p : NaN);
+    shares.top5Gdp.push(g > 0 ? 100 * tops.reduce((a, x) => a + x, 0) / g : NaN);
+  }
+
+  const founded = e.events.filter((ev) => ev.type === EV['Colony founded'] && ev.year <= upTo).map((ev) => ev.year).sort((a, b) => a - b);
+
   const shocks: Trends['shocks'] = [];
   for (const cat of SHOCKS) {
     const counts = new Array<number>(NPERIODS).fill(0);
@@ -156,5 +175,5 @@ export function buildTrends(e: Engine): Trends | null {
       });
     shocks.push({ key: cat.key, label: cat.label, types: cat.types, counts, years, top });
   }
-  return { edges, upTo, moved, lost, hot, markets, growthFrom: sYear.length > 1 ? sYear[1] : Infinity, shocks };
+  return { edges, upTo, hot, shares, founded, markets, growthFrom: sYear.length > 1 ? sYear[1] : Infinity, shocks };
 }
