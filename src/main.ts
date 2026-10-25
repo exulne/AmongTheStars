@@ -32,6 +32,10 @@ import { wayOfWarHtml } from './ui/wayOfWar.ts';
 import { EraMood } from './view/eraMood.ts';
 import { ShipConsole } from './ship/console.ts';
 import { Voyage } from './ship/voyage.ts';
+import { Voice } from './ship/voice.ts';
+import { OracleAgent } from './ship/agent.ts';
+import { FuturePaths } from './ui/futurePaths.ts';
+import { toolSummary } from './sim/milestones.ts';
 import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionCss, faithCss, stageLegend, type ColorMode } from './view/colorModes.ts';
 import { names as naming } from './ui/names.ts';
 import { StreetView } from './view/street.ts';
@@ -1313,6 +1317,54 @@ search.onPick = (h) => {
     if (level !== 'planet' || ctx.body !== h.id) setLevel('planet', { kind: 'body', id: h.id }, () => { ctx.body = h.id; ctx.system = world.bodies[h.id].system; });
   }
 };
+
+// ------------------------------------------------------------------ what leads to…?
+
+const pathsVoice = new Voice();
+let pathsLinked = false, pathsWatch = 0;
+app.querySelector('#lifepick')!.insertAdjacentHTML('afterend', '<button id="paths" class="link" type="button" aria-expanded="false" title="Name a moment in the timeline and see the futures that reach it">What leads to…?</button>');
+const pathsBtn = app.querySelector<HTMLButtonElement>('#paths')!;
+const paths = new FuturePaths({
+  world, seed: () => sim.seed, voice: pathsVoice,
+  connect: () => { if (!pathsLinked) { pathsLinked = true; void pathsVoice.connect(); } },
+  show: showFuture,
+});
+app.append(paths.el);
+paths.onToggle = (on) => pathsBtn.setAttribute('aria-expanded', String(on));
+pathsBtn.addEventListener('click', () => paths.toggle());
+
+/** Fly the screen into a future at a calendar year; with play, run time from ~40y before up to it. */
+function showFuture(seed: number, calYear: number, o: { body?: number; system?: number; play?: boolean } = {}): void {
+  const y = Math.max(0, Math.min(calYear - 2040, 10000)), from = o.play ? Math.max(0, y - 40) : y;
+  pull = null;
+  cancelAnimationFrame(pathsWatch);
+  if (seed !== sim.seed) { seedInput.value = String(seed); startRun(seed); }
+  const g = runGen, front = sim.done ? 10000 : (sim.years[sim.frontier] ?? 0);
+  pendingYear = from > front ? from : null;
+  timeline.set(Math.min(from, front), true);
+  if (o.body !== undefined && o.body >= 0) search.onPick({ kind: 'body', id: o.body, name: world.bodies[o.body].name, sub: '' });
+  else if (o.system !== undefined) search.onPick({ kind: 'system', id: o.system, name: world.systems[o.system].name, sub: '' });
+  if (!o.play) return;
+  let started = false;
+  const watch = () => {
+    if (g !== runGen) return;   // the user switched future
+    if (!started && pendingYear === null && ctx.year >= from - 0.5) { started = true; if (!timeline.playing) timeline.toggle(); }
+    if (ctx.year >= y) { if (timeline.playing) timeline.toggle(); return; }
+    pathsWatch = requestAnimationFrame(watch);
+  };
+  pathsWatch = requestAnimationFrame(watch);
+}
+
+paths.setAgent(new OracleAgent(import.meta.env.VITE_ELEVEN_AGENT_ID || null, {
+  find_futures: async ({ goal }) => {
+    const r = await paths.ask(goal);
+    return 'error' in r ? `${r.error} Try: ${r.suggestions.join(', ')}.` : toolSummary(r.goal, r.results, r.tried);
+  },
+  watch_future: async ({ future, year }) => {
+    paths.watch(future, year);
+    return year ? `Showing future ${future} in ${year}.` : `Playing future ${future} up to the goal.`;
+  },
+}));
 
 // ------------------------------------------------------------------ the Starship
 
