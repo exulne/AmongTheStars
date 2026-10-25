@@ -461,7 +461,9 @@ export interface Economics {
 
 const G0 = 9.80665;
 
-function zeroCosts(): Costs { return Object.fromEntries(COST_KEYS.map((k) => [k, 0])) as Costs; }
+const ZERO_COSTS = Object.freeze(Object.fromEntries(COST_KEYS.map((k) => [k, 0])) as Costs);
+// called many times a step: copy a ready-made zero row instead of building one from the key list
+function zeroCosts(): Costs { return { ...ZERO_COSTS }; }
 function addCosts(into: Costs, c: Costs, k = 1): void { for (const key of COST_KEYS) into[key] += c[key] * k; }
 function sumCosts(c: Costs): number { let s = 0; for (const k of COST_KEYS) s += c[k]; return s; }
 const zeroProp = (): PropDetail => ({ methaneKg: 0, oxygenKg: 0, feedstock: 0, purification: 0, liquefaction: 0, oxygenEnergy: 0, conditioning: 0, boiloff: 0, margin: 0 });
