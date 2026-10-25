@@ -6,11 +6,14 @@
 //
 // Key handling (same pattern as voice.ts): in dev, put ELEVENLABS_API_KEY in
 // .env.local and the Vite proxy at /eleven adds it server-side, so it never
-// reaches the page. Otherwise a key typed into Settings lives in this browser's
-// localStorage only and rides on the signed-url request as xi-api-key — it is
-// never put on the WebSocket URL. With neither, a public agent works keyless.
+// reaches the page — ELEVEN_PROXY tells us the proxy holds one, and with no key
+// the proxy is never called at all. Otherwise a key typed into Settings lives
+// in this browser's localStorage only and rides on the signed-url request as
+// xi-api-key — it is never put on the WebSocket URL. With neither, a public
+// agent works keyless.
 
 import type { AgentToolName } from './agentSpec.ts';
+import { ELEVEN_PROXY } from './voice.ts';
 
 const LS_KEY = 'starship.elevenlabs.key';   // must match voice.ts
 
@@ -115,7 +118,7 @@ export class OracleAgent {
   /** Dev proxy first, then a browser-held key, then the keyless public-agent URL. */
   private async signedUrl(): Promise<string> {
     const id = encodeURIComponent(this.agentId!);
-    if (import.meta.env.DEV) {
+    if (import.meta.env.DEV && ELEVEN_PROXY) {
       try {
         const r = await fetch(`/eleven/v1/convai/conversation/get-signed-url?agent_id=${id}`);
         if (r.ok) { const u = (await r.json()).signed_url; if (u) return u; }

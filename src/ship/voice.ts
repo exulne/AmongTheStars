@@ -14,6 +14,10 @@ const LS_STT = 'starship.stt';
 export const DEFAULT_VOICE = 'JBFqnCBsd6RMkjVDRZzb';   // "George", a stock ElevenLabs voice
 const TTS_MODEL = 'eleven_flash_v2_5';                // cheapest and fastest model
 
+// set by vite.config.ts: whether the dev proxy holds a key (the key itself never reaches the page)
+declare const __ELEVEN_PROXY__: boolean | undefined;
+export const ELEVEN_PROXY = typeof __ELEVEN_PROXY__ !== 'undefined' && __ELEVEN_PROXY__;
+
 function ls(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
 function lsSet(k: string, v: string | null): void { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* private mode */ } }
 
@@ -49,7 +53,7 @@ export class Voice {
     this.mode = null;
     this.credits = null;
     const tries: ('proxy' | 'browser')[] = [];
-    if (import.meta.env.DEV) tries.push('proxy');
+    if (import.meta.env.DEV && ELEVEN_PROXY) tries.push('proxy');
     if (this.key) tries.push('browser');
     for (const m of tries) {
       this.mode = m;
