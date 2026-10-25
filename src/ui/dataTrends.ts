@@ -8,7 +8,7 @@
 import type { Annals } from '../sim/chronicle.ts';
 import { NPERIODS, periodOf } from '../sim/ledger.ts';
 import { GLOBAL_METRICS, GM } from '../sim/metrics.ts';
-import { buildReport, countSignal, marketsAt, metricSignal, REPORT_COLUMNS, reportTable, SECTIONS, seriesTable, topDestinationAt, turningPoints, type Ctx, type Dir, type MetricSignal, type ReportRow, type TrendSection } from '../sim/trendSignals.ts';
+import { buildReport, countSignal, marketsAt, metricSeries, metricSignal, REPORT_COLUMNS, reportTable, SECTIONS, seriesTable, topDestinationAt, turningPoints, type Ctx, type Dir, type MetricSignal, type ReportRow, type TrendSection } from '../sim/trendSignals.ts';
 import { MARKET_WINDOW, type Trends } from '../sim/trends.ts';
 import { AnalystChart, type AData, type ALine } from './analystChart.ts';
 import { globalSeries } from './charts.ts';
@@ -305,6 +305,21 @@ export class TrendsTab implements DataTab {
         waiting = !t;
         break;
       }
+      case 'adoption': {
+        const sim = this.host.sim;
+        const lag = def.metrics.find((m) => m.src === 'lag')!;
+        const ser = t ? metricSeries(lag, { years: sim.years, series: sim.series, n: Math.min(sim.years.length, sim.frontier + 1), t }) : null;
+        if (ser) lines = [{ label: 'News lag, 100-year mean (years)', color: '#f2f2f2', xs: ser.xs, ys: ser.ys }];
+        const tp = ser ? turningPoints(ser.xs, ser.ys, false) : null;
+        pts = [
+          this.at(ser, ser ? this.first(ser.ys, (v) => v >= 1) : -1, 'news first takes a year to arrive'),
+          this.at(ser, ser ? this.first(ser.ys, (v) => v >= 10) : -1, 'news takes a decade'),
+          this.at(ser, ser ? this.first(ser.ys, (v) => v >= 100) : -1, 'news takes a century'),
+          this.at(ser, tp?.max ?? -1, 'the longest news lag'),
+        ];
+        waiting = !t;
+        break;
+      }
       case 'climate': {
         const et = this.vals('earthTemp'), sl = this.vals('seaLevel'), tf = this.vals('terraformed');
         const te = et ? turningPoints(et.xs, et.ys, false) : null;
@@ -336,6 +351,7 @@ export class TrendsTab implements DataTab {
       return `${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)} %/yr`;
     }
     if (s.kind === 'count') return `${s.change! >= 0 ? '+' : ''}${s.change}`;
+    if (s.unit === 'yr' && Math.abs(s.change!) < 1) return `${s.change! >= 0 ? '+' : '-'}${this.val(Math.abs(s.change!), 'yr')}`;
     const suffix = s.unit === '%' ? ' pts' : s.unit === 'yr' || s.unit === 'K' || s.unit === 'm' || s.unit === 'ly' ? ` ${s.unit}` : '';
     return `${s.change! >= 0 ? '+' : ''}${fmtNum(s.change!)}${suffix}`;
   }
@@ -343,8 +359,12 @@ export class TrendsTab implements DataTab {
   /** A signal's level as text. */
   private level(s: MetricSignal): string { return this.val(s.to, s.unit); }
 
-  /** A value with its unit; 'K' here is kelvin (Earth's temperature), not fmtUnit's Kardashev rating. */
-  private val(v: number, unit: string): string { return unit === 'K' ? `${v.toFixed(2)} K` : fmtUnit(v, unit); }
+  /** A value with its unit; 'K' reads "1.07 K" (kelvin, not fmtUnit's Kardashev rating), and a sub-year 'yr' reads "36 days" or "8 min". */
+  private val(v: number, unit: string): string {
+    if (unit === 'K') return `${v.toFixed(2)} K`;
+    if (unit === 'yr' && Math.abs(v) < 1) return v * 365.25 < 1 ? `${Math.max(1, Math.round(v * 525960))} min` : `${Math.round(v * 365.25)} days`;
+    return fmtUnit(v, unit);
+  }
 
   /** The signal line of a data section at cursor year y. */
   private signalLine(def: TrendSection, y: number): string {

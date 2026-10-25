@@ -101,11 +101,57 @@ ok(!/faith|belief/i.test(JSON.stringify(t)), 'payload mentions no faith or belie
   for (const ev of main.events) if (ev.type === EV['Colony founded'] && ev.year <= t.upTo) fCnt++;
   for (let i = 1; i < t.founded.length; i++) if (t.founded[i] < t.founded[i - 1]) asc2 = false;
   ok(asc2 && t.founded.length === fCnt, `founded: sorted, ${t.founded.length} vs ${fCnt} events`);
+
+  // innovations: sorted years <= upTo, lags >= 0, and recomputable from events + history
+  const inn = t.innovations;
+  ok(inn.year.length === inn.lag.length, 'innovations: equal lengths');
+  let okI = true;
+  for (let i = 0; i < inn.year.length; i++) {
+    if (i && inn.year[i] < inn.year[i - 1]) okI = false;
+    if (inn.year[i] > t.upTo || !(inn.lag[i] >= 0)) okI = false;
+  }
+  ok(okI, 'innovations: sorted, years <= upTo, lags >= 0');
+  const INNO = new Set([EV.Technology, EV.Invention, EV.Breakthrough]);
+  const sampleGeo = (k: number) => {
+    const g = { x: [] as number[], y: [] as number[], z: [] as number[], pop: [] as number[], sum: 0 };
+    if (k < 0) return g;
+    for (let r = sStart[k]; r < sEnd[k]; r++) {
+      const b = main.hist[r * w + 1], pop = main.hist[r * w + popCol];
+      if (isShipBody(b) || !(pop > 0)) continue;
+      const sys = main.world.systems[main.world.bodies[b].system];
+      g.x.push(sys.x); g.y.push(sys.y); g.z.push(sys.z); g.pop.push(pop); g.sum += pop;
+    }
+    return g;
+  };
+  const wantI: { year: number; lag: number }[] = [];
+  const geoCache = new Map<number, ReturnType<typeof sampleGeo>>();
+  for (const ev of main.events) {
+    if (!INNO.has(ev.type) || ev.year > t.upTo || ev.body < 0 || isShipBody(ev.body) || ev.body >= main.world.bodies.length) continue;
+    const k = sampleAt(ev.year);
+    let g = geoCache.get(k);
+    if (!g) { g = sampleGeo(k); geoCache.set(k, g); }
+    if (!g.sum) continue;
+    const sys = main.world.systems[main.world.bodies[ev.body].system];
+    let lag = 0;
+    for (let i = 0; i < g.pop.length; i++) lag += g.pop[i] * Math.hypot(g.x[i] - sys.x, g.y[i] - sys.y, g.z[i] - sys.z);
+    wantI.push({ year: ev.year, lag: lag / g.sum });
+  }
+  ok(inn.year.length === wantI.length, `innovations: ${inn.year.length} vs ${wantI.length} qualifying events`);
+  // recompute the first, the middle and the last lag > 1
+  const picks = [0, Math.floor(inn.lag.length / 2), inn.lag.length - 1 - [...inn.lag].reverse().findIndex((l) => l > 1)];
+  let badL = 0;
+  for (const i of picks) {
+    if (i < 0) continue;
+    const d = inn.year[i] === wantI[i]?.year && Math.abs(inn.lag[i] - wantI[i].lag) < 1e-9 * Math.max(1, wantI[i].lag) ? 0 : 1;
+    badL += d;
+    if (d) console.log(`   lag[${i}] got ${inn.lag[i]} vs want ${wantI[i]?.lag}`);
+  }
+  ok(badL === 0, `innovations: recomputed lags match (${badL} bad)`);
 }
 
 // ---- section lineup ----
 {
-  ok(JSON.stringify(SECTIONS.map((s) => s.id)) === JSON.stringify(['market', 'costs', 'pipeline', 'risk', 'hotspots', 'logistics', 'workforce', 'shocks', 'climate']),
+  ok(JSON.stringify(SECTIONS.map((s) => s.id)) === JSON.stringify(['market', 'costs', 'pipeline', 'risk', 'hotspots', 'logistics', 'workforce', 'shocks', 'adoption', 'climate']),
     `SECTIONS order: ${SECTIONS.map((s) => s.id)}`);
   const banned = new Set(['leoCostPerKg', 'shortage', 'peopleTransported', 'happiness', 'gini', 'tfp', 'research', 'techs', 'divergence']);
   for (const sec of SECTIONS) for (const m of sec.metrics) {
@@ -154,6 +200,16 @@ ok(!/faith|belief/i.test(JSON.stringify(t)), 'payload mentions no faith or belie
   ok(cs && cs.to === 2 && cs.from === 1, `count @160: recent ${cs.to} (want 2: 120,160), before ${cs.from} (want 1: 110)`);
   const cs2 = metricSignal(cm, { ...ctx, t: fakeT }, 60)!;
   ok(cs2 && cs2.to === 2 && cs2.from === 1, `count @60: recent ${cs2.to} (want 2: 55,60), before ${cs2.from} (want 1: 10)`);
+  // lag: window means over (lo, hi]
+  const lagT = { ...fakeT, innovations: { year: [10, 40, 90, 140, 190], lag: [1, 3, 5, 7, 9] } } as unknown as Trends;
+  const lm: TrendMetric = { src: 'lag', key: 'newsLag', label: 'l', unit: 'yr', flat: 1 };
+  const ls = metricSignal(lm, { ...ctx, t: lagT }, 150)!;
+  // recent (100,150] = {140} → 7; before (50,100] = {90} → 5; change +2, flat 1 → rising
+  ok(ls && ls.to === 7 && ls.from === 5 && ls.change === 2 && ls.dir === 'rising', `lag @150: ${JSON.stringify(ls)}`);
+  // edge: year 90 is in (40,90] but not (90,140]
+  const ls2 = metricSignal(lm, { ...ctx, t: lagT }, 140)!;
+  ok(ls2 && ls2.to === 7 && ls2.from === 5, `lag @140 edges: ${JSON.stringify(ls2)}`);
+  ok(metricSignal(lm, { ...ctx, t: lagT }, 20) === null, 'lag @20: empty earlier window → null');
 }
 
 // ---- signalAt basics on a synthetic series (kept) ----
@@ -192,6 +248,11 @@ ok(!/faith|belief/i.test(JSON.stringify(t)), 'payload mentions no faith or belie
     tc.shares.earthGdp.push(42); tc.shares.earthPop.push(42); tc.shares.top5Gdp.push(42);
     tc.founded.push(t.upTo + 1);
     for (const c of tc.shocks) c.years.push(t.upTo + 1);
+    for (const [y, l] of [[Y + 0.5, 1e6], [Y + 10, 1e6]] as const) {   // after Y, kept sorted
+      let i = tc.innovations.year.length;
+      while (i > 0 && tc.innovations.year[i - 1] > y) i--;
+      tc.innovations.year.splice(i, 0, y); tc.innovations.lag.splice(i, 0, l);
+    }
     const before: Ctx = { years: main.years, series: main.series, n, t };
     const after: Ctx = { years: main.years, series: copy, n, t: tc };
     for (const sec of SECTIONS) for (const m of sec.metrics) {
@@ -335,7 +396,16 @@ ok(!/faith|belief/i.test(JSON.stringify(t)), 'payload mentions no faith or belie
 
 console.log(`  ${t.hot.length} hot entries; top 3: ${[...t.hot].sort((a, b) => b.n - a.n).slice(0, 3).map((h) => `${main.world.bodies[h.body].name} ${Math.round(h.n)}`).join('; ')}`);
 for (const c of t.shocks) console.log(`  ${c.key}: top ${c.top.slice(0, 2).map((p) => `${p.label} ×${p.n} @${Math.round(2040 + p.year)}`).join('; ') || 'none'}`);
-console.log(`  buildTrends ${btMs.toFixed(1)} ms; ${t.shocks.reduce((a, c) => a + c.years.length, 0)} shock-years; ${t.markets.length} market entries; ${t.founded.length} founded; ${t.shares.year.length} share samples`);
+console.log(`  buildTrends ${btMs.toFixed(1)} ms; ${t.shocks.reduce((a, c) => a + c.years.length, 0)} shock-years; ${t.markets.length} market entries; ${t.founded.length} founded; ${t.shares.year.length} share samples; ${t.innovations.year.length} innovations`);
+{
+  const n = main.st.step + 1;
+  const lm = SECTIONS.find((s) => s.id === 'adoption')!.metrics[0];
+  const ctx2: Ctx = { years: main.years, series: main.series, n, t };
+  for (const y of [500, 2000, 6000]) {
+    const s = metricSignal(lm, ctx2, y);
+    console.log(`  newsLag @${Math.round(2040 + y)}: ${s ? `${s.to.toFixed(2)} yr (was ${s.from.toFixed(2)}, ${s.dir})` : 'null'}`);
+  }
+}
 console.log(`  markets @${Math.round(2040 + 3000)}: ${marketsAt(t, 3000).slice(0, 3).map((m) => `${main.world.bodies[m.body].name} +${(m.now - m.then).toExponential(2)}$/yr`).join('; ') || 'none'}`);
 console.log(bad ? `${bad} trends checks failed` : 'trends: all checks ok');
 process.exit(bad ? 1 : 0);

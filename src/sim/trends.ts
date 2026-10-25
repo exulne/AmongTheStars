@@ -17,6 +17,9 @@ export interface Trends {
   /** per history sample: Earth's share of product and people, and the top-5 worlds' share of product, in % */
   shares: { year: number[]; earthGdp: number[]; earthPop: number[]; top5Gdp: number[] };
   founded: number[];           // every 'Colony founded' event year <= upTo, sorted
+  /** per innovation event: its year and its news lag — the people-weighted light-delay, in years,
+   *  from the event's system to where people lived at the time (sorted by year, stable) */
+  innovations: { year: number[]; lag: number[] };
   /** for each period p with growthFrom <= edges[p] <= upTo, up to 5 worlds with the largest gain in product
    *  (gdp, $/yr) since the history sample MARKET_WINDOW years before edges[p], or since the first sample
    *  when that window starts before the history (since = the compared sample's year). Only gain > 0.
@@ -151,6 +154,46 @@ export function buildTrends(e: Engine): Trends | null {
 
   const founded = e.events.filter((ev) => ev.type === EV['Colony founded'] && ev.year <= upTo).map((ev) => ev.year).sort((a, b) => a - b);
 
+  // innovations: each event's news lag is the people-weighted distance from its
+  // system to the worlds people lived on at that history sample
+  const INNO = new Set([EV.Technology, EV.Invention, EV.Breakthrough]);
+  const geoMemo = new Map<number, { x: number[]; y: number[]; z: number[]; pop: number[]; sum: number }>();
+  const geoAt = (k: number) => {
+    let g = geoMemo.get(k);
+    if (!g) {
+      g = { x: [], y: [], z: [], pop: [], sum: 0 };
+      const bySys = new Map<number, number>();   // people per system: worlds of one system are at one distance
+      if (k >= 0) for (let r = sStart[k]; r < sEnd[k]; r++) {
+        const b = e.hist[r * w + 1], pop = e.hist[r * w + popCol];
+        if (isShipBody(b) || !(pop > 0)) continue;
+        const s = e.world.bodies[b].system;
+        bySys.set(s, (bySys.get(s) ?? 0) + pop);
+      }
+      for (const [s, pop] of bySys) {
+        const sys = e.world.systems[s];
+        g.x.push(sys.x); g.y.push(sys.y); g.z.push(sys.z); g.pop.push(pop); g.sum += pop;
+      }
+      geoMemo.set(k, g);
+    }
+    return g;
+  };
+  const innovations: Trends['innovations'] = { year: [], lag: [] };
+  const lagMemo = new Map<number, number>(), nSys = e.world.systems.length; // (sample, system) → lag
+  for (const ev of e.events) {
+    if (!INNO.has(ev.type) || ev.year > upTo || ev.body < 0 || isShipBody(ev.body) || ev.body >= e.world.bodies.length) continue;
+    const k = sampleAt(ev.year), g = geoAt(k);
+    if (!g.sum) continue;
+    const si = e.world.bodies[ev.body].system, key = k * nSys + si;
+    let lag = lagMemo.get(key);
+    if (lag === undefined) {
+      const sys = e.world.systems[si];
+      let acc = 0;
+      for (let i = 0; i < g.pop.length; i++) acc += g.pop[i] * Math.hypot(g.x[i] - sys.x, g.y[i] - sys.y, g.z[i] - sys.z);
+      lagMemo.set(key, (lag = acc / g.sum));
+    }
+    innovations.year.push(ev.year); innovations.lag.push(lag);
+  }
+
   const shocks: Trends['shocks'] = [];
   for (const cat of SHOCKS) {
     const counts = new Array<number>(NPERIODS).fill(0);
@@ -175,5 +218,5 @@ export function buildTrends(e: Engine): Trends | null {
       });
     shocks.push({ key: cat.key, label: cat.label, types: cat.types, counts, years, top });
   }
-  return { edges, upTo, hot, shares, founded, markets, growthFrom: sYear.length > 1 ? sYear[1] : Infinity, shocks };
+  return { edges, upTo, hot, shares, founded, innovations, markets, growthFrom: sYear.length > 1 ? sYear[1] : Infinity, shocks };
 }

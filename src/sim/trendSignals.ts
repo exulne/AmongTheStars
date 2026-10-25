@@ -137,6 +137,7 @@ export type TrendMetric =
   | { src: 'series'; key: string; kind?: 'rate' | 'delta'; flat?: number; span?: number; level?: true }     // a GLOBAL_METRICS column; kind defaults to its log flag, flat to RATE_FLAT / DELTA_FLAT
   | { src: 'ratio'; key: string; label: string; unit: string; num: string; den: string; scale: number; flat: number; span?: number; level?: true } // scale·num/den of two columns per row (NaN when den <= 0), a delta
   | { src: 'sample'; key: 'earthGdpShare' | 'earthPopShare' | 'top5GdpShare'; label: string; unit: string; flat: number; span?: number; level?: true } // a share series from the trends payload, a delta
+  | { src: 'lag'; key: 'newsLag'; label: string; unit: 'yr'; flat: number; span?: number; level?: true }          // mean lag of the innovations in a window
   | { src: 'count'; key: string; label: string; unit: string; span?: number };                                // event years from the payload: the window against the one before
 export interface TrendSection { id: string; title: string; question: string; how: string; metrics: TrendMetric[]; chart: string[] | 'bespoke' | 'none'; log: boolean }
 export interface Ctx { years: ArrayLike<number>; series: ArrayLike<number>; n: number; t: Trends | null }
@@ -153,11 +154,25 @@ export function metricInfo(m: TrendMetric): { key: string; label: string; unit: 
   return { key: m.key, label: m.label, unit: m.unit, kind: 'delta', span };
 }
 
+/** The mean innovation lag with year in (lo, hi] — NaN when the window is empty. */
+function lagMean(inn: Trends['innovations'], lo: number, hi: number): number {
+  const ys = inn.year;
+  const upper = (v: number) => {
+    let a = 0, b = ys.length;
+    while (a < b) { const m = (a + b) >> 1; if (ys[m] <= v) a = m + 1; else b = m; }
+    return a;
+  };
+  let s = 0, n = 0;
+  for (let i = upper(lo); i < upper(hi); i++) { s += inn.lag[i]; n++; }
+  return n ? s / n : NaN;
+}
+
 const SHARE_KEY = { earthGdpShare: 'earthGdp', earthPopShare: 'earthPop', top5GdpShare: 'top5Gdp' } as const;
 
 /** The event years a count metric reads: 'founded' or `shock:<category>`. */
 function countYears(m: TrendMetric & { src: 'count' }, t: Trends): number[] | null {
   if (m.key === 'founded') return t.founded;
+  if (m.key === 'innovations') return t.innovations.year;
   if (m.key.startsWith('shock:')) return t.shocks.find((c) => c.key === m.key.slice(6))?.years ?? null;
   return null;
 }
@@ -171,6 +186,10 @@ export function metricSeries(m: TrendMetric, c: Ctx): { xs: number[]; ys: number
     return { xs, ys: xs.map((_, i) => { const d = c.series[i * NGM + den]; return d > 0 ? m.scale * c.series[i * NGM + num] / d : NaN; }) };
   }
   if (m.src === 'sample') return c.t ? { xs: c.t.shares.year, ys: c.t.shares[SHARE_KEY[m.key]] } : null;
+  if (m.src === 'lag') {
+    const span = m.span ?? WINDOW;
+    return c.t ? { xs, ys: xs.map((y) => lagMean(c.t!.innovations, y - span, y)) } : null;
+  }
   return null;
 }
 
@@ -186,6 +205,13 @@ export function metricSignal(m: TrendMetric, c: Ctx, y: number): MetricSignal | 
   if (m.src === 'series') {
     const s = signalAt(c.years, c.series, c.n, m.key, y, info.span, info.kind as 'rate' | 'delta', m.flat);
     return s ? { ...info, fromYear: s.fromYear, from: s.from, toYear: s.toYear, to: s.to, change: s.change, dir: s.dir } : null;
+  }
+  if (m.src === 'lag') {
+    if (!c.t) return null;
+    const to = lagMean(c.t.innovations, y - info.span, y), from = lagMean(c.t.innovations, y - 2 * info.span, y - info.span);
+    if (!Number.isFinite(to) || !Number.isFinite(from)) return null;
+    const change = to - from;
+    return { ...info, fromYear: y - info.span, from, toYear: y, to, change, dir: change > m.flat ? 'rising' : change < -m.flat ? 'falling' : 'flat' };
   }
   const xs = m.src === 'ratio' ? c.years : c.t?.shares.year;
   if (!xs) return null;
@@ -292,6 +318,16 @@ export const SECTIONS: TrendSection[] = [
       { src: 'count', key: 'shock:unrest', label: 'Unrest and breakaways', unit: 'events', span: 100 },
       { src: 'count', key: 'shock:growth', label: 'Growth', unit: 'events', span: 100 },
       { src: 'count', key: 'shock:innovation', label: 'Innovation', unit: 'events', span: 100 },
+    ],
+    chart: 'bespoke', log: false,
+  },
+  {
+    id: 'adoption', title: 'Technology adoption lag',
+    question: 'How long until new technology reaches customers?',
+    how: 'News travels at light speed: an innovation made on one world reaches people as many years later as they are light years away. Averaged over the innovations of each window and weighted by where people live.',
+    metrics: [
+      { src: 'lag', key: 'newsLag', label: 'News lag', unit: 'yr', flat: 1, span: 100, level: true },
+      { src: 'count', key: 'innovations', label: 'Innovations', unit: 'events', span: 100 },
     ],
     chart: 'bespoke', log: false,
   },
