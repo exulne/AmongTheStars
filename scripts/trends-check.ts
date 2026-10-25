@@ -54,6 +54,7 @@ for (const c of t.shocks) {
   const sum = c.counts.reduce((a, b) => a + b, 0);
   ok(sum === cnt, `${c.key}: counts sum ${sum} vs ${cnt} events`);
   ok(c.top.length <= 8 && c.top.every((p, i) => i === 0 || c.top[i - 1].n >= p.n), `${c.key}: top sorted, <= 8`);
+  ok(c.top.every((p) => p.from === t.edges[Math.max(0, Math.min(NPERIODS - 1, periodOf(p.year)))] && p.from <= p.year), `${c.key}: top periods start on a period boundary`);
 }
 
 ok(!/faith/i.test(JSON.stringify(t)), 'payload mentions no faith');
@@ -202,7 +203,7 @@ ok(!/faith/i.test(JSON.stringify(t)), 'payload mentions no faith');
       const c = t.shocks.find((x) => `shock:${x.key}` === r.key)!;
       if (r.runChange !== c.years.length) badR++;
       const top = c.top[0];
-      if (!(top ? r.peakYear === top.year : Number.isNaN(r.peakYear))) badR++;
+      if (!(top ? r.peakYear === top.from : Number.isNaN(r.peakYear))) badR++;
     } else {
       if (r.endYear !== main.years[n - 1] || !Number.isFinite(r.end) || !Number.isFinite(r.peakYear) || !Number.isFinite(r.troughYear)) badR++;
       if (r.kind === 'delta' && (!Number.isFinite(r.start) || !Number.isFinite(r.runChange))) badR++;

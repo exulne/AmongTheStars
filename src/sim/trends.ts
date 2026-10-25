@@ -9,7 +9,7 @@ import { FLOW, NPERIODS, isShipBody, periodOf, periodStart } from './ledger.ts';
 import { HIST_FIELDS } from './metrics.ts';
 
 export const MARKET_WINDOW = 100;
-export interface TrendPoint { year: number; body: number; n: number; label: string }
+export interface TrendPoint { year: number; from: number; body: number; n: number; label: string } // year: the period's first event; from: the period's start
 export interface Trends {
   edges: number[];           // periodStart(p) for p = 0..NPERIODS; bucket p = [edges[p], edges[p+1])
   upTo: number;              // year the run has reached
@@ -152,7 +152,7 @@ export function buildTrends(e: Engine): Trends | null {
       .slice(0, 8)
       .map(([p, n]) => {
         const ev = first.get(p)!;
-        return { year: ev.year, body: ev.body, n, label: EVENT_NAMES[ev.type] };
+        return { year: ev.year, from: edges[p], body: ev.body, n, label: EVENT_NAMES[ev.type] };
       });
     shocks.push({ key: cat.key, label: cat.label, types: cat.types, counts, years, top });
   }

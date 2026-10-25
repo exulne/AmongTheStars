@@ -201,7 +201,7 @@ export function buildReport(years: ArrayLike<number>, series: ArrayLike<number>,
           section: sec.title, key: `shock:${c.key}`, label: c.label, unit: 'events', kind: 'count',
           startYear: NaN, start: NaN, endYear: NaN, end: NaN,
           runChange: c.years.length, lastChange: s ? s.recent - s.before : null, lastDir: s?.dir ?? 'flat',
-          peakYear: top ? top.year : NaN, peak: top ? top.n : NaN,
+          peakYear: top ? top.from : NaN, peak: top ? top.n : NaN,
           troughYear: NaN, trough: NaN, riseYear: NaN, fallYear: NaN,
         });
       }
