@@ -516,6 +516,18 @@ function goalBodies(goal: Goal, world: World): number[] {
   return [];
 }
 
+/** The bodies a stage goal scans, as a mask over body ids — built once per goal+world. */
+const scopeMasks = new WeakMap<Goal, Uint8Array>();
+function scopeMask(goal: Goal, world: World): Uint8Array {
+  let m = scopeMasks.get(goal);
+  if (!m) {
+    m = new Uint8Array(world.bodies.length);
+    for (const b of goalBodies(goal, world)) m[b] = 1;
+    scopeMasks.set(goal, m);
+  }
+  return m;
+}
+
 /** Peak stage and population ever seen per body, kept by reached() so progress() can say how close a miss came. */
 const peaks = new WeakMap<Engine, { stage: Int16Array; pop: Float64Array }>();
 function trackPeaks(e: Engine): { stage: Int16Array; pop: Float64Array } {
@@ -546,13 +558,15 @@ function eventMatch(goal: Goal, ev: SimEvent): boolean {
   return goal.body === undefined || ev.body === goal.body;
 }
 
-/** Called after every step: has this future reached the goal yet? */
-export function reached(goal: Goal, e: Engine): boolean {
-  trackPeaks(e);
+/** The goal's truth at the current state — no peak tracking; the tracker calls this inside its own loop. */
+function truthNow(goal: Goal, e: Engine): boolean {
   const st = e.st, S = st.S;
   switch (goal.kind) {
     case 'stage': {
-      for (const b of goalBodies(goal, e.world)) {
+      const mask = scopeMask(goal, e.world);
+      for (let i = 0, n = st.nSettled; i < n; i++) {
+        const b = st.settled[i];
+        if (!mask[b]) continue;
         const s = S[b * NF + F.stage];
         if (s >= goal.stage! && isAlive(s)) return true;
       }
@@ -573,6 +587,12 @@ export function reached(goal: Goal, e: Engine): boolean {
     case 'pop': return S[goal.body! * NF + F.pop] >= goal.threshold!;
     case 'event': return e.events.some((ev) => eventMatch(goal, ev));
   }
+}
+
+/** Called after every step: has this future reached the goal yet? */
+export function reached(goal: Goal, e: Engine): boolean {
+  trackPeaks(e);
+  return truthNow(goal, e);
 }
 
 // ------------------------------------------------------------------ reading the road
@@ -825,7 +845,7 @@ export class ChainTracker {
     if (this.done) return true;
     const e = this.e, t = e.st.step;
     trackPeaks(e);
-    const nowTruth = this.chain.stages.map((s) => s.map((g) => g.kind === 'event' ? false : reached(g, e)));
+    const nowTruth = this.chain.stages.map((s, si) => s.map((g) => si < this.stage || g.kind === 'event' ? false : truthNow(g, e)));
     while (this.stage < this.chain.stages.length) {
       const s = this.stage, stage = this.chain.stages[s];
       let all = true;

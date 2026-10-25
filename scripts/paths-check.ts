@@ -228,6 +228,7 @@ if (poolOk) {
     chainFrom([gMars, gVenus, gUpload], ['then', 'and']),           // 3-part chain
     chainFrom([gDyson, gVenus], ['then']),                          // two-stage chain
     chainFrom([gWar, gIndep], ['and']),                             // two event parts, one stage
+    chainFrom([gVenusPop, gDyson, gUpload], ['then', 'then']),       // same-step cascade: stages 2-3 already true at open
     chainOf(gTri),                                                // named-galaxy endpoint (miss wording)
     chainOf(gAnyGal),                                               // galaxy endpoint run
   ];
