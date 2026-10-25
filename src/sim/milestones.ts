@@ -457,10 +457,9 @@ export function parseEvent(text: string, world: World): ParseResult {
   if (unaccounted.length) {
     let cands = TYPO_CANDS.get(world);
     if (!cands) { cands = typoCands(world); TYPO_CANDS.set(world, cands); }
-    const picks: string[][] = [];
-    let bad: string | null = null;
+    const picks: [string, string][] = [], noCand: string[] = [];
     for (const w of unaccounted) {
-      if (w.length < 4) { bad = w; break; }
+      if (w.length < 4) { noCand.push(w); continue; }
       const lim = w.length <= 6 ? 1 : 2;
       let best = Infinity, found: string[] = [];
       for (const c of cands) {
@@ -472,16 +471,29 @@ export function parseEvent(text: string, world: World): ParseResult {
       else if (found.length > 1) {
         const list = found.slice(0, 3);
         const offer = list.length === 2 ? `${list[0]} or ${list[1]}` : `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}`;
-        return { error: `Did you mean ${offer}?`, suggestions: list.map((c) => text.replace(new RegExp(`\\b${w}\\b`, 'i'), c)) };
-      } else { bad = w; break; }
+        return { error: `Did you mean ${offer}?`, suggestions: list.map((c) => tokens.map((w2) => (w2 === w ? c : w2)).join(' ')) };
+      } else noCand.push(w);
     }
-    if (bad) {
-      const rest = tokens.filter((w) => !unaccounted.includes(w)).join(' ');
+    if (noCand.length) {
+      const pick = new Map(picks);
+      const rest = tokens.map((w) => pick.get(w) ?? (noCand.includes(w) ? '' : w)).filter(Boolean).join(' ');
       const rr = parseGoal(rest, world);
-      if ('goal' in rr) return { error: `I understood "${rr.goal.label}" but not "${unaccounted.join(' ')}".`, suggestions: [] };
+      if ('goal' in rr) return { error: `I understood "${rr.goal.label}" but not "${noCand.join(' ')}".`, suggestions: [] };
       return { error: `I can't read a moment in time out of "${text}".`, suggestions: [...SUGGESTIONS] };
     }
-    for (const [w, c] of picks) { corrected = corrected.replace(new RegExp(`\\b${w}\\b`, 'i'), c); notes.push(`read "${w}" as "${c}"`); }
+    const pick = new Map(picks);
+    corrected = tokens.map((w) => pick.get(w) ?? w).join(' ');
+    for (const [w, c] of picks) notes.push(`read "${w}" as "${c}"`);
+    // one re-accounting on the corrected text: anything still unread is named
+    const t2 = ` ${wordsToNumbers(corrected.toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9.,\s]/g, ' ')).replace(/\s+/g, ' ').trim()} `;
+    const pw2 = new Set([...(findPlace(t2, world)?.words ?? []), ...(findGalaxy(t2)?.words ?? [])]);
+    const left = t2.trim().split(/\s+/).filter((w) => !accounted(w, pw2));
+    if (left.length) {
+      const rest = t2.trim().split(/\s+/).filter((w) => !left.includes(w)).join(' ');
+      const rr = parseGoal(rest, world);
+      if ('goal' in rr) return { error: `I understood "${rr.goal.label}" but not "${left.join(' ')}".`, suggestions: [] };
+      return { error: `I can't read a moment in time out of "${text}".`, suggestions: [...SUGGESTIONS] };
+    }
   }
   const r = parseGoal(corrected, world);
   if ('error' in r) return r;
