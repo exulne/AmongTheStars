@@ -39,6 +39,10 @@ export interface ExEntry {
   selectAs?(i: number, c: ExCtx): SelectAs | null;
   /** turn a raw pick index (a slot in a buffer) into the stable id explain/locate use */
   idOf?(i: number): number;
+  /** zooming into it follows this point (default: `locate`); given where the camera is, for long things like a ring */
+  anchor?(i: number, from: THREE.Vector3): ((out: THREE.Vector3) => THREE.Vector3 | null) | null;
+  /** the coarse object drawn for it, hidden while its close-up model shows */
+  objectOf?(i: number): THREE.Object3D | null;
 }
 
 const reg = new Map<string, ExEntry>();

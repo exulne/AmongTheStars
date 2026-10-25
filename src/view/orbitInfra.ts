@@ -26,6 +26,7 @@ import { pointsMaterial } from './textures.ts';
 import { REDUCED_MOTION } from './timeLook.ts';
 
 const R0 = 10; // the planet's radius in the view
+const RING_R = 11.6; // the orbital ring's radius
 const techName = (id: string) => TECHS.find((t) => t.id === id)?.name ?? id;
 
 const METAL = new THREE.MeshStandardMaterial({ color: 0xd4dae2, metalness: 0.5, roughness: 0.35, emissive: 0x2a3038, emissiveIntensity: 0.6 });
@@ -312,7 +313,7 @@ export class OrbitInfra {
   /** A low orbital ring round the equator, its spokes down to the ground, cars running along it. */
   private buildRing(): void {
     const g = new THREE.Group();
-    const R = 11.6;
+    const R = RING_R;
     const band = new THREE.Mesh(new THREE.TorusGeometry(R, 0.05, 10, 320), new THREE.MeshStandardMaterial({ color: 0xb9c2cc, metalness: 0.7, roughness: 0.35, emissive: 0x335577, emissiveIntensity: 0.5 }));
     band.rotation.x = Math.PI / 2;
     const glow = new THREE.Mesh(new THREE.TorusGeometry(R, 0.14, 8, 320), new THREE.MeshBasicMaterial({ color: 0x5fb6ff, transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false }));
@@ -532,6 +533,14 @@ export class OrbitInfra {
         explain: (i, c) => this.card(kind, i, body(), c),
         name: (i, c) => this.card(kind, i, body(), c).title,
         locate: (i, out) => list()[i]?.getWorldPosition(out) ?? null,
+        objectOf: (i) => (kind === 'oringl' ? null : list()[i] ?? null),
+        // the ring is a whole circle: zoom into the stretch of it nearest the camera, and stay on it as the planet turns
+        anchor: kind === 'oringl' ? (_i, from) => {
+          const ring = this.ring;
+          if (!ring) return null;
+          const local = ring.worldToLocal(from.clone()).setY(0).setLength(RING_R);
+          return (out) => (this.ring === ring ? out.copy(local).applyMatrix4(ring.matrixWorld) : null);
+        } : undefined,
       });
       addCpuSet({ kind, obj: host, prio: 4, enabled: () => list().length > 0, hit: (p) => nearestPoint(list().length, (i, out) => list()[i].getWorldPosition(out), p, () => 16) });
     }
@@ -542,6 +551,7 @@ export class OrbitInfra {
         explain: (i, c) => this.card('odef', i % n, body(), c),
         name: (i, c) => this.card('odef', i % n, body(), c).title,
         locate: (i, out) => pointWorld(pts, i, out),
+        objectOf: () => this.defence, // the coarse hulls give way to the close-up's
       });
       addGpuSet({ kind: 'odef', points: pts, prio: 3, minLum: 0.05, pickPx: 7 });
     }
@@ -552,6 +562,7 @@ export class OrbitInfra {
         explain: (i, c) => this.card('omine', i, body(), c),
         name: (i, c) => this.card('omine', i, body(), c).title,
         locate: (i, out) => pointWorld(pts, i, out),
+        objectOf: () => this.rocks, // the coarse rocks give way to the close-up's
       });
       addGpuSet({ kind: 'omine', points: pts, prio: 3, minLum: 0.05, pickPx: 7 });
     }
