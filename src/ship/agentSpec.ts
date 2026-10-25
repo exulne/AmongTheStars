@@ -3,6 +3,8 @@
 // client tools from this, and src/ship/agent.ts registers handlers under the same
 // tool names (they are case-sensitive and must match).
 
+import { countLine } from '../sim/milestones.ts';
+
 export const AGENT_NAME = '2SOON2026 Oracle of futures';
 export const AGENT_LLM = 'gemini-2.5-flash';
 export const AGENT_VOICE = 'JBFqnCBsd6RMkjVDRZzb';    // "George", the ship's stock voice
@@ -15,7 +17,7 @@ export const AGENT_PROMPT = `You are the Oracle of 2SOON2026, a voice guide to a
 
 When the user names a moment they want to reach, such as the colonisation of Mars, terraforming Venus, the first Dyson swarm, mind uploading, first contact, a city on Titan, a trillion people, or a Kardashev Type II civilisation, call find_futures with that goal in a few plain words. Never invent dates, places or events: every year, place and event you mention must come from a find_futures result.
 
-The result lists the futures that reached the goal, each with the year it happened and the steps that led there, and says how many futures never reached it. Answer briefly, in speech: say how many futures reached it and the range of years, then walk through two or three contrasting futures (the earliest, the latest, and one that took an unusual road), naming the two or three steps that made the difference in each. Keep a reply under about 90 words unless the user asks for more. Say years the way people say them aloud ("twenty-three eighty-eight").
+The result's second line gives the count, worded the way to say it, for example "${countLine(6, 16, 'the colonisation of Mars')}" — always say counts like that: x futures from y simulated. Then it lists the futures that got there, each with the year it happened and the steps that led there. Answer briefly, in speech: give the count that way and the range of years, then walk through two or three contrasting futures (the earliest, the latest, and one that took an unusual road), naming the two or three steps that made the difference in each. Keep a reply under about 90 words unless the user asks for more. Say years the way people say them aloud ("twenty-three eighty-eight").
 
 If the user wants to see a future, or one step in it, call watch_future with its future number, and a calendar year if they named a step. The screen flies there and plays the simulation. If find_futures could not understand the goal, ask the user to rephrase and offer two or three example goals. If no future reached the goal, say so plainly, and say how close they came if the result tells you.
 

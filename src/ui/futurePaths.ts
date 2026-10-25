@@ -3,8 +3,8 @@
 // its population, and buttons to watch, hear or enter that future.
 
 import './paths.css';
-import { Pathfinder, PATHS_WANT } from './pathfinder.ts';
-import { compareFutures, narrateFuture, narrateOverview, parseGoal, type FutureResult, type Goal, type Step } from '../sim/milestones.ts';
+import { Pathfinder } from './pathfinder.ts';
+import { compareFutures, countLine, narrateFuture, narrateOverview, parseGoal, type FutureResult, type Goal, type Step } from '../sim/milestones.ts';
 import type { World } from '../sim/world.ts';
 import type { Voice } from '../ship/voice.ts';
 import type { OracleAgent } from '../ship/agent.ts';
@@ -167,14 +167,15 @@ export class FuturePaths {
         this.results.push(r);
         this.tried++;
         const got = this.results.filter((x) => x.reached).length;
-        this.status(`Simulating futures… ${got} of ${PATHS_WANT} found, ${this.tried} tried`);
+        this.status(countLine(got, this.tried, pr.goal.label, { live: true }));
         this.render();
       }, (results, tried) => {
         if (seq !== this.seq) return resolve({ goal: pr.goal, results: [], tried });
         this.results = results;
         this.tried = tried;
         const got = results.filter((r) => r.reached);
-        this.status(got.length ? `${got.length} futures reach ${pr.goal.label}.` : `No future reached ${pr.goal.label}.`);
+        const near = results.filter((r) => !r.reached).map((r) => r.progress).filter(Boolean)[0];
+        this.status(countLine(got.length, tried, pr.goal.label, { near }));
         this.render(true);
         if (this.opts.voice.speak && !this.agent?.active) void this.opts.voice.say(narrateOverview(pr.goal, results, tried));
         resolve({ goal: pr.goal, results, tried });
@@ -225,9 +226,9 @@ export class FuturePaths {
       this.spark(card.querySelector('canvas')!, r);
     }
     const missed = this.results.filter((r) => !r.reached);
-    if (final && missed.length) {
-      const near = missed.map((r) => r.progress).filter(Boolean).slice(0, 2);
-      this.footerEl.textContent = `${got.length} of ${this.tried} futures reached it; the rest never did by 12040.${near.length ? ` Closest: ${near.join('; ')}.` : ''}`;
+    if (final && got.length && missed.length) {
+      const near = [...new Set(missed.map((r) => r.progress).filter(Boolean))].slice(0, 2);
+      this.footerEl.textContent = `The others never got there by 12040.${near.length ? ` Closest: ${near.join('; ')}.` : ''}`;
     }
   }
 

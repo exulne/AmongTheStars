@@ -5,7 +5,7 @@ import { Engine, YEAR0 } from '../src/sim/engine.ts';
 import { STAGE, TECHS } from '../src/sim/catalog.ts';
 import { EV } from '../src/sim/catalog.ts';
 import { buildWorld } from '../src/sim/world.ts';
-import { compareFutures, narrateOverview, parseGoal, reached, resultOf, toolSummary, type FutureResult, type Goal } from '../src/sim/milestones.ts';
+import { compareFutures, countLine, huntLine, narrateOverview, parseGoal, reached, resultOf, toolSummary, type FutureResult, type Goal } from '../src/sim/milestones.ts';
 
 let fails = 0;
 const fail = (m: string) => { fails++; console.log('  FAIL', m); };
@@ -46,6 +46,19 @@ for (const bad of ['terraform jupiter', 'banana']) {
   if ('error' in r) ok(`"${bad}" -> error: ${r.error} (try: ${r.suggestions.join(', ')})`);
   else fail(`"${bad}" should not parse, got ${JSON.stringify(r.goal)}`);
 }
+
+// ------------------------------------------------------------------ countLine / huntLine
+
+console.log('\ncountLine / huntLine');
+const eq = (name: string, got: unknown, want: unknown) => JSON.stringify(got) === JSON.stringify(want) ? ok(`${name}: ${JSON.stringify(got)}`) : fail(`${name}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+eq('countLine 6', countLine(6, 16, 'the colonisation of Mars'), '6 futures from 16 simulated lead to the colonisation of Mars.');
+eq('countLine 1', countLine(1, 16, 'the colonisation of Mars'), '1 future from 16 simulated leads to the colonisation of Mars.');
+eq('countLine 0 near', countLine(0, 16, 'the colonisation of Mars', { near: 'Mars was never settled' }), '0 futures from 16 simulated lead to the colonisation of Mars. The closest: Mars was never settled.');
+eq('countLine live 4', countLine(4, 9, 'the colonisation of Mars', { live: true }), '4 futures from 9 simulated so far lead to the colonisation of Mars.');
+eq('countLine live 1', countLine(1, 9, 'the colonisation of Mars', { live: true }), '1 future from 9 simulated so far leads to the colonisation of Mars.');
+eq('huntLine 3', huntLine(3, 16), 'Found 3 other futures (from 16 more simulated).');
+eq('huntLine 1', huntLine(1, 16), 'Found 1 other future (from 16 more simulated).');
+eq('huntLine 0', huntLine(0, 16), 'Found 0 other futures (from 16 more simulated).');
 
 // ------------------------------------------------------------------ run futures to the goals
 // Probe values (calendar years), engines with no war minds and no ledger:

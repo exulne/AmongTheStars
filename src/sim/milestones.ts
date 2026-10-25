@@ -684,23 +684,30 @@ export function compareFutures(goal: Goal, rs: FutureResult[]): { medianYear: nu
 
 // ------------------------------------------------------------------ narration
 
+/** The one way a count is said, everywhere (panel, speech, Oracle): "6 futures from 16 simulated lead to …". */
+export function countLine(x: number, y: number, label: string, o: { live?: boolean; near?: string } = {}): string {
+  const one = x === 1;
+  let s = `${x} ${one ? 'future' : 'futures'} from ${y} simulated${o.live ? ' so far' : ''} ${one ? 'leads' : 'lead'} to ${label}.`;
+  if (x === 0 && !o.live && o.near) s += ` The closest: ${o.near}.`;
+  return s;
+}
+
+/** An extension's hunt: "Found 3 other futures (from 16 more simulated)." */
+export function huntLine(z: number, n: number): string {
+  return `Found ${z} other ${z === 1 ? 'future' : 'futures'} (from ${n} more simulated).`;
+}
+
 /** Two or three sentences on the whole set of futures, for speech. */
 export function narrateOverview(goal: Goal, rs: FutureResult[], tried: number): string {
   const got = rs.filter((r) => r.reached && r.year !== undefined);
-  if (!got.length) {
-    const near = rs.map((r) => r.progress).filter(Boolean)[0];
-    return `None of the ${tried} futures I ran reached ${goal.label}.${near ? ` The closest: ${near}.` : ''}`;
-  }
+  const missed = rs.filter((r) => !r.reached);
+  const near = missed.map((r) => r.progress).filter(Boolean)[0];
+  if (!got.length) return countLine(0, tried, goal.label, { near });
   const { medianYear, minYear, maxYear, highlights } = compareFutures(goal, rs);
-  const spread = minYear === maxYear ? `all of them in ${minYear}` : `between ${minYear} and ${maxYear}, the middle future in ${medianYear}`;
-  let s = `${got.length} of ${tried} futures reach ${goal.label}, ${spread}.`;
+  let s = `${countLine(got.length, tried, goal.label)} ${minYear === maxYear ? `All of them in ${minYear}.` : `They got there between ${minYear} and ${maxYear}, the middle one in ${medianYear}.`}`;
   const withH = got.find((r) => highlights.get(r.seed));
   if (withH) s += ` One stands out: future ${withH.seed}, where ${highlights.get(withH.seed)!}.`;
-  const missed = tried - got.length;
-  if (missed > 0) {
-    const near = rs.filter((r) => !r.reached).map((r) => r.progress).filter(Boolean)[0];
-    s += ` ${missed} never got there${near ? ` — the closest: ${near}` : ''}.`;
-  }
+  if (missed.length) s += ` The others never got there${near ? ` — the closest: ${near}` : ''}.`;
   return s;
 }
 
@@ -720,16 +727,13 @@ export function narrateFuture(goal: Goal, r: FutureResult, highlight?: string): 
 /** The plain-text answer handed back to the conversational agent. */
 export function toolSummary(goal: Goal, rs: FutureResult[], tried: number): string {
   const got = rs.filter((r) => r.reached && r.year !== undefined).sort((a, b) => a.year! - b.year!);
+  const missed = rs.filter((r) => !r.reached);
+  const near = missed.map((r) => r.progress).filter(Boolean)[0];
   const lines: string[] = [`Goal: ${goal.label} (${goal.detail}).`];
   const { medianYear, minYear, maxYear, highlights } = compareFutures(goal, rs);
+  lines.push(countLine(got.length, tried, goal.label, { near }));
   if (got.length) {
-    let l = `${got.length} of ${tried} futures reached it, ${minYear === maxYear ? `in ${minYear}` : `between ${minYear} and ${maxYear}`} (median ${medianYear}).`;
-    const missed = rs.filter((r) => !r.reached);
-    if (missed.length) {
-      const near = missed.map((r) => r.progress).filter(Boolean)[0];
-      l += ` ${missed.length} never did by 12040${near ? `; the closest: ${near}` : ''}.`;
-    }
-    lines.push(l);
+    lines.push(`${minYear === maxYear ? `They got there in ${minYear}` : `They got there between ${minYear} and ${maxYear}`} (median ${medianYear}).${missed.length ? ` The others never did by 12040${near ? `; the closest: ${near}` : ''}.` : ''}`);
     for (const r of got) {
       const d = r.year! - medianYear;
       const delta = d === 0 ? 'at the median' : `${Math.abs(d)} years ${d < 0 ? 'before' : 'after'} the median`;
@@ -739,9 +743,6 @@ export function toolSummary(goal: Goal, rs: FutureResult[], tried: number): stri
       const h = highlights.get(r.seed);
       lines.push(`Future ${r.seed}: ${r.year} (${delta}). Steps: ${list}.` + (h ? ` What set it apart: ${h}.` : ''));
     }
-  } else {
-    const near = rs.map((r) => r.progress).filter(Boolean);
-    lines.push(`None of the ${tried} futures tried reached it by 12040.${near.length ? ` The closest: ${near[0]}.` : ''}`);
   }
   return lines.join('\n');
 }
