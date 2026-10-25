@@ -11,6 +11,7 @@
     "check": "node scripts/check.ts && node scripts/people-check.ts && node scripts/econ-check.ts && node scripts/geo-check.ts",
     "check:geo": "node scripts/geo-check.ts",
     "check:paths": "node scripts/paths-check.ts",
+    "eleven:agent": "node scripts/eleven-agent.ts",
     "check:econ": "node scripts/econ-check.ts",
     "check:people": "node scripts/people-check.ts",
     "check:data": "node scripts/query-check.ts && node scripts/data-check.ts",
