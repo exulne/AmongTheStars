@@ -48,7 +48,8 @@ const KNOBS: { path: string; scale: number; unit: string }[] = [
 const SMOOTH = 100;
 const TREND = [{ label: 'All transport', metric: 'transportSpend', color: '#3987e5' }, { label: 'Scheduled passenger services', metric: 'serviceSpend', color: '#d95926' }];
 const money = (v: number) => (Number.isFinite(v) ? `$${fmtNum(v)}` : '—');
-const share = (v: number) => (v === 0 ? '0%' : v < 0.01 ? `${v.toPrecision(2)}%` : `${v.toFixed(2)}%`);
+// tiny shares as "1 part in 300 million" rather than "3.3e-7%"
+const share = (v: number) => (v === 0 ? '0%' : v < 1e-4 ? `1 part in ${fmtNum(100 / v)}` : v < 0.01 ? `${v.toPrecision(2)}%` : `${v.toFixed(2)}%`);
 const kg = (v: number) => (v >= 1000 ? `${fmtNum(v / 1000)} t` : `${fmtNum(v)} kg`);
 
 export class EconTab implements DataTab {
