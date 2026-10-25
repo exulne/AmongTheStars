@@ -423,3 +423,25 @@ input.tl-big:focus { outline: none; border-bottom-color: var(--accent); }
   .ship-console { left: 0; right: 0; width: auto; max-height: 38vh; bottom: calc(var(--bottom-h, 200px) + 2.9rem); background: rgba(4, 4, 7, 0.95); }
   .aboard .inspector.open ~ .ship-console { display: none; }
 }
+
+/* ---------------------------------------------------------------- demo tour (#demo, src/features/demo.ts) */
+body.demo .intro p, body.demo .crumbs, body.demo .here, body.demo .run, body.demo .legend, body.demo .zoom-ctl,
+body.demo .travel, body.demo .tooltip, body.demo .inspector, body.demo .ask, body.demo .app-disclaimer, body.demo .era-banner,
+body.demo .sel-ring, body.demo .bottom, body.demo .data, body.demo .ship-console, body.demo .labels, body.demo [class*="orb"] { display: none !important; }
+body.demo.demo-tl .bottom { display: block !important; }
+body.demo.demo-tl .bottom .charts, body.demo.demo-tl .bottom .charts-toggles { display: none !important; }
+body.demo.demo-desk .data { display: flex !important; }
+body.demo.demo-legend .legend { display: block !important; }
+body.demo.demo-legend .legend-modes, body.demo.demo-legend .legend-keys { display: none !important; }
+body.demo .intro h1 { transition: opacity 0.8s ease; }
+body.demo.demo-title .intro h1 { opacity: 0; }
+.demo-cap {
+  position: fixed; left: 50%; bottom: 7vh; transform: translateX(-50%); z-index: 50; pointer-events: none;
+  max-width: min(46rem, 80vw); text-align: center; font-size: clamp(1rem, 1.6vw, 1.5rem); line-height: 1.35; letter-spacing: 0.01em;
+  color: #f2f2f2; text-shadow: 0 1px 12px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.6);
+  padding: 0.5em 1.1em; border-radius: 999px; background: rgba(4, 6, 14, 0.55); backdrop-filter: blur(6px);
+}
+body.demo.demo-title .demo-cap { background: none; backdrop-filter: none; }
+body.demo.demo-tl .demo-cap { bottom: 16vh; }
+body.demo.demo-desk .demo-cap { bottom: 4vh; }
+body.demo.demo-title .demo-cap { bottom: auto; top: 44%; font-size: clamp(1.4rem, 2.6vw, 2.4rem); }

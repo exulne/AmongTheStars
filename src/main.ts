@@ -54,6 +54,9 @@ import { GalaxyView, LocalView, LEVELS, PLANET_SUN, PlanetView, SystemView, Univ
 import type { AppApi } from './app/api.ts';
 import { applyUrlParts, setHashWriter, urlPartTokens } from './app/urlState.ts';
 import { installFollow } from './features/follow.ts';
+import { installDemo, type DemoHost } from './features/demo.ts';
+
+const DEMO = /^#demo\b/.test(location.hash) || new URLSearchParams(location.search).has('demo');
 
 // ------------------------------------------------------------------ DOM
 
@@ -178,6 +181,7 @@ function resize(): void {
  */
 function frameOffset(): void {
   const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (DEMO) { camera.clearViewOffset(); camera.updateProjectionMatrix(); return; } // the tour hides the panels: centre everything
   if (!w || !h || !inspectorEl || !bottomEl) { camera.updateProjectionMatrix(); return; }
   const ir = inspectorEl.getBoundingClientRect();
   const side = ir.height > h * 0.5 ? ir.width : 0; // a bottom sheet on phones takes no side room
@@ -1354,7 +1358,7 @@ sim.onProgress = () => {
 
 // ------------------------------------------------------------------ URL: #future3-y1360-b123-lplanet
 
-let pendingYear: number | null = null, hashTimer = 0, leaving = false;
+let pendingYear: number | null = null, hashTimer = 0, leaving = DEMO;
 const REF_CODE: Record<string, string> = { body: 'b', system: 's', galaxy: 'g', humanspace: 'h', city: 'c' };
 function writeHash(): void {
   clearTimeout(hashTimer);
@@ -1731,9 +1735,15 @@ function arrived(y: number, done: (y: number) => void, tries = 0): void {
 }
 
 let last = performance.now(), frame = 0, lastYear = 0, yearRate = 0;
+// demo mode (src/features/demo.ts): a virtual clock may take the frames over, and pins the camera after the rig
+let demoManual = false, demoCam: (() => void) | null = null;
 function loop(now: number): void {
   const dt = Math.min(0.1, (now - last) / 1000), wall = Math.min(1, (now - last) / 1000); // trips run on the clock, even on a slow machine
   last = now;
+  if (!demoManual) step(dt, wall, now);
+  requestAnimationFrame(loop);
+}
+function step(dt: number, wall: number, now: number): void {
   if (chronoTrip) {
     const c = chronoTrip;
     c.t += wall;
@@ -1757,6 +1767,7 @@ function loop(now: number): void {
     if (at) controls.target.lerp(at, 1 - Math.exp(-dt * 6));
   }
   rig.frame(dt);
+  demoCam?.();
   director.afterRig();
   player.frame();
   drawHud();
@@ -1773,8 +1784,44 @@ function loop(now: number): void {
   hover(now);
   if (frame++ % 2 === 0) drawLabels();
   drawRing();
-  requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
+
+if (DEMO) {
+  leaving = true; // the tour never writes its state into the link
+  const host: DemoHost = {
+    app, level: () => level,
+    go: (l, prep) => { busy = false; queued = null; pull = null; select(null); setLevel(l, null, prep, false); },
+    locateGalaxy: (name) => {
+      const id = GALAXIES.findIndex((g) => g.name === name);
+      const at = id >= 0 && level === 'universe' ? views.universe.locate(ctx, { kind: 'galaxy', id, name }) : null;
+      return at ? { pos: at, radius: GALAXIES[id].radius / 10000 * 3 } : null;
+    },
+    camera, target: controls.target,
+    setYear: (y) => { const yy = Math.max(0, Math.min(y, sim.done ? 10000 : sim.years[sim.frontier])); if (Math.abs(yy - ctx.year) > 1e-6) timeline.set(yy, true); },
+    ready: () => !inFlight && lastStep === sim.stepAt(ctx.year),
+    simDone: () => sim.done,
+    earth: world.earth,
+    setPlace: (b, c) => { ctx.body = b; ctx.system = world.bodies[b].system; ctx.city = c; },
+    personId: () => street.personId(street.focus) ?? street.personId(0),
+    setPerson: (pid) => micro.setPerson(pid),
+    desk: (tab) => {
+      if (!tab) { if (dataPanel.open) { dataPanel.toggle(); } return; }
+      if (!dataPanel.open) dataPanel.toggle();
+      dataPanel.show(tab);
+    },
+    board: (on) => board(on),
+    step: (dt) => { const n = performance.now(); step(dt, dt, n); },
+    setManual: (on) => { demoManual = on; },
+    setCamHook: (f) => { demoCam = f; },
+  };
+  const demo = installDemo(host);
+  Object.assign(window, { __demo: { ...demo, get t() { return demo.t; }, ready: () => sim.done } });
+  // live: start once the future has been simulated (a recorder calls frame(t) instead)
+  if (!navigator.webdriver && !/[?&]record\b/.test(location.search)) {
+    const go = () => (sim.done ? demo.start() : setTimeout(go, 200));
+    go();
+  }
+}
 
 if (import.meta.env.DEV) Object.assign(window, { __app: { assistant, ctx, views, setLevel, dive, select, timeline, camera, controls, micro, multiverse, enterPerson, street, inspector, sim, get level() { return level; }, get busy() { return busy; }, get flying() { return rig.flying; }, rig, travelTo, goToBody, zoomStep, get following() { return follow.following(); }, get pull() { return pull; }, director, visualize } });

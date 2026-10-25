@@ -9,3 +9,4 @@ ml/data
 .env.local
 .env.*.local
 ml/rl/runs
+demo/*.mp4
