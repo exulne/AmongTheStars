@@ -39,7 +39,7 @@ export class TrendsTab implements DataTab {
   private busy = false;
   private dirty = true;
   private repBody: HTMLElement;
-  private repHtml = '';
+  private painted = new WeakMap<HTMLElement, string>();
   private report: ReportRow[] | null = null;
 
   constructor(host: DataHost) {
@@ -159,9 +159,9 @@ export class TrendsTab implements DataTab {
       s.data = { lines: lines ?? [] };
       s.chart.set({ ...s.data, cursor: this.host.year() });
     }
-    s.list.innerHTML = pts.some(Boolean)
+    this.paint(s.list, pts.some(Boolean)
       ? `<ol class="tr-pts">${pts.join('')}</ol>`
-      : waiting ? '<p class="muted">Waiting for the run…</p>' : '';
+      : waiting ? '<p class="muted">Waiting for the run…</p>' : '');
   }
 
   /** first index where pred holds */
@@ -414,6 +414,13 @@ export class TrendsTab implements DataTab {
     return `<ol class="tr-rep">${lis.join('')}</ol><p class="tr-rep-tools"><button class="link" type="button" data-act="report-csv">Copy report (CSV)</button> <button class="link" type="button" data-act="series-csv">Copy series (CSV)</button> <span class="copy-status muted" aria-live="polite"></span></p>`;
   }
 
+  /** Replace an element's HTML only when it changed, so a link under the pointer survives the repaint. */
+  private paint(el: HTMLElement, html: string): void {
+    if (this.painted.get(el) === html) return;
+    this.painted.set(el, html);
+    el.innerHTML = html;
+  }
+
   /** Signal lines, the live market list, faint future points and chart cursors — all at the cursor year. */
   private paintCursor(): void {
     const y = this.host.year();
@@ -421,10 +428,10 @@ export class TrendsTab implements DataTab {
     const rep = !sim.done
       ? `<p class="muted">The report is ready when this future's run ends. The run has reached ${fmtYear(sim.years[sim.frontier] ?? 0)}.</p>`
       : !this.report ? '<p class="muted">Preparing the report…</p>' : this.reportHtml();
-    if (rep !== this.repHtml) { this.repHtml = rep; this.repBody.innerHTML = rep; }
+    this.paint(this.repBody, rep);
     for (const s of this.secs) {
-      if (s.signal) s.signal.innerHTML = this.signalLine(s.def!, y);
-      if (s.live) s.live.innerHTML = this.marketLive(y);
+      if (s.signal) this.paint(s.signal, this.signalLine(s.def!, y));
+      if (s.live) this.paint(s.live, this.marketLive(y));
     }
     for (const li of this.el.querySelectorAll<HTMLElement>('.tr-pts li')) {
       const b = li.querySelector<HTMLElement>('button[data-y]');
