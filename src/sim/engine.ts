@@ -11,7 +11,7 @@ import { FLOW, GENERATION, Ledger, NPERIODS, isPeriodBoundary, periodOf } from '
 import { next, seedRng, type RngState } from './rng.ts';
 import type { World } from './world.ts';
 import { Civ, H, HG, cloneCiv, type CivState } from './civ.ts';
-import { Geo, NGEO, type GeoHost } from './geo.ts';
+import { GF, GG, Geo, NGEO, type GeoHost } from './geo.ts';
 import { CF, EnvelopeCache, MissionLog, baseline, evaluate, interstellarAllowance, leoCostPerKg, packMission, routeFor, stepBudget, type Assumptions, type Economics, type MissionContext, type MissionSpec, type Route } from './launchEconomics.ts';
 
 export const YEAR0 = 2040;
@@ -1339,6 +1339,10 @@ export class Engine {
     row[GM.payloadDispatched] = g[G.tPayloadKg] / 1000 / dtr; row[GM.peopleTransported] = g[G.tPeople] / dtr;
     row[GM.costPerKg] = g[G.tPayloadKg] > 0 ? g[G.tSpend] / g[G.tPayloadKg] : 0;
     row[GM.leoCostPerKg] = leoCostPerKg(this.missionCtx(earth, -1, 0), this.econ);
+    // living worlds: Earth's climate over the step that led here, and the tallies
+    const eg = earth * NGEO, geo = st.geo, gg = st.geoG;
+    row[GM.earthTemp] = geo[eg + GF.tAnom] - geo[eg + GF.avgCool]; row[GM.seaLevel] = geo[eg + GF.sea]; row[GM.aerosol] = geo[eg + GF.avgAero];
+    row[GM.impacts] = gg[GG.impacts]; row[GM.eruptions] = gg[GG.eruptions]; row[GM.stellarStorms] = gg[GG.solar]; row[GM.terraformed] = gg[GG.terraformed];
 
     if (this.logEvents && step % Engine.HIST_EVERY === 0) {
       const w = 2 + HIST_FIELDS.length;

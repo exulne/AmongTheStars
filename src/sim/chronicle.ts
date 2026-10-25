@@ -24,11 +24,18 @@ const MAJOR = new Set([
   EV['New faith'], EV.Speciation, EV['Megastructure complete'], EV['Era change'], EV['First contact'], EV['Dark forest strike'],
   EV['Gamma-ray burst'], EV.Supernova, EV.Plague, EV['Asteroid strike'], EV.Collapse, EV['Mutiny in transit'], EV['AI schism'], EV['Kessler cascade'],
   EV.Invention, EV['No-go theorem'], EV.Schism, EV['Faith extinct'], EV['Faith spreads'], EV.Treaty, EV['Kinetic strike'], EV['Regime change'],
+  // living worlds (geo.ts)
+  EV.Airburst, EV['Impact winter'], EV.Eruption, EV.Supereruption, EV['Great earthquake'], EV['Solar superstorm'], EV['Dust storm'], EV['Io outburst'],
+  EV['Jupiter impact'], EV['Comet return'], EV['Red Spot fades'], EV['Naked-eye supernova'], EV['Impact averted'], EV['Sunshade raised'],
+  EV['Terraforming milestone'], EV['Seas rise'], EV['Solar storm'],
 ]);
 const WEIGHT: Partial<Record<number, number>> = {
   [EV['First contact']]: 10, [EV['Dark forest strike']]: 10, [EV['Gamma-ray burst']]: 8, [EV.Supernova]: 8, [EV.Technology]: 7,
   [EV.Speciation]: 6, [EV.Independence]: 6, [EV.War]: 5, [EV['Colony founded']]: 5, [EV['Megastructure complete']]: 5,
   [EV['No-go theorem']]: 6, [EV.Invention]: 2, [EV['Ship launched']]: 3, [EV['Ship arrived']]: 4, [EV['Ship lost']]: 4, [EV['New faith']]: 3, [EV.Schism]: 3, [EV.Treaty]: 4, [EV['Kinetic strike']]: 8, [EV['Regime change']]: 3, [EV['Faith extinct']]: 3, [EV['Faith spreads']]: 2, [EV['Era change']]: 4, [EV.Plague]: 2,
+  [EV['Impact winter']]: 8, [EV.Supereruption]: 7, [EV['Naked-eye supernova']]: 5, [EV['Sunshade raised']]: 5, [EV['Solar superstorm']]: 4,
+  [EV['Asteroid strike']]: 3, [EV['Impact averted']]: 3, [EV['Red Spot fades']]: 3, [EV['Seas rise']]: 3, [EV['Terraforming milestone']]: 3,
+  [EV.Eruption]: 2, [EV.Airburst]: 2, [EV['Great earthquake']]: 2, [EV['Jupiter impact']]: 2, [EV['Io outburst']]: 2, [EV['Comet return']]: 1, [EV['Dust storm']]: 1, [EV['Solar storm']]: 1,
 };
 const FAITH_FORM = ['the {X} Way', 'the Church of {X}', 'the {X} Covenant', 'the Fellowship of {X}', 'the {X} Reckoning', 'the Quiet of {X}', 'the {X} Return'];
 const SCHISM_FORM = ['the {X} Reform', 'the {X} Dissent', 'the Remnant of {X}', 'the {X} Awakening', 'the True {X}'];
@@ -62,17 +69,20 @@ const REGIME_WHY = [
 const NUM = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
 const numWord = (n: number) => NUM[n] ?? String(n);
 const pct = (x: number) => `${Math.round(x * 100)}%`;
+/** a share of people, readable at any size: "12%", "0.3%", "1 in 40,000" */
+const pctOf = (x: number) => x >= 0.01 ? `${Math.round(x * 100)}%` : x >= 0.001 ? `${(x * 100).toFixed(1)}%` : x > 0 ? `1 in ${Number((1 / x).toPrecision(2)).toLocaleString('en-US')}` : 'none';
+const degrees = (k: number) => `${k} degree${k === 1 ? '' : 's'}`;
 
 /** which kinds of event can give each era its name */
 const AGE_FITS: Set<number>[] = [
-  new Set([EV.Technology, EV['Megastructure complete'], EV.Independence, EV['Faith spreads'], EV.Speciation, EV['First contact']]),
+  new Set([EV.Technology, EV['Megastructure complete'], EV.Independence, EV['Faith spreads'], EV.Speciation, EV['First contact'], EV['Terraforming milestone']]),
   new Set([EV.Independence, EV['Regime change'], EV.Technology, EV['Faith spreads'], EV['Megastructure complete']]),
-  new Set([EV.Technology, EV['Megastructure complete'], EV['Faith spreads'], EV['First contact'], EV.Speciation, EV['New faith']]),
-  new Set([EV['Regime change'], EV.Schism, EV['No-go theorem'], EV['Faith spreads']]),
+  new Set([EV.Technology, EV['Megastructure complete'], EV['Faith spreads'], EV['First contact'], EV.Speciation, EV['New faith'], EV['Sunshade raised'], EV['Terraforming milestone'], EV['Naked-eye supernova']]),
+  new Set([EV['Regime change'], EV.Schism, EV['No-go theorem'], EV['Faith spreads'], EV.Supereruption, EV['Impact winter']]),
   new Set([EV.War, EV['Kinetic strike'], EV.Independence, EV['Regime change']]),
   new Set([EV.Plague]),
-  new Set([EV.Collapse, EV.War, EV.Plague, EV['Kinetic strike'], EV['Gamma-ray burst'], EV.Supernova, EV['Dark forest strike'], EV['AI schism']]),
-  new Set([EV.Technology, EV['Megastructure complete'], EV['New faith'], EV['Faith spreads'], EV['First contact']]),
+  new Set([EV.Collapse, EV.War, EV.Plague, EV['Kinetic strike'], EV['Gamma-ray burst'], EV.Supernova, EV['Dark forest strike'], EV['AI schism'], EV.Supereruption, EV['Impact winter']]),
+  new Set([EV.Technology, EV['Megastructure complete'], EV['New faith'], EV['Faith spreads'], EV['First contact'], EV['Terraforming milestone']]),
 ];
 
 export interface Age { from: number; to: number; era: number; name: string; event: number }
@@ -81,6 +91,8 @@ export interface Annals {
   faiths: { id: number; name: string; tenets: string; home: number; founded: number; ended: number | null; peakWorlds: number; parent: number }[];
   polities: { id: number; name: string; capital: number; founded: number; ended: number | null; from: number; grievance: string; regime: string; regimes: { year: number; regime: string }[]; wars: number; peakPop: number; peakWorlds: number }[];
   wars: { id: number; name: string; a: number; b: number; polityA: number; polityB: number; start: number; end: number; cause: string; outcome: string; winner: number; killed: number; kinetic: boolean }[];
+  /** the worlds' own upheavals: long winters, great impacts, a sunshade, new seas (living worlds) */
+  nature: { year: number; type: number; body: number; text: string }[];
 }
 
 /** A technology's name inside a sentence: "fully reusable heavy lift", but "O'Neill cylinders". */
@@ -118,6 +130,10 @@ export class Chronicle {
       if (ev.type === EV.War) this.warEvent.set(ev.b, i);
       if (!MAJOR.has(ev.type)) return;
       if (ev.type === EV.Plague && ev.a < 0.08) return;
+      // the worlds' weather is only news when it matters: long Mars storms, the great comets, storms that killed
+      if (ev.type === EV['Dust storm'] && ev.b < 0.4) return;
+      if (ev.type === EV['Solar storm'] && ev.a < 0.005) return;
+      if (ev.type === EV['Comet return'] && ev.a === 0 && ev.b > 0.5) return;
       this.major.push(i);
     });
   }
@@ -194,6 +210,14 @@ export class Chronicle {
       case EV['Gamma-ray burst']: case EV.Supernova: return `the burst over ${this.name(ev.body)}`;
       case EV.Collapse: return `the fall of ${this.name(ev.body)}`;
       case EV['No-go theorem']: return `the ${TECHS[ev.a].name} theorem`;
+      case EV.Supereruption: return `the Long Winter of ${Math.round(2040 + ev.year)}`;
+      case EV['Impact winter']: return `the Impact Winter of ${Math.round(2040 + ev.year)}`;
+      case EV['Dust storm']: return `the ${this.name(ev.body)} Storm of ${Math.round(2040 + ev.year)}`;
+      case EV['Sunshade raised']: return 'the Sunshade';
+      case EV['Naked-eye supernova']: return 'the Betelgeuse supernova';
+      case EV['Terraforming milestone']: return ev.a >= 2 ? `the greening of ${this.name(ev.body)}` : null;
+      case EV['Solar superstorm']: return `the solar superstorm of ${Math.round(2040 + ev.year)}`;
+      case EV['Asteroid strike']: return ev.a > 0.01 ? `the strike on ${this.name(ev.body)}` : null;
       default: void W; return null;
     }
   }
@@ -210,6 +234,8 @@ export class Chronicle {
     if (ev.type === EV.Speciation || ev.type === EV['Megastructure complete']) g = sol ? 4 : 3;
     if (ev.type === EV.Independence && ev.b >= 0) g += pop(ev.b) / 1.5;
     if (ev.type === EV['Regime change']) g += pop(ev.a) / 2;
+    if (ev.type === EV.Supereruption || ev.type === EV['Impact winter']) g += Math.min(3, ev.b / 2);
+    if (ev.type === EV['Terraforming milestone']) g = ev.a === 3 ? (sol ? 5 : 3) : 1;
     if (ev.body === this.e.world.earth) g += 0.5;
     return g;
   }
@@ -478,8 +504,92 @@ export class Chronicle {
       case EV.Plague:
         segs.push('Plague on ', at(ev.body), ` kills ${Math.round(ev.a * 100)}% of the population.`);
         break;
-      case EV['Asteroid strike']:
-        segs.push('An asteroid strikes ', at(ev.body), ` and kills ${Math.round(ev.a * 100)}%.`);
+      case EV['Asteroid strike']: {
+        const size = ev.b >= 1000 ? `${ev.b / 1000} km` : `${Math.round(ev.b) || 140} m`;
+        if (ev.a > 0) {
+          const survivor = this.pick(ev.body, y, i, 16, 80);
+          segs.push(`A rock ${size} across strikes `, at(ev.body), ` and kills ${pctOf(ev.a)} of its people. Among those who lived to describe the flash: `, who(survivor), '.');
+        } else segs.push(`A rock ${size} across strikes `, at(ev.body), ', far from any settlement. The crater is new; nobody is hurt.');
+        break;
+      }
+      case EV.Airburst: {
+        if (ev.a >= 50) {
+          const witness = this.pick(ev.body, y, i, 12, 85);
+          const flat = ev.body === this.e.world.earth ? 'forest and buildings' : 'everything standing';
+          segs.push('A stony asteroid about 50 metres across explodes in the air over ', at(ev.body), ev.b > 0 ? `, flattening ${flat} for tens of kilometres and killing ${pctOf(ev.b)} of the world's people. ` : `, flattening ${ev.body === this.e.world.earth ? 'forest' : 'the ground'} for tens of kilometres, far from the cities. `, 'It is seen by ', who(witness), '.');
+        } else segs.push('A Chelyabinsk-class meteor bursts over a city on ', at(ev.body), ': windows break for fifty kilometres around.');
+        break;
+      }
+      case EV['Impact winter']: {
+        const lead = this.pick(ev.body, y, i, 30, 85);
+        segs.push(`An asteroid ${ev.a} km across strikes `, at(ev.body), `. Dust and soot fill the sky; for years the world is up to ${degrees(ev.b)} colder and the harvests fail. `, who(lead), ' leads the rationing.');
+        break;
+      }
+      case EV.Eruption: {
+        if (ev.a === 0) { segs.push('Lava floods the plains of ', at(ev.body), ev.b > 0 ? ` and buries settlements: ${pctOf(ev.b)} of its people die.` : '.'); break; }
+        const vulc = this.pick(ev.body, y, i, 25, 80);
+        const haze = ev.b > 0 ? (ev.a >= 7 ? ` Its haze cools the world by ${degrees(ev.b)}: a year without a summer. ` : ` Its haze cools the world by ${degrees(ev.b)} for a year or two. `) : ' The air is too thin to hold its ash aloft. ';
+        segs.push('A volcano on ', at(ev.body), ev.a >= 7 ? ' erupts with the force of Tambora (VEI 7).' : ' erupts as Pinatubo did (VEI 6).', haze, 'The volcanologist ', who(vulc), ' had watched it swell.');
+        break;
+      }
+      case EV.Supereruption: {
+        const vulc = this.pick(ev.body, y, i, 25, 80), child = this.pick(ev.body, y, i + 1, 4, 12);
+        if (ev.b > 0) segs.push('A supervolcano on ', at(ev.body), ` erupts (VEI 8), burying a region in ash. For years the sky stays dim and the world is up to ${degrees(ev.b)} colder: the Long Winter. `, who(vulc), ' measured the ground rising; ', who(child), ' grows up never seeing a blue sky.');
+        else segs.push('A supervolcano on ', at(ev.body), ' erupts (VEI 8), burying a region in ash; the air is too thin to keep it aloft, and the sky clears within weeks. ', who(vulc), ' measured the ground rising.');
+        break;
+      }
+      case EV['Great earthquake']:
+        segs.push(`A magnitude ${ev.a} earthquake under the sea off `, at(ev.body), ' sends a tsunami into the coastal cities', ev.b > 0 ? `: ${pctOf(ev.b)} of the world's people die.` : '.', ' Among the rescuers: ', who(this.pick(ev.body, y, i, 20, 60)), '.');
+        break;
+      case EV['Solar storm']:
+        segs.push('A solar storm sweeps ', at(ev.body), `; crews caught outside their shelters take the dose, and ${pctOf(ev.a)} of the people there die.`);
+        break;
+      case EV['Solar superstorm']: {
+        const eng = this.pick(ev.body, y, i, 25, 75);
+        const sys = this.e.world.systems[this.e.world.bodies[ev.body]?.system ?? 0];
+        segs.push(`${sys.id === 0 ? 'The Sun' : sys.name} throws off a storm of the kind written in old tree rings (774 CE): a Miyake event. Grids and satellites fail across ${ev.a} settlement${ev.a === 1 ? '' : 's'}, `, at(ev.body), ` among them; ${pctOf(ev.b)} of their capital is lost. `, who(eng), ' brings the power back.');
+        break;
+      }
+      case EV['Dust storm']:
+        segs.push('A dust storm grows until it wraps all of ', at(ev.body), `. For ${Math.max(1, Math.round(ev.b * 12))} months the sky is orange and solar power fails; `, who(this.pick(ev.body, y, i, 18, 70)), ' keeps the greenhouse lamps lit.');
+        break;
+      case EV['Io outburst']:
+        segs.push('A lava fountain on ', at(ev.body), ` overruns a settlement: ${pctOf(ev.a)} of the moon's people die.`);
+        break;
+      case EV['Jupiter impact']: {
+        const obs = this.L.biggestLab(y);
+        segs.push(`A comet torn into ${ev.a} pieces strikes `, at(ev.body), ', as Shoemaker–Levy 9 did in 1994. Its dark scars, each wider than Earth, fade over months.');
+        if (obs >= 0) segs.push(' The first to see them: ', who(this.pick(obs, y, i, 20, 90)), ' of ', at(obs), '.');
+        break;
+      }
+      case EV['Comet return']:
+        if (ev.a === 0) segs.push(`Halley's comet returns, ${ev.b < 0.15 ? 'passing close to Earth and blazing across the sky' : ev.b < 0.5 ? 'bright in the evening sky' : 'a faint smudge this time'}.`);
+        else segs.push(`Comet Swift–Tuttle passes ${ev.b} AU from Earth${ev.b < 0.05 ? ', the closest pass of a large comet in history; nobody can quite stop looking up' : ''}. Its dust gives that year's Perseids a storm of meteors.`);
+        break;
+      case EV['Red Spot fades']:
+        segs.push("Jupiter's Great Red Spot, the storm watched since at least 1831, finally breaks up.");
+        break;
+      case EV['Naked-eye supernova']:
+        segs.push(`Betelgeuse explodes, ${ev.a} light years away. For months it is as bright as a half Moon, a second shadow on the ground; nobody is harmed.`);
+        break;
+      case EV['Impact averted']: {
+        const lead = this.pick(ev.body, y, i, 28, 80);
+        segs.push(`A rock ${ev.a >= 1000 ? `${ev.a / 1000} km` : `${ev.a} m`} across, found on its way to `, at(ev.body), ', is pushed aside by a mission led by ', who(lead), '.');
+        break;
+      }
+      case EV['Sunshade raised']: {
+        const lead = this.pick(ev.body, y, i, 30, 80);
+        segs.push(`With the world ${ev.b} degrees warmer than before industry, a sunshade is unfolded between `, at(ev.body), ' and the Sun. It will take decades to cool the planet back. Project lead: ', who(lead), '.');
+        break;
+      }
+      case EV['Terraforming milestone']: {
+        if (ev.a === 1) segs.push('The air of ', at(ev.body), ' is now thick enough to hold heat and stop the worst radiation.');
+        else if (ev.a === 2) segs.push('Open water lies on ', at(ev.body), ' for the first time: the new seas fill the old basins.');
+        else segs.push('People walk unmasked on ', at(ev.body), ', breathing its new air. Among the first children to run outside: ', who(this.pick(ev.body, y, i, 5, 14)), '.');
+        break;
+      }
+      case EV['Seas rise']:
+        segs.push(`Earth's seas stand ${ev.a} metre${ev.a === 1 ? '' : 's'} higher than in 2040, as the ice sheets keep answering the warming of centuries past. Coastal cities move inland.`);
         break;
       case EV.Collapse:
         segs.push(at(ev.body), ' collapses and loses more than half its people.');
@@ -501,7 +611,7 @@ export class Chronicle {
         segs.push('Something out in the dark noticed. The whole system around ', at(ev.body), ' is erased in an instant.');
         break;
       case EV['Gamma-ray burst']: case EV.Supernova:
-        segs.push(ev.type === EV.Supernova ? 'A nearby star explodes. ' : 'A gamma-ray burst sweeps the region around ', ev.type === EV.Supernova ? 'Radiation sweeps ' : '', at(ev.body), ev.type === EV.Supernova ? '' : '', `: ${ev.a} settlements within ${Math.round(ev.b)} ly lose nine in ten of their people.`);
+        segs.push(ev.type === EV.Supernova ? 'A star within thirty light years of ' : 'A gamma-ray burst, beamed straight at settled space, sweeps the region around ', at(ev.body), ev.type === EV.Supernova ? ' explodes. Its radiation strips the ozone of every world nearby' : '', `: ${ev.a} settlements within ${Math.round(ev.b)} ly lose nine in ten of their people.`);
         break;
       case EV['AI schism']:
         segs.push('The machine minds split into factions, and a share of everything humanity knows is lost in the quarrel.');
@@ -562,7 +672,17 @@ export class Chronicle {
       wars.push({ id: w, name: this.warName(w), a: W[o + WC.a], b: W[o + WC.b], polityA: W[o + WC.pA], polityB: W[o + WC.pB], start: W[o + WC.start], end: W[o + WC.end],
         cause: CAUSE[W[o + WC.cause]], outcome: W[o + WC.outcome] < 0 ? 'ongoing' : OUT[W[o + WC.outcome]], winner: W[o + WC.winner], killed: W[o + WC.killed], kinetic: W[o + WC.kind] === WAR_KIND.KINETIC });
     }
-    return { ages: this.ages(), faiths, polities, wars };
+    const NATURE = new Set([EV['Impact winter'], EV.Supereruption, EV['Naked-eye supernova'], EV['Sunshade raised'], EV['Red Spot fades'], EV['Seas rise'], EV['Solar superstorm']]);
+    const nature: Annals['nature'] = [];
+    this.e.events.forEach((ev, i) => {
+      const sol = this.e.world.bodies[ev.body]?.system === 0;
+      const keep = (NATURE.has(ev.type) && (ev.type !== EV['Solar superstorm'] || sol)) || (ev.type === EV['Terraforming milestone'] && ev.a === 3 && sol)
+        || (ev.type === EV['Asteroid strike'] && ev.a > 0.01) || (ev.type === EV.Eruption && ev.a === 7 && ev.body === this.e.world.earth);
+      if (!keep) return;
+      const en = this.entry(i);
+      if (en) nature.push({ year: ev.year, type: ev.type, body: ev.body, text: en.segs.map((x) => (typeof x === 'string' ? x : x.t)).join('') });
+    });
+    return { ages: this.ages(), faiths, polities, wars, nature };
   }
 
   /** Every technology this future has, where and by whom. */

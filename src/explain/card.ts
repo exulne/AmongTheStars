@@ -10,6 +10,8 @@ import { LOCAL_GROUP } from './universe.ts';
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 const TAG_TITLE: Record<Tag, string> = { R: 'real data', E: 'estimate from real data', P: 'procedural: drawn by this future\'s generator' };
 const tag = (t: Tag) => `<abbr class="ex-tag ex-${t}" title="${TAG_TITLE[t]}">${t}</abbr>`;
+/** An R / E / P provenance mark, for numbers shown outside the cards. */
+export const tagHtml = tag;
 
 export function explainHtml(e: Explanation, segs: (s: Seg[]) => string): string {
   const facts = e.facts.map((f) => `<dt>${esc(f.k)}</dt><dd>${esc(f.v)}${tag(f.t)}</dd>`).join('');

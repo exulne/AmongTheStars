@@ -371,7 +371,7 @@ export function halleyReturns(seed: number): { t: number; miss: number }[] {
   for (let k = 2; ; k++) {
     const t = out[k - 1].t + 75.3 + 2.4 * (gh(seed, KEY_HALLEY, k, 1) - 0.5);
     if (t > Y0 + 10000) break;
-    out.push({ t, miss: 0.1 + 0.5 * gh(seed, KEY_HALLEY, k, 2) });
+    out.push({ t, miss: Math.round((0.1 + 0.5 * gh(seed, KEY_HALLEY, k, 2)) * 100) / 100 });
   }
   return out;
 }
@@ -485,7 +485,8 @@ export class Geo {
     this.sysMark = new Int32Array(world.systems.length);
     this.sysDim = new Float64Array(world.systems.length);
     this.starP0 = Float64Array.from(world.systems, (s) => { const [a, b] = stellarRates(s.spec); return Math.exp(-(a + b) * (s.id === 0 ? 1 : 10)); });
-    this.terraOK = Uint8Array.from(world.bodies, (b, i) => (b.hab < 0.8 && b.g >= 0.1 && this.baseP[i] >= 0 && b.kind !== 'asteroid' && b.kind !== 'habitat' ? 1 : 0));
+    // (not a world whose surface its volcanoes renew every century, as Io's)
+    this.terraOK = Uint8Array.from(world.bodies, (b, i) => (b.hab < 0.8 && b.g >= 0.1 && this.baseP[i] >= 0 && this.baseVol[i] < 0.9 && b.kind !== 'asteroid' && b.kind !== 'habitat' ? 1 : 0));
     this.halley = halleyReturns(seed);
   }
 
@@ -720,8 +721,8 @@ export class Geo {
     }
     this.segment(geo, o, t1);
     const aeroSum = I[0], coolSum = I[1], lossSum = I[2];
-    // Mars: global dust storms in the perihelion season
-    if (b === this.mars) {
+    // Mars: global dust storms in the perihelion season (until terraforming has given it thick, wet air)
+    if (b === this.mars && geo[o + GF.terra] < 0.6) {
       for (let n = marsYear(Y0 + year) - 1; marsTimeAt(n, 0) < Y0 + t1; n++) {
         const s = marsStorm(this.seed, n);
         if (!s) continue;
@@ -939,6 +940,20 @@ export class Geo {
     }
   }
 
+  /** Stellar storms of system s with t in [t0, t1): the same stream the step applies. */
+  stormsIn(s: number, t0: number, t1: number): { t: number; big: boolean }[] {
+    const out: { t: number; big: boolean }[] = [];
+    const [carr, miy] = stellarRates(this.world.systems[s].spec), tot = carr + miy, L = s === 0 ? 1 : 10;
+    for (let bin = Math.floor(t0 / L), last = Math.floor((t1 - 1e-9) / L); bin <= last; bin++) {
+      const nk = poissonInv(gh(this.seed, KEY_STAR + s, bin, 0), tot * L);
+      for (let j = 0; j < nk; j++) {
+        const t = bin * L + L * gh(this.seed, KEY_STAR + s, bin, j * 4 + 1);
+        if (t >= t0 && t < t1) out.push({ t, big: gh(this.seed, KEY_STAR + s, bin, j * 4 + 2) * tot >= carr });
+      }
+    }
+    return out.sort((a, b) => a.t - b.t);
+  }
+
   private storm(h: GeoHost, st: GeoState, s: number, big: boolean, u: number, t: number): void {
     const S = st.S, w = this.world;
     st.geoG[GG.stellar]++;
@@ -1008,6 +1023,9 @@ export class Geo {
 
 const TERRA_MILES = [0.25, 0.5, 0.9];
 const T_MINE = TX('asteroidMining'), T_NTP = TX('ntp'), T_NANO = TX('nanofab'), T_RAD = TX('radShield');
+
+/** What the views get with a state: the run's seed, the geo rows (Solar System bodies, then settlements in st.settled order), globals and scars. */
+export interface GeoSnap { seed: number; rows: Float64Array; g: Float64Array; scars: Float64Array }
 
 /** The parts of SimState the geo step reads and writes. */
 export interface GeoState {

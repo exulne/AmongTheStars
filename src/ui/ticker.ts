@@ -9,6 +9,7 @@ import { fmtYear } from './format.ts';
 export const NOTABLE = new Set([
   EV.Technology, EV['Era change'], EV.Independence, EV.War, EV['First contact'], EV['Megastructure complete'],
   EV.Speciation, EV['Dark forest strike'], EV.Supernova, EV['Gamma-ray burst'],
+  EV.Supereruption, EV['Impact winter'], EV['Naked-eye supernova'], EV['Sunshade raised'], EV['Comet return'], EV['Red Spot fades'], EV['Seas rise'],
 ]);
 
 export interface TickItem { key: string; year: number; text: string; ref: Ref | null; rank: number }
@@ -17,6 +18,7 @@ export interface TickItem { key: string; year: number; text: string; ref: Ref | 
 const RANK: Record<number, number> = {
   [EV['First contact']]: 9, [EV['Dark forest strike']]: 9, [EV['Era change']]: 5, [EV.Speciation]: 7, [EV['Megastructure complete']]: 6,
   [EV.Supernova]: 6, [EV['Gamma-ray burst']]: 6, [EV.Technology]: 5, [EV.Independence]: 4, [EV.War]: 3,
+  [EV['Impact winter']]: 7, [EV.Supereruption]: 7, [EV['Naked-eye supernova']]: 5, [EV['Sunshade raised']]: 4, [EV['Red Spot fades']]: 3, [EV['Seas rise']]: 2, [EV['Comet return']]: 2,
 };
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -36,6 +38,13 @@ export function describe(world: World, e: SimEvent): TickItem {
     case EV['Dark forest strike']: text = `${world.systems[world.bodies[e.body]?.system]?.name ?? 'A system'} is erased from the dark`; break;
     case EV.Supernova: text = `Supernova near ${name(e.body)}`; break;
     case EV['Gamma-ray burst']: text = `Gamma-ray burst sweeps ${name(e.body)}`; break;
+    case EV.Supereruption: text = `A supervolcano erupts on ${name(e.body)}: the Long Winter`; break;
+    case EV['Impact winter']: text = `A ${e.a} km asteroid strikes ${name(e.body)}`; break;
+    case EV['Naked-eye supernova']: text = 'Betelgeuse explodes, bright as a half Moon'; break;
+    case EV['Sunshade raised']: text = 'A sunshade rises between Earth and the Sun'; break;
+    case EV['Comet return']: text = e.a === 0 ? "Halley's comet returns" : 'Comet Swift–Tuttle passes Earth'; break;
+    case EV['Red Spot fades']: text = "Jupiter's Great Red Spot breaks up"; break;
+    case EV['Seas rise']: text = `Earth's seas stand ${e.a} m above 2040`; break;
     default: text = name(e.body);
   }
   return { key: `${e.year}:${e.type}:${e.body}:${e.a}`, year: e.year, text, ref, rank: RANK[e.type] ?? 1 };

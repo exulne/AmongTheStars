@@ -16,6 +16,7 @@ import { explainHtml, galaxyFactsHtml, starFactsHtml } from '../explain/card.ts'
 import { explain } from '../explain/registry.ts';
 import type { Annals } from '../sim/chronicle.ts';
 import { ageAt, humanityAnnalsHtml, polityAt, polityCardHtml, polityLink } from './annals.ts';
+import { climateHtml } from './climate.ts';
 
 type Residents = { total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] };
 type SocietyView = { polity: { id: number; name: string; regime: string; since: number } | null; government: string; governmentWhy: string; language: string; faith: string | null; art: string; architecture: { name: string; materials: string }; daily: Record<string, string>; mood: string; sentences: string[] };
@@ -386,8 +387,9 @@ export class Inspector {
       ['Habitability', b.hab.toFixed(2)], ['Starlight', `${b.flux.toPrecision(2)}× Earth`],
     ]);
     const res = `<div class="bars">${RES_NAMES.map((r, k) => `<div class="bar"><span>${r === 'he3' ? 'helium-3' : r}</span><i style="--v:${b.res[k]}"></i></div>`).join('')}</div>`;
+    const climate = climateHtml(c, id);
     if (!alive(st)) {
-      return `${header}${fly}<h3>History</h3>${this.chronicle(c, id)}<h3>World</h3>${phys}<h3>Resources</h3>${res}<h3>Events here</h3>${this.eventsList(c, 8)}`;
+      return `${header}${fly}<h3>History</h3>${this.chronicle(c, id)}<h3>World</h3>${phys}${climate}<h3>Resources</h3>${res}<h3>Events here</h3>${this.eventsList(c, 8)}`;
     }
     const factionId = v('faction');
     const faction = factionId === id ? 'Independent' : `Loyal to ${c.world.bodies[factionId] ? names.place(c.world, factionId) : '?'}`;
@@ -407,6 +409,7 @@ export class Inspector {
       <h3>Residents</h3>${this.people(c, id, cityPop, offset)}
       <h3>All metrics</h3>${this.kv(metrics)}
       <h3>World</h3>${phys}
+      ${climate}
       <h3>Resources</h3>${res}
       <h3>History</h3>${this.chronicle(c, id)}
       <h3>Events here</h3>${this.eventsList(c, 10)}`;

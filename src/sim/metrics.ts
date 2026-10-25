@@ -67,6 +67,14 @@ export const GLOBAL_METRICS: MetricDef[] = [
   { key: 'peopleTransported', label: 'People transported', unit: '/yr', log: true, group: 'Transport' },
   { key: 'costPerKg', label: 'Average cost per kg dispatched', unit: '$/kg', log: true, group: 'Transport' },
   { key: 'leoCostPerKg', label: 'Earth to orbit, cost per kg', unit: '$/kg', log: true, group: 'Transport' },
+  // living worlds (geo.ts): Earth's climate (means over the step that led here) and the worlds' upheavals
+  { key: 'earthTemp', label: 'Earth temperature over pre-industrial', unit: 'K', group: 'Planet' },
+  { key: 'seaLevel', label: 'Earth sea level against 2040', unit: 'm', group: 'Planet' },
+  { key: 'aerosol', label: 'Earth volcanic and impact haze (optical depth)', unit: '', group: 'Planet' },
+  { key: 'impacts', label: 'Notable impacts, all worlds (total)', unit: '', group: 'Planet' },
+  { key: 'eruptions', label: 'Eruptions of VEI 7 or more, all worlds (total)', unit: '', group: 'Planet' },
+  { key: 'stellarStorms', label: 'Miyake-class stellar storms (total)', unit: '', group: 'Planet' },
+  { key: 'terraformed', label: 'Worlds terraformed past half', unit: '', group: 'Planet' },
 ];
 export const GM = Object.fromEntries(GLOBAL_METRICS.map((m, i) => [m.key, i])) as Record<string, number>;
 export const NGM = GLOBAL_METRICS.length;

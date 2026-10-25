@@ -12,6 +12,7 @@ import { buildWorld } from './world.ts';
 import { HG, NWC, OUTCOME, WAR_KIND, WC } from './civ.ts';
 import { SHIP_BODY, periodOf, periodStart } from './ledger.ts';
 import { handleData, isDataReq, type DataReq, type DataRes } from './dataApi.ts';
+import { NGEO, type GeoSnap } from './geo.ts';
 import { NetMind } from '../ml/netMind.ts';
 import { loadWarGens, type WarGens } from '../ml/warGens.ts';
 
@@ -38,7 +39,7 @@ export type ToWorker =
 
 export type FromWorker =
   | { type: 'progress'; seed: number; step: number; years: number[]; series: Float64Array; done: boolean; ms: number }
-  | { type: 'state'; id: number; step: number; S: Float64Array; techDone: Float64Array; techWhere: Float64Array; ships: ReturnType<Engine['shipList']>; globals: ReturnType<Engine['globals']>; settled: Int32Array }
+  | { type: 'state'; id: number; step: number; S: Float64Array; techDone: Float64Array; techWhere: Float64Array; ships: ReturnType<Engine['shipList']>; globals: ReturnType<Engine['globals']>; settled: Int32Array; geo: GeoSnap }
   | { type: 'history'; id: number; body: number; steps: number[]; cols: Record<string, number[]> }
   | { type: 'events'; id: number; events: Engine['events'] }
   | { type: 'residents'; id: number; pending?: boolean; total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] }
@@ -178,7 +179,8 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
     const S = e.st.S.slice();
     const techDone = e.st.techDone.slice(), techWhere = e.st.techWhere.slice();
     const settled = e.st.settled.slice(0, e.st.nSettled);
-    post({ type: 'state', id: m.id, step: e.st.step, S, techDone, techWhere, ships: e.shipList(), globals: e.globals(), settled }, [S.buffer, techDone.buffer, techWhere.buffer, settled.buffer]);
+    const geo: GeoSnap = { seed: e.seed, rows: e.st.geo.slice(0, (e.geo.nSol + e.st.nSettled) * NGEO), g: e.st.geoG.slice(), scars: e.st.scars.slice() };
+    post({ type: 'state', id: m.id, step: e.st.step, S, techDone, techWhere, ships: e.shipList(), globals: e.globals(), settled, geo }, [S.buffer, techDone.buffer, techWhere.buffer, settled.buffer, geo.rows.buffer, geo.g.buffer, geo.scars.buffer]);
   } else if (m.type === 'history' && main) {
     const w = 2 + HIST_FIELDS.length;
     const steps: number[] = [];
