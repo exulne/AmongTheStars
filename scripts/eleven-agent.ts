@@ -16,7 +16,7 @@ function dotenv(): Record<string, string> {
   try {
     for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
       const m = /^\s*([A-Za-z_]\w*)\s*=\s*"?([^"\n]*)"?/.exec(line);
-      if (m && !m[1].startsWith('#') && !line.trimStart().startsWith('#')) env[m[1]] = m[2].trim();
+      if (m && !line.trimStart().startsWith('#')) env[m[1]] = m[2].trim();
     }
   } catch { /* no .env.local */ }
   return env;
@@ -75,7 +75,7 @@ const body = {
 
 if (agentId) {
   const r = await api('PATCH', `/v1/convai/agents/${agentId}`, body);
-  agentId = r.agent_id;
+  agentId = r.agent_id ?? agentId;
   console.log(`updated agent ${agentId}`);
 } else {
   const r = await api('POST', '/v1/convai/agents/create', body);
