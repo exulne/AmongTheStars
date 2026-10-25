@@ -106,7 +106,7 @@ const Y_SCALE = 1.6e14 / (Math.pow(9.2e9 * 60000, 0.3) * Math.pow(2.3e13 + 6e5, 
 const SHIP_MIN_HAB = 0.15;
 const MIGRATE = 0.001; // share of a town's people per year who move to younger settlements in the same system
 const REACH_OUTER = 1, REACH_RAD = 2, REACH_DEEP = 4;
-const MINOR = new Set([EV.Famine, EV['Rich deposit found'], EV['Baby boom'], EV.Revolt, EV['Habitat breach'], EV['Probe survey']]);
+const MINOR = new Set([EV.Famine, EV['Rich deposit found'], EV['Baby boom'], EV.Revolt, EV['Habitat breach'], EV['Probe survey'], EV['Plume surge']]);
 const TECH_INDEX = new Map(TECHS.map((t, i) => [t.id, i]));
 const TECH_REQ: number[][] = TECHS.map((t) => t.req.map((r) => TECH_INDEX.get(r)!));
 // shortest an age lasts, in years (Expansion, Consolidation, Golden Age, Stagnation, War, Pandemic, Collapse, Renaissance)
@@ -248,6 +248,7 @@ export class Engine {
     this.geoHost = {
       world, log: (t, b, a = 0, bb = 0) => this.log(t, b, a, bb),
       disaster: (b, t, k) => this.civ.onDisaster(b, t, k, this.year),
+      kill: (b) => { const o = b * NF; this.st.S[o + F.stage] = STAGE.DEAD; this.st.S[o + F.pop] = 0; this.st.g[G.dead]++; },
     };
     this.st = this.initialState(rng);
     this.recomputeFx();
@@ -946,13 +947,7 @@ export class Engine {
       // a lost module: a few people, or up to 2% of a bigger place
       const k = Math.min(0.5, r() * 0.02 + (2 + r() * 8) / Math.max(pop, 1)); S[o + F.pop] *= 1 - k; S[o + F.stability] -= 0.03; this.log(EV['Habitat breach'], b, k); this.civ.onDisaster(b, EV['Habitat breach'], k, this.year);
     }
-    if (this.bSys[b] === 0 && this.bFlux[b] > 0.2 && stg <= STAGE.TOWN && r() < dt * 0.01) {
-      const k = 0.001 + r() * 0.01; S[o + F.pop] *= 1 - k; this.log(EV['Solar storm'], b, k);
-    }
-    if (r() < dt * 0.00015) {
-      const k = 0.1 + r() * 0.6; S[o + F.pop] *= 1 - k; S[o + F.capital] *= 1 - k; this.log(EV['Asteroid strike'], b, k); this.civ.onDisaster(b, EV['Asteroid strike'], k, this.year);
-      if (k > 0.65 && stg <= STAGE.COLONY) { S[o + F.stage] = STAGE.DEAD; S[o + F.pop] = 0; this.st.g[G.dead]++; return; }
-    }
+    // solar storms and asteroid strikes are physics now: geo.ts rolls them at their real rates
     if (pop > 1e5 && r() < dt * 0.0015 * ERA_FX[this.st.g[G.era]].death) {
       const k = 0.02 + r() * 0.15; S[o + F.pop] *= 1 - k; this.log(EV.Plague, b, k); this.civ.onDisaster(b, EV.Plague, k, this.year);
     }
@@ -1287,19 +1282,7 @@ export class Engine {
         }
       }
     }
-    // gamma-ray burst or nearby supernova sterilises a region
-    if (this.rand() < dt * 4e-6 && st.nSettled > 30) {
-      const centre = st.settled[Math.floor(this.rand() * st.nSettled)];
-      const radius = 5 + this.rand() * 40;
-      let killed = 0;
-      for (let n = 0; n < st.nSettled; n++) {
-        const b = st.settled[n];
-        if (b === this.world.earth || this.dist(b, centre) > radius) continue;
-        const o = b * NF;
-        if (isAlive(S[o + F.stage])) { S[o + F.pop] *= 0.1; killed++; }
-      }
-      if (killed) this.log(this.rand() < 0.5 ? EV.Supernova : EV['Gamma-ray burst'], centre, killed, radius);
-    }
+    // nearby supernovae and gamma-ray bursts happen at their real (tiny) rates in geo.ts
     if (st.techDone[TECH_INDEX.get('agi')!] >= 0 && this.rand() < dt * 0.0006) {
       g[G.knowledge] *= 0.98; this.log(EV['AI schism'], -1);
     }
