@@ -139,8 +139,8 @@ button, select, input { font: inherit; color: inherit; }
 #lifepick[aria-expanded="true"] { color: var(--accent); }
 
 /* the life picker: a quiet drop-down under the header buttons */
-.lifepick { position: absolute; z-index: 6; top: 4.4rem; right: max(16px, env(safe-area-inset-right, 0px)); width: min(21rem, calc(100vw - 32px)); padding: 0.9rem 1.1rem; max-height: calc(100vh - 6rem); overflow-y: auto; }
-  background: rgba(4, 4, 7, 0.94); border-top: 1px solid var(--rule); box-shadow: 0 12px 32px #000; font-size: 0.85rem; box-sizing: border-box; }
+.lifepick { position: absolute; z-index: 6; top: 0; right: 0; bottom: var(--bottom-h, 200px); width: min(22rem, 34vw); padding: 0.9rem 1.1rem; overflow-y: auto;
+  background: rgba(4, 4, 7, 0.94); border-left: 1px solid var(--rule); font-size: 0.85rem; box-sizing: border-box; }
 .lifepick[hidden] { display: none; }
 .lifepick .lp-title { margin: 0 0 0.5rem; }
 .lifepick .lp-sec { margin: 0.8rem 0 0.15rem; padding-top: 0.55rem; border-top: 1px solid var(--rule); font-size: 0.64rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--quiet); }
