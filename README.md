@@ -171,7 +171,7 @@ Click **Board the Starship** in the header. A Starship-class vehicle appears in 
 - **Tell it where, and when.** The ship computer (bottom left) takes typed or spoken orders: "take me to Tau Ceti in 3400", "Titan", "random planet", "go back 300 years", "resident 12 of Titan", "cockpit view", "where are we?". It knows every star, world, galaxy and resident in this future, including procedurally generated worlds like "TOI 98077 b".
 - **The trip is the simulation.** Jumping between scales (galaxy → stars → system → planet → city) opens the warp tunnel. Moving the year spins up the chrono bubble, blue going forward and amber going back, and the planets, cities, people and Chronicle change around you as time runs.
 - **Cameras:** Chase (third person) or Cockpit (first person).
-- **Voice (ElevenLabs).** Put `ELEVENLABS_API_KEY=...` in `.env.local` (gitignored). The dev server proxies `/eleven`, so the key never reaches the page. With no key, the ship uses the browser's free speech engines.
+- **Voice.** The ship computer is Vela, the GPT assistant (see *Ask Vela* below): with `OPENAI_API_KEY` in `.env.local`, *Talk* opens her voice line and questions go to her. Without it, orders still work offline, spoken through the browser's own speech engines (or ElevenLabs, if `ELEVENLABS_API_KEY` is set; the dev server proxies `/eleven` so that key never reaches the page either).
 
 Code: `src/ship/`.
 - `voyage.ts`: the ship's layer inside the sim's renderer.
@@ -179,3 +179,23 @@ Code: `src/ship/`.
 - `ship.ts` + `starship.ts`: the hull, cockpit, warp tunnel and chrono effects.
 - `commands.ts` and `places.ts`: the plain-English parser and the ship's star charts.
 - `voice.ts` and `audio.ts`: speech and engine sound.
+
+---
+
+## Ask Vela: a GPT voice and text assistant
+
+Click **Ask** in the header (or tap the backquote key `` ` ``) from any zoom level and ask anything about what's on screen or about this future: "what year is it and who rules Mars?", "take me to Titan in 3000", "how many wars so far?", "which settlements are unstable but over a million people?", "what's Titan's climate like now?". Vela answers in a warm, quick voice (OpenAI's `marin`), and every number she gives comes from the simulation through a tool call, not from memory. She can also drive the app: fly to a place, a person or "resident 12 of Titan", move the year, change zoom, open the Chronicle or a Data tab, board the Starship or switch its camera.
+
+- **Talk.** *Hold to talk* (or hold `` ` ``) and let go to get an answer, or turn on *Hands-free* and just talk; speaking over her interrupts her.
+- **Type.** Typed questions are answered aloud when the voice line is open, and in text when it is closed (no microphone needed).
+- **Aboard the Starship** she is the ship computer: plain orders ("Mars", "year 2500") still go through the instant offline parser, questions and anything it doesn't understand go to her, and *Talk* opens her voice line.
+- **Cost.** No session starts without a click or key press; the panel shows when voice is live and for how long; voice closes itself after two quiet minutes, or when you say goodbye.
+
+To run it, put your key in `.env.local` (gitignored) and start the dev server:
+
+```bash
+echo 'OPENAI_API_KEY=sk-...' >> .env.local
+npm run dev
+```
+
+The key stays in the dev server (`scripts/openaiDev.ts`): the page gets a two-minute client secret for one WebRTC call to OpenAI's Realtime API (`gpt-realtime-2.1`), and typed questions go through a server-side proxy to the Responses API (`gpt-5.4-mini`). The single-file build has no server, so there the panel says "Voice assistant needs the local dev server". Architecture, security model and the tool list: `research/gpt-assistant.md`; code: `src/assistant/`.
