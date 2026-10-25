@@ -576,7 +576,14 @@ const lifePick = new LifePick({
   nameOf: (b) => naming.place(world, b),
   year: () => ctx.year,
   find: (b, n, k, y, w) => sim.findPerson(b, n, k, y, w),
-  seek: (y, b) => { timeline.set(y, true); if (b != null) select(asPick({ kind: 'body', id: b })); },
+  seek: (y, b) => {
+    // events past the simulated frontier can't be shown yet: park the year, go as far
+    // as we can, and the loop lands on the real year once it's simulated
+    const front = sim.done ? 10000 : (sim.years[sim.frontier] ?? 0);
+    if (y > front) pendingYear = y;
+    timeline.set(Math.min(y, front), true);
+    if (b != null) select(asPick({ kind: 'body', id: b }));
+  },
   open: (pid) => { inspector.openPerson(pid); inspector.el.classList.add('open'); startFollow(pid); },
 });
 app.append(lifePick.el);
