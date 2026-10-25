@@ -1383,7 +1383,7 @@ paths.setAgent(new OracleAgent(import.meta.env.VITE_ELEVEN_AGENT_ID || null, {
   // tool arguments come from the LLM: coerce them before they reach the sim
   find_futures: async ({ goal }) => {
     const r = await paths.ask(String(goal ?? ''));
-    return 'error' in r ? `${r.error} Try: ${r.suggestions.join(', ')}.` : toolSummary(r.goal, r.results, r.tried);
+    return 'error' in r ? `${r.error} Try: ${r.suggestions.join(', ')}.` : toolSummary(r.chain, r.results, r.tried);
   },
   watch_future: async ({ future, year }) => {
     const f = Math.trunc(Number(future)), y = year == null ? undefined : Math.round(Number(year));

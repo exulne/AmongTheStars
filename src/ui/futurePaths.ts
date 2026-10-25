@@ -4,7 +4,7 @@
 
 import './paths.css';
 import { Pathfinder } from './pathfinder.ts';
-import { compareFutures, countLine, lineageSeeds, narrateFuture, narrateOverview, parseGoal, shownFutures, type FutureResult, type Goal, type Step } from '../sim/milestones.ts';
+import { chainLabel, chainOf, compareFutures, countLine, lineageSeeds, narrateFuture, narrateOverview, parseGoal, shownFutures, type Chain, type FutureResult, type Step } from '../sim/milestones.ts';
 import type { World } from '../sim/world.ts';
 import type { Voice } from '../ship/voice.ts';
 import type { OracleAgent } from '../ship/agent.ts';
@@ -24,7 +24,7 @@ export interface PathsOpts {
   show: (seed: number, calYear: number, opts?: { body?: number; system?: number; play?: boolean }) => void;
 }
 
-export type AskResult = { goal: Goal; results: FutureResult[]; tried: number } | { error: string; suggestions: string[] };
+export type AskResult = { chain: Chain; results: FutureResult[]; tried: number } | { error: string; suggestions: string[] };
 
 export class FuturePaths {
   el: HTMLElement;
@@ -40,7 +40,7 @@ export class FuturePaths {
   private speakBox: HTMLInputElement;
   private oracleBtn: HTMLButtonElement;
   private agent: OracleAgent | null = null;
-  private goal: Goal | null = null;
+  private chain: Chain | null = null;
   private results: FutureResult[] = [];
   private seq = 0;
   private tried = 0;
@@ -173,58 +173,65 @@ export class FuturePaths {
     // a live Oracle conversation keeps its transcript; only cold asks clear it
     if (!this.agent?.active) { this.transcriptEl.hidden = true; this.transcriptEl.innerHTML = ''; }
     if ('error' in pr) {
-      this.goal = null;
+      this.chain = null;
       this.status(pr.error);
       this.footerEl.innerHTML = `Try: ${pr.suggestions.map((s) => `<button class="link pf-sug" type="button">${esc(s)}</button>`).join(' ')}`;
       this.cardsEl.innerHTML = '';
       this.footerEl.querySelectorAll<HTMLButtonElement>('.pf-sug').forEach((b) => b.addEventListener('click', () => void this.ask(b.textContent!)));
       return Promise.resolve(pr);
     }
-    this.goal = pr.goal;
+    const chain = this.chain = chainOf(pr.goal);
+    const label = chainLabel(chain);
     this.showAll = false;
     this.cardsEl.innerHTML = '';
     this.footerEl.textContent = '';
-    this.status(`Simulating futures toward ${pr.goal.label}…`);
+    this.status(`Simulating futures toward ${label}…`);
     const { seeds } = lineageSeeds(this.opts.seed(), 0, this.readFutures());
     return new Promise((resolve) => {
-      this.pathfinder.run(pr.goal, seeds, (r) => {
+      this.pathfinder.run(chain, seeds, (r) => {
         if (seq !== this.seq) return;
         this.results.push(r);
         this.tried++;
         const got = this.results.filter((x) => x.reached).length;
-        this.status(countLine(got, this.tried, pr.goal.label, { live: true }));
+        this.status(countLine(got, this.tried, label, { live: true }));
         this.render();
       }, (results) => {
-        if (seq !== this.seq) return resolve({ goal: pr.goal, results: [], tried: results.length });
+        if (seq !== this.seq) return resolve({ chain, results: [], tried: results.length });
         this.results = results;
         this.tried = results.length;
         const got = results.filter((r) => r.reached);
         const near = results.filter((r) => !r.reached).map((r) => r.progress).filter(Boolean)[0];
-        this.status(countLine(got.length, this.tried, pr.goal.label, { near }));
+        this.status(countLine(got.length, this.tried, label, { near }));
         this.render(true);
-        if (this.opts.voice.speak && !this.agent?.active) void this.opts.voice.say(narrateOverview(pr.goal, results, this.tried));
-        resolve({ goal: pr.goal, results, tried: this.tried });
+        if (this.opts.voice.speak && !this.agent?.active) void this.opts.voice.say(narrateOverview(chain, results, this.tried));
+        resolve({ chain, results, tried: this.tried });
       });
     });
+  }
+
+  /** The chain's last goal — whose body/system a full-chain Watch or Enter focuses. */
+  private lastGoal(): { body?: number; system?: number } {
+    return this.chain?.stages[this.chain.stages.length - 1][0] ?? {};
   }
 
   /** Fly the screen into a future: goal year, or a clicked step's year. */
   watch(seed: number, year?: number): void {
     const r = this.results.find((x) => x.seed === seed && x.reached);
-    const g = this.goal;
-    if (!r || !g) { this.opts.show(seed, year ?? 2040, {}); return; }
+    const g = this.lastGoal();
+    if (!r || !this.chain) { this.opts.show(seed, year ?? 2040, {}); return; }
     this.opts.show(seed, year ?? r.year!, { body: g.body !== undefined && g.body >= 0 ? g.body : r.steps[r.steps.length - 1]?.body, system: g.system, play: year === undefined });
   }
 
   private seekStep(r: FutureResult, s: Step): void {
-    this.opts.show(r.seed, s.year, { body: s.body, system: this.goal?.system });
+    this.opts.show(r.seed, s.year, { body: s.body, system: this.lastGoal().system });
   }
 
   private render(final = false): void {
-    const g = this.goal;
-    if (!g) return;
+    const c = this.chain;
+    if (!c) return;
+    const g = this.lastGoal();
     const got = this.results.filter((r) => r.reached).sort((a, b) => (a.year ?? 0) - (b.year ?? 0));
-    const { medianYear, highlights, standouts } = compareFutures(g, this.results);
+    const { medianYear, highlights, standouts } = compareFutures(c, this.results);
     const medianCard = got.find((r) => r.year === medianYear);
     const shown = this.showAll ? got : shownFutures(got, medianYear, standouts);
     this.cardsEl.innerHTML = '';
@@ -237,9 +244,11 @@ export class FuturePaths {
         : r === medianCard ? 'the middle future'
         : `${Math.abs(r.year - medianYear)} years ${r.year < medianYear ? 'before' : 'after'} the median`;
       const hl = highlights.get(r.seed);
+      const parts = r.parts.length > 1 ? r.parts.filter((p) => p.year !== undefined) : [];
       card.innerHTML = `
         <div class="pf-card-head"><b>Future #${r.seed} — ${r.year}</b><span class="pf-delta">${esc(delta)}</span></div>
         ${hl ? `<p class="pf-hl">${esc(hl)}</p>` : ''}
+        ${parts.length ? `<div class="pf-parts">${parts.map((p, i) => `<div class="pf-part" role="button" tabindex="0" data-i="${i}"><span class="y num">${p.year}</span><span>${esc(p.label)}${p.already ? ' (already true)' : ''}</span></div>`).join('')}</div>` : ''}
         <canvas class="pf-spark" aria-hidden="true"></canvas>
         <div class="pf-steps">${r.steps.map((s, i) => `<div class="pf-step${s.kind === 'goal' ? ' goal' : ''}" role="button" tabindex="0" data-i="${i}"><span class="y num">${s.year}</span><span>${esc(s.text)}</span></div>`).join('')}</div>
         <div class="pf-actions">
@@ -248,8 +257,9 @@ export class FuturePaths {
           <button class="link pf-enter" type="button">Enter</button>
         </div>`;
       card.querySelectorAll<HTMLElement>('.pf-step').forEach((el) => el.addEventListener('click', () => this.seekStep(r, r.steps[Number(el.dataset.i)])));
+      card.querySelectorAll<HTMLElement>('.pf-part').forEach((el) => { const p = parts[Number(el.dataset.i)]; el.addEventListener('click', () => this.opts.show(r.seed, p.year!, { body: p.body })); });
       card.querySelector('.pf-watch')!.addEventListener('click', () => this.watch(r.seed));
-      card.querySelector('.pf-hear')!.addEventListener('click', () => { if (!this.agent?.active) void this.opts.voice.say(narrateFuture(g, r, highlights.get(r.seed))); });
+      card.querySelector('.pf-hear')!.addEventListener('click', () => { if (!this.agent?.active) void this.opts.voice.say(narrateFuture(c, r, highlights.get(r.seed))); });
       card.querySelector('.pf-enter')!.addEventListener('click', () => this.opts.show(r.seed, r.year!, { body: g.body !== undefined && g.body >= 0 ? g.body : r.steps[r.steps.length - 1]?.body, system: g.system }));
       this.cardsEl.append(card);
       this.spark(card.querySelector('canvas')!, r);

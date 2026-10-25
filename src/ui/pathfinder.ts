@@ -4,13 +4,13 @@
 
 import PathWorker from '../sim/pathWorker.ts?worker&inline';
 import type { FromPaths, ToPaths } from '../sim/pathWorker.ts';
-import type { FutureResult, Goal } from '../sim/milestones.ts';
+import type { Chain, FutureResult } from '../sim/milestones.ts';
 
 export class Pathfinder {
   private workers: Worker[] = [];
   private idle: Worker[] = [];
   private token = 0;
-  private goal: Goal | null = null;
+  private goal: Chain | null = null;
   private seeds: number[] = [];
   private nextSeed = 0;
   private running = 0;
@@ -24,9 +24,9 @@ export class Pathfinder {
    * not); `onDone` fires once at the end with all results — reached futures
    * first by year, then the misses. A new run() cancels whatever was going.
    */
-  run(goal: Goal, seeds: number[], onResult: (r: FutureResult) => void, onDone: (results: FutureResult[]) => void): void {
+  run(chain: Chain, seeds: number[], onResult: (r: FutureResult) => void, onDone: (results: FutureResult[]) => void): void {
     const t = ++this.token;
-    this.goal = goal;
+    this.goal = chain;
     this.onResult = onResult;
     this.onDone = onDone;
     this.results = [];
@@ -52,7 +52,7 @@ export class Pathfinder {
       const w = this.idle.pop()!;
       const seed = this.seeds[this.nextSeed++];
       this.running++;
-      w.postMessage({ type: 'find', goal: this.goal, seed, token: this.token } satisfies ToPaths);
+      w.postMessage({ type: 'find', chain: this.goal, seed, token: this.token } satisfies ToPaths);
     }
     if (this.nextSeed >= this.seeds.length && this.running === 0) this.finish();
   }

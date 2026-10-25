@@ -28,6 +28,35 @@ export interface Goal {
 
 export type ParseResult = { goal: Goal } | { error: string; suggestions: string[] };
 
+export interface Chain { stages: Goal[][] }      // stages in order ("then"); goals within a stage in any order ("and")
+export type Joint = 'then' | 'and';
+export const chainOf = (g: Goal): Chain => ({ stages: [[g]] });
+
+/** "the first Dyson swarm and a trillion people, and then a breathable Venus" */
+export function chainLabel(c: Chain): string {
+  return c.stages.map((s) => s.map((g) => g.label).join(' and ')).join(' and then ');
+}
+
+/** joints[i] joins goals[i] and goals[i+1]; 'then' starts a new stage. */
+export function chainFrom(goals: Goal[], joints: Joint[]): Chain {
+  const stages: Goal[][] = [[goals[0]]];
+  for (let i = 1; i < goals.length; i++) {
+    if (joints[i - 1] === 'then') stages.push([goals[i]]);
+    else stages[stages.length - 1].push(goals[i]);
+  }
+  return { stages };
+}
+
+/** The inverse of chainFrom. */
+export function chainParts(c: Chain): { goals: Goal[]; joints: Joint[] } {
+  const goals: Goal[] = [], joints: Joint[] = [];
+  for (const s of c.stages) for (const g of s) {
+    if (goals.length) joints.push(g === s[0] ? 'then' : 'and');
+    goals.push(g);
+  }
+  return { goals, joints };
+}
+
 const SUGGESTIONS = ['colonisation of Mars', 'terraforming Venus', 'the first Dyson swarm', 'mind uploading'];
 
 const TECH_INDEX = new Map(TECHS.map((t, i) => [t.id, i]));
@@ -303,18 +332,6 @@ function geoRow(e: Engine, b: number): number {
   return -1;
 }
 
-const evMark = new WeakMap<Engine, number>();
-/** Scan only events logged since the last check on this engine. */
-function eventArrived(e: Engine, match: (ev: SimEvent) => boolean): boolean {
-  const evs = e.events;
-  const from = evMark.get(e) ?? 0;
-  for (let i = from; i < evs.length; i++) {
-    if (match(evs[i])) { evMark.set(e, i + 1); return true; }
-  }
-  evMark.set(e, evs.length);
-  return false;
-}
-
 function eventMatch(goal: Goal, ev: SimEvent): boolean {
   if (ev.type !== goal.event) return false;
   return goal.body === undefined || ev.body === goal.body;
@@ -345,7 +362,7 @@ export function reached(goal: Goal, e: Engine): boolean {
     case 'tech': return st.techDone[goal.tech!] >= 0;
     case 'metric': return e.series[st.step * NGM + GM[goal.metric!]] >= goal.threshold!;
     case 'pop': return S[goal.body! * NF + F.pop] >= goal.threshold!;
-    case 'event': return eventArrived(e, (ev) => eventMatch(goal, ev));
+    case 'event': return e.events.some((ev) => eventMatch(goal, ev));
   }
 }
 
@@ -355,7 +372,7 @@ const byName = (e: Engine, b: number) => e.world.bodies[b]?.name ?? 'somewhere';
 const sysOf = (e: Engine, b: number) => e.world.systems[e.world.bodies[b]?.system ?? 0]?.name ?? 'somewhere';
 
 /** The sim year the goal was hit (as close as the record allows). */
-function goalYear(goal: Goal, e: Engine): number {
+export function goalYear(goal: Goal, e: Engine): number {
   switch (goal.kind) {
     case 'terraform': {
       for (let i = e.events.length - 1; i >= 0; i--) {
@@ -451,9 +468,9 @@ function goalStepText(goal: Goal, e: Engine): string {
   }
 }
 
-/** The steps that led to the goal, sorted by year, the goal itself last. At most 12. */
-export function pathOf(goal: Goal, e: Engine): Step[] {
-  const st = e.st, goalSim = goalYear(goal, e), goalCal = YEAR0 + goalSim;
+/** The steps that led to the goal, sorted by year, the goal itself last. At most 12. endCal overrides the end year (chains). */
+export function pathOf(goal: Goal, e: Engine, endCal?: number): Step[] {
+  const st = e.st, goalSim = endCal !== undefined ? endCal - YEAR0 : goalYear(goal, e), goalCal = YEAR0 + goalSim;
   const B = goalBodyNow(goal, e);
   const R = relevantTechs(goal, e, goalSim);
   // the goal's own techs plus their direct requirements come first in priority
@@ -551,32 +568,135 @@ export function pathOf(goal: Goal, e: Engine): Step[] {
 export interface FutureResult {
   seed: number;
   reached: boolean;
-  year?: number;          // calendar year the goal was hit
+  year?: number;          // calendar year the goal (or chain's end) was hit
   step: number;           // engine step at that moment
   steps: Step[];
+  parts: { label: string; stage: number; year?: number; already?: boolean; body?: number }[];
   progress?: string;      // how close a miss came
   stats: { pop: number; systems: number; kardashev: number; era: string };
   techYears: Record<number, number>;
   spark: { years: Float64Array; pop: Float64Array };
 }
 
+/** A goal hit in a chain evaluation: the year it counted, the step, whether it was already true. */
+export interface PartHit { year: number; step: number; already: boolean; body?: number }
+
+/** Drives a chain through an engine's life: each stage's parts must all be seen;
+ *  'then' stages open only once the previous stage is complete. */
+export class ChainTracker {
+  readonly chain: Chain;
+  stage = 0;
+  done = false;
+  completedStep = 0;
+  hits: (PartHit | null)[][];
+  private e: Engine;
+  private openStep: number[] = [0];
+  private openYear: number[];
+  private scan: number[][];                 // per-part event-log mark, per stage
+  private truth: boolean[][];               // last check's truth of every non-event part
+
+  constructor(chain: Chain, e: Engine) {
+    this.chain = chain;
+    this.e = e;
+    this.hits = chain.stages.map((s) => s.map(() => null));
+    this.scan = chain.stages.map((s) => s.map(() => 0));
+    this.openYear = [YEAR0 + e.years[0]];
+    this.truth = chain.stages.map((s) => s.map((g) => g.kind === 'event' ? false : reached(g, e)));
+  }
+
+  /** One engine step, then evaluate at the new state. */
+  advance(): boolean {
+    const before = this.e.events.length;
+    this.e.step();
+    return this.check(before);
+  }
+
+  /** Evaluate the open stage at the current state (events of the just-run step are e.events[before..]). */
+  check(before: number): boolean {
+    if (this.done) return true;
+    const e = this.e, t = e.st.step;
+    trackPeaks(e);
+    const nowTruth = this.chain.stages.map((s) => s.map((g) => g.kind === 'event' ? false : reached(g, e)));
+    while (this.stage < this.chain.stages.length) {
+      const s = this.stage, stage = this.chain.stages[s];
+      let all = true;
+      for (let i = 0; i < stage.length; i++) {
+        if (this.hits[s][i]) continue;
+        const g = stage[i];
+        if (g.kind === 'event') {
+          const evs = e.events;
+          for (let j = Math.max(0, this.scan[s][i]); j < evs.length; j++) {
+            if (eventMatch(g, evs[j])) {
+              this.hits[s][i] = { year: YEAR0 + evs[j].year, step: t, already: false, body: goalBodyNow(g, e) };
+              this.scan[s][i] = j + 1;
+              break;
+            }
+          }
+          if (!this.hits[s][i]) { this.scan[s][i] = evs.length; all = false; }
+        } else if (nowTruth[s][i]) {
+          const already = s > 0 && t === this.openStep[s] && this.truth[s][i];
+          const year = already ? this.openYear[s] : Math.max(YEAR0 + goalYear(g, e), this.openYear[s]);
+          this.hits[s][i] = { year, step: t, already, body: goalBodyNow(g, e) };
+        } else all = false;
+      }
+      if (!all) break;
+      if (s + 1 < this.chain.stages.length) {
+        this.stage = s + 1;
+        this.openStep[s + 1] = t;
+        this.openYear[s + 1] = Math.max(...this.hits[s].map((h) => h!.year));
+        for (let i = 0; i < this.chain.stages[s + 1].length; i++) {
+          if (this.chain.stages[s + 1][i].kind === 'event') this.scan[s + 1][i] = before;
+        }
+      } else {
+        this.done = true;
+        this.completedStep = t;
+        break;
+      }
+    }
+    this.truth = nowTruth;
+    return this.done;
+  }
+
+  /** The calendar year the last stage completed. Only meaningful when done. */
+  completionYear(): number {
+    return Math.max(...this.hits.flat().map((h) => h?.year ?? 0));
+  }
+}
+
 /** Wrap up a finished (or stopped-at-the-goal) engine into a FutureResult. */
-export function resultOf(goal: Goal, e: Engine, hit: boolean): FutureResult {
+export function resultOf(chain: Chain, e: Engine, tr: ChainTracker): FutureResult {
   const st = e.st, row = st.step * NGM;
   const n = st.step + 1;
   const years = new Float64Array(n), pop = new Float64Array(n);
   for (let i = 0; i < n; i++) { years[i] = YEAR0 + e.years[i]; pop[i] = e.series[i * NGM + GM.pop]; }
-  const goalSim = hit ? goalYear(goal, e) : 0;
-  const R = relevantTechs(goal, e, hit ? goalSim : e.year);
+  const parts = chain.stages.flatMap((s, si) => s.map((g, gi) => {
+    const h = tr.hits[si][gi];
+    return { label: g.label, stage: si, year: h?.year, already: h?.already, body: h?.body };
+  }));
+  const hit = tr.done, endCal = hit ? tr.completionYear() : 0;
+  const goals = chain.stages.flat();
+  const last = parts.reduce((m, p, i) => (p.year !== undefined && (m < 0 || p.year >= parts[m].year!)) ? i : m, -1);
+  const lastGoal = goals[last >= 0 ? last : goals.length - 1];
+  const goalSim = hit ? endCal - YEAR0 : 0;
+  const R = relevantTechs(lastGoal, e, hit ? goalSim : e.year);
   const techYears: Record<number, number> = {};
   for (const i of R) if (st.techDone[i] >= 0 && (!hit || st.techDone[i] <= goalSim)) techYears[i] = YEAR0 + st.techDone[i];
+  let prog: string | undefined;
+  if (!hit) {
+    const open = Math.min(tr.stage, chain.stages.length - 1);
+    const firstUnmet = chain.stages[open].find((_, gi) => !tr.hits[open][gi]) ?? chain.stages[open][0];
+    const seen = parts.filter((p) => p.year !== undefined);
+    prog = !seen.length ? progress(firstUnmet, e)
+      : `reached ${seen.map((p) => `${p.label} in ${p.year}`).join(', ')}, never ${firstUnmet.label} — ${progress(firstUnmet, e)}`;
+  }
   return {
     seed: e.seed,
     reached: hit,
-    year: hit ? YEAR0 + goalSim : undefined,
+    year: hit ? endCal : undefined,
     step: st.step,
-    steps: hit ? pathOf(goal, e) : [],
-    progress: hit ? undefined : progress(goal, e),
+    steps: hit ? pathOf(lastGoal, e, endCal) : [],
+    parts,
+    progress: hit ? undefined : prog,
     stats: {
       pop: e.series[row + GM.pop],
       systems: e.series[row + GM.systems],
@@ -638,7 +758,8 @@ export function progress(goal: Goal, e: Engine): string {
   }
 }
 
-export function compareFutures(goal: Goal, rs: FutureResult[]): { medianYear: number; minYear: number; maxYear: number; highlights: Map<number, string>; standouts: number[] } {
+export function compareFutures(chain: Chain, rs: FutureResult[]): { medianYear: number; minYear: number; maxYear: number; highlights: Map<number, string>; standouts: number[] } {
+  const goal = chain.stages[chain.stages.length - 1][0];
   const got = rs.filter((r) => r.reached && r.year !== undefined);
   const years = got.map((r) => r.year!).sort((a, b) => a - b);
   const medianYear = years.length ? years[Math.floor((years.length - 1) / 2)] : 0;
@@ -725,13 +846,14 @@ export function huntLine(z: number, n: number): string {
 }
 
 /** Two or three sentences on the whole set of futures, for speech. */
-export function narrateOverview(goal: Goal, rs: FutureResult[], tried: number): string {
+export function narrateOverview(chain: Chain, rs: FutureResult[], tried: number): string {
+  const label = chainLabel(chain);
   const got = rs.filter((r) => r.reached && r.year !== undefined);
   const missed = rs.filter((r) => !r.reached);
   const near = missed.map((r) => r.progress).filter(Boolean)[0];
-  if (!got.length) return countLine(0, tried, goal.label, { near });
-  const { medianYear, minYear, maxYear, highlights, standouts } = compareFutures(goal, rs);
-  let s = `${countLine(got.length, tried, goal.label)} ${minYear === maxYear ? `All of them in ${minYear}.` : `They got there between ${minYear} and ${maxYear}, the middle one in ${medianYear}.`}`;
+  if (!got.length) return countLine(0, tried, label, { near });
+  const { medianYear, minYear, maxYear, highlights, standouts } = compareFutures(chain, rs);
+  let s = `${countLine(got.length, tried, label)} ${minYear === maxYear ? `All of them in ${minYear}.` : `They got there between ${minYear} and ${maxYear}, the middle one in ${medianYear}.`}`;
   const star = standouts.length ? got.find((r) => r.seed === standouts[0]) : got.find((r) => highlights.get(r.seed));
   if (star) s += ` One stands out: future ${star.seed}, where ${highlights.get(star.seed)}.`;
   if (missed.length) s += ` The others never got there${near ? ` — the closest: ${near}` : ''}.`;
@@ -739,9 +861,10 @@ export function narrateOverview(goal: Goal, rs: FutureResult[], tried: number): 
 }
 
 /** Two to four sentences on one future's road. */
-export function narrateFuture(goal: Goal, r: FutureResult, highlight?: string): string {
-  if (!r.reached || r.year === undefined) return `Future ${r.seed} never reaches ${goal.label}.${r.progress ? ` ${r.progress}.` : ''}`;
-  let s = `Future ${r.seed} reaches ${goal.label} in ${r.year}.`;
+export function narrateFuture(chain: Chain, r: FutureResult, highlight?: string): string {
+  const label = chainLabel(chain);
+  if (!r.reached || r.year === undefined) return `Future ${r.seed} never reaches ${label}.${r.progress ? ` ${r.progress}.` : ''}`;
+  let s = `Future ${r.seed} reaches ${label} in ${r.year}.`;
   const gotMedian = r.steps.filter((x) => x.kind !== 'goal');
   if (highlight) s += ` ${highlight.charAt(0).toUpperCase()}${highlight.slice(1)}.`;
   if (gotMedian.length) {
@@ -752,13 +875,13 @@ export function narrateFuture(goal: Goal, r: FutureResult, highlight?: string): 
 }
 
 /** The plain-text answer handed back to the conversational agent. */
-export function toolSummary(goal: Goal, rs: FutureResult[], tried: number): string {
+export function toolSummary(chain: Chain, rs: FutureResult[], tried: number): string {
   const got = rs.filter((r) => r.reached && r.year !== undefined).sort((a, b) => a.year! - b.year!);
   const missed = rs.filter((r) => !r.reached);
   const near = missed.map((r) => r.progress).filter(Boolean)[0];
-  const lines: string[] = [`Goal: ${goal.label} (${goal.detail}).`];
-  const { medianYear, minYear, maxYear, highlights, standouts } = compareFutures(goal, rs);
-  lines.push(countLine(got.length, tried, goal.label, { near }));
+  const lines: string[] = [`Goal: ${chainLabel(chain)} (${chain.stages.flat().map((g) => g.detail).join('; ')}).`];
+  const { medianYear, minYear, maxYear, highlights, standouts } = compareFutures(chain, rs);
+  lines.push(countLine(got.length, tried, chainLabel(chain), { near }));
   if (got.length) {
     lines.push(`${minYear === maxYear ? `They got there in ${minYear}` : `They got there between ${minYear} and ${maxYear}`} (median ${medianYear}).${missed.length ? ` The others never did by 12040${near ? `; the closest: ${near}` : ''}.` : ''}`);
     for (const r of shownFutures(got, medianYear, standouts)) {

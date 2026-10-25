@@ -33,6 +33,10 @@
 .paths .pf-card .pf-step:hover .y { color: var(--accent); }
 .paths .pf-card .pf-step .y { flex: 0 0 3.2em; text-align: right; color: var(--quiet); }
 .paths .pf-card .pf-step.goal { color: var(--accent); }
+.paths .pf-card .pf-parts { margin-top: 0.35rem; }
+.paths .pf-card .pf-part { display: flex; gap: 0.6rem; align-items: baseline; margin: 0.15rem 0; font-size: 0.78rem; cursor: pointer; }
+.paths .pf-card .pf-part:hover { color: var(--accent); }
+.paths .pf-card .pf-part .y { flex: 0 0 3.2em; text-align: right; color: var(--accent); }
 .paths .pf-card .pf-actions { display: flex; gap: 0.9rem; margin-top: 0.4rem; }
 .paths .pf-miss { margin: 0.4rem 0 0; font-size: 0.76rem; color: var(--quiet); }
 .paths .pf-footer { margin: 0.7rem 0 0; font-size: 0.78rem; }
