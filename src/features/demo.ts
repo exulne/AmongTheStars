@@ -59,20 +59,20 @@ const BEATS: Beat[] = [
     cam: (_b, k, h) => {
       const a = h.locateGalaxy('Andromeda'); if (!a) return null;
       const e = sine(k);
-      return { pos: around(a.pos, a.radius * lerp(4.2, 2.6, e), lerp(-0.9, 0.5, e), lerp(0.55, 0.25, e)), target: a.pos.clone() };
+      return { pos: around(a.pos, a.radius * lerp(1.7, 0.95, e), lerp(-0.9, 0.5, e), lerp(0.55, 0.25, e)), target: a.pos.clone() };
     } },
   { t0: 10, t1: 17, level: 'universe', year: 9000, caption: 'One possible future. 10,000 years.',
     cam: (_b, k, h) => {
       const a = h.locateGalaxy('Andromeda'), m = h.locateGalaxy('Milky Way'); if (!a || !m) return null;
       const e = ease(k);
       const tgt = a.pos.clone().lerp(m.pos, e);
-      const d = lerp(a.radius * 2.6, m.radius * 2.2, e) * (1 + 1.4 * Math.sin(Math.PI * e));
+      const d = lerp(a.radius * 0.95, m.radius * 1.15, e) * (1 + 1.8 * Math.sin(Math.PI * e));
       return { pos: around(tgt, d, lerp(0.5, 1.6, e), lerp(0.25, 0.7, e)), target: tgt };
     } },
   { t0: 17, t1: 20, level: 'galaxy', year: 9000, caption: 'One possible future. 10,000 years.',
     cam: (b, k) => orbit(b, lerp(2.4, 1.0, ease(k)), lerp(-0.5, 0, ease(k)), 0.1) },
   { t0: 20, t1: 25, level: 'multiverse', caption: 'Every future is a different history. Here are hundreds of them.',
-    cam: (b, k) => orbit(b, lerp(0.75, 1.35, sine(k)), lerp(0, 0.6, k)) },
+    cam: (b, k) => orbit(b, lerp(0.45, 0.75, sine(k)), lerp(0, 0.6, k)) },
   { t0: 25, t1: 28, level: 'local', year: 600, caption: 'Back home: the stars within a few dozen light years.',
     cam: (b, k) => orbit(b, lerp(1.7, 0.9, ease(k)), lerp(0.4, 0, k), 0.15) },
   { t0: 28, t1: 31, level: 'system', year: 600, caption: 'The Solar System, settled world by world.', prep: (h) => h.setPlace(h.earth, 0),
