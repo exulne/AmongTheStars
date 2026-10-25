@@ -144,11 +144,28 @@ export class LifePick {
   private async go(random: boolean): Promise<void> {
     const seq = ++this.seq;
     const b = Number(this.bodySel.value);
-    const kind = this.val('.lp-kind');
+    // 'anyone' means the user didn't choose — roll a kind per draw rather than fixing one
+    const kind = this.val('.lp-kind') === 'any' ? 'random' : this.val('.lp-kind');
     const where = b >= 0 ? this.opts.nameOf(b) : null;
     const want = this.want();
-    const filtered = Object.values(want).some((v) => v !== undefined);
     const n = random ? 0 : Math.max(0, Math.floor(parseCount(this.nInput.value) || 0));
+    // anything the user left blank is a random roll, not an assumed value — but a fully
+    // pinned person (world + number) is already fixed, so stats stay out of the way
+    if (!(b >= 0 && n > 0)) {
+      const one = <T>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
+      const randRange = (lo0: number, span: number, pad: number): [number, number] => { const lo = lo0 + Math.floor(Math.random() * span); return [lo, lo + pad + Math.floor(Math.random() * pad)]; };
+      want.sex ??= one(['f', 'm'] as const);
+      want.mood ??= one([...MOODS_GOOD, ...MOODS_BAD]);
+      want.health ??= one(HEALTH_OPTS.map((o) => o[0]));
+      want.education ??= one(EDU_OPTS);
+      want.devotion ??= one(DEVOTION_OPTS);
+      want.wealth ??= randRange(0, 80, 10);   // percentile window of ~10–20
+      want.age ??= randRange(0, 140, 40);
+      want.height ??= randRange(130, 55, 15);
+      want.moves ??= [0, Math.floor(Math.random() * 4)];
+      if (!want.born) { const Y = this.opts.year(); want.born = randRange(0, Math.max(1, Math.floor(Y * 0.9)), Math.max(40, Math.floor(Y * 0.05))); }
+    }
+    const filtered = Object.values(want).some((v) => v !== undefined);
     this.say('Finding them…', seq);
     if (!this.bodiesReady) {
       const r = await this.opts.bodies();
