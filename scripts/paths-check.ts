@@ -389,11 +389,13 @@ if (poolOk) {
 }
 
 // ------------------------------------------------------------------ run futures to the goals
-// Probe values (calendar years), engines with no war minds and no ledger:
+// Probe values (calendar years), engines with no war minds and no ledger. Re-taken after merging the
+// orbits-and-impacts simulation (launch economics shifts the timeline); Mars cross-checked by stepping
+// the engine and reading the body's stage directly:
 const PROBE: Record<string, number[]> = {
-  'colonisation of mars': [2056, 2085, 2053],
-  'terraform of venus': [2552, 2612, 2676],
-  'first dyson sphere construction': [2388, 2388, 2396],
+  'colonisation of mars': [2082, 2109, 2068],
+  'terraform of venus': [2580, 2708, 2620],
+  'first dyson sphere construction': [2428, 2380, 2412],
 };
 
 console.log('\npaths');

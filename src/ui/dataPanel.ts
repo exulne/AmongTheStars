@@ -24,6 +24,8 @@ export interface DataHost {
   pickYear?(y: number): void;
   /** the state shown at the current year (settlements, globals), if loaded */
   snap?(): import('../sim/client.ts').StateMsg | null;
+  /** play an impact, close approach or deflection in the 3D view (src/view/impactDirector.ts) */
+  visualize?(src: import('../impact/visual.ts').VisualScenario | Promise<import('../impact/visual.ts').VisualScenario | null>, opts?: { alternates?: Partial<Record<import('../impact/visual.ts').Representative, import('../impact/visual.ts').VisualScenario>>; replayYear?: number; persistentScar?: boolean }): void;
 }
 
 /** One tab of the desk. `refresh` runs when the year, run or selection changes while it shows. */

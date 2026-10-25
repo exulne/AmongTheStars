@@ -17,7 +17,9 @@ import { ageLevel, orbitOf, positionKm, satrecOf, EARTH_RADIUS_KM, type AgeLevel
 import { constantWeather, dayOf, observedWeather, type AtmoMode, type SW } from '../orbit/spaceWeather.ts';
 import { IC, NIC } from '../impact/engineImpacts.ts';
 import { sitesOf } from '../impact/exposure.ts';
-import { runScenario, type Composition, type ScenarioResult } from '../impact/scenario.ts';
+import { type Composition, type ScenarioResult } from '../impact/scenario.ts';
+import { demoVisual, historicalVisual, pointFor, replayVisual, runLab, type DemoCase, type LocationReq } from '../impact/vizBuild.ts';
+import type { VisualScenario } from '../impact/visual.ts';
 import { BODIES } from '../impact/bodies.ts';
 import { isAlive } from './catalog.ts';
 import type { Engine } from './engine.ts';
@@ -32,7 +34,11 @@ export type LabReq =
   | { type: 'orbitSummary'; id: number }
   | { type: 'fleet'; id: number; year: number }
   | { type: 'impacts'; id: number; year: number }
-  | { type: 'impactLab'; id: number; body: string; diameterM: [number, number, number]; composition: Composition | 'unknown'; vInfKms?: number; year: number; seed: number; n?: number; label?: string };
+  | { type: 'impactLab'; id: number; body: string; diameterM: [number, number, number]; composition: Composition | 'unknown'; vInfKms?: number; year: number; seed: number; n?: number; label?: string; location?: LocationReq; earthSurface?: 'ocean' | 'land'; banner?: string; objectName?: string }
+  /** a visual scenario: an observed case, an exact replay of a logged impact, or a fixed test case */
+  | { type: 'impactViz'; id: number; case: 'historical'; key: string }
+  | { type: 'impactViz'; id: number; case: 'replay'; impactId: number }
+  | { type: 'impactViz'; id: number; case: 'demo'; key: DemoCase };
 
 export interface SatInfo {
   norad: number; name: string; objectId: string; epochIso: string; ageDays: number; age: AgeLevel;
@@ -56,7 +62,8 @@ export type LabRes =
   | { type: 'orbitSummary'; id: number; summary: OrbitSummary }
   | { type: 'fleet'; id: number; fleet: ReturnType<typeof fleetStep> | null; trade: Record<AtmoMode, ReturnType<typeof altitudeTrade>>; leoCostPerKg: number; cycle: { n: number; ssn: number; f107a: number; grand: boolean } | null }
   | { type: 'impacts'; id: number; rows: Float64Array; seed: number }
-  | { type: 'impactLab'; id: number; result: LabScenario | null; error?: string };
+  | { type: 'impactLab'; id: number; result: LabScenario | null; error?: string }
+  | { type: 'impactViz'; id: number; visual: VisualScenario | null; error?: string };
 
 export interface OrbitSummary {
   snapshotId: string; retrieved: string; count: number; epochMinMs: number; epochMaxMs: number; medianEpochMs: number;
@@ -74,6 +81,10 @@ export interface LabScenario {
   median: { outcome: string; deposition: [number, number][]; track: [number, number][]; notes: string[]; crater: { finalM: number; transientM: number; morphology: string; material: string } | null; plume: unknown; blastKm: unknown; thermalKm: number | null; ejecta1mKm: number | null; seismic: number | null; tsunami: unknown; sites: { site: number; distanceKm: number; deaths: number; capitalLost: number }[]; impactor: unknown; orbitalLoss: number };
   settlement: { pop: number; capital: number; sites: number } | null;
   limitations: string[];
+  /** three whole representative draws (scenario.ts representatives), ready for the 3D view */
+  visual: Record<'low' | 'nominal' | 'high', VisualScenario>;
+  representatives: { low: number; nominal: number; high: number; modal: string };
+  location: LocationReq | null;
 }
 
 // ---------------------------------------------------------------- observed objects
@@ -258,7 +269,10 @@ function impactLab(m: Extract<LabReq, { type: 'impactLab' }>, main: Engine | nul
       settlement = { pop, capital: cap, sites: sites.length };
     }
   }
-  const r = runScenario({ body: m.body, classification: 'hypothetical', diameterM: m.diameterM, composition: m.composition, vInfKms: m.vInfKms, sites, earth, orbitalShare, label: m.label }, m.seed, m.n ?? 120);
+  const point = m.body === 'Earth' && m.location?.mode !== 'latlon' ? undefined : pointFor(m.location, bodyId, sites, prof.radiusKm, m.seed);
+  const settled = settlement;
+  const { result: r, visual } = runLab({ body: m.body, classification: 'hypothetical', diameterM: m.diameterM, composition: m.composition, vInfKms: m.vInfKms, sites, earth, orbitalShare, label: m.label, point, earthSurface: m.body === 'Earth' ? m.earthSurface : undefined }, m.seed, m.n ?? 120,
+    { snapshotId: SNAPSHOT_ID, world: bodyId, year: m.year, label: m.label, objectName: m.objectName, banners: m.banner ? [m.banner] : [], popBefore: settled?.pop, capitalBefore: settled?.capital });
   const d = r.median, fx = d.fx;
   return {
     body: m.body, n: r.n, seed: m.seed, year: m.year, energyMt: r.energyMt, outcomes: r.outcomes, burstAltKm: r.burstAltKm, craterKm: r.craterKm, plumeKm: r.plumeKm, scarKm: r.scarKm,
@@ -270,12 +284,20 @@ function impactLab(m: Extract<LabReq, { type: 'impactLab' }>, main: Engine | nul
       sites: d.exposure.sites, impactor: d.impactor, orbitalLoss: d.exposure.orbitalLossFraction,
     },
     settlement, limitations: r.limitations,
+    visual, representatives: r.representatives, location: m.location ?? null,
   };
+}
+
+function impactViz(m: Extract<LabReq, { type: 'impactViz' }>, main: Engine | null, world: World): VisualScenario | null {
+  if (m.case === 'historical') return historicalVisual(m.key, world, SNAPSHOT_ID);
+  if (m.case === 'demo') return demoVisual(m.key, world, SNAPSHOT_ID);
+  if (!main) return null;
+  return replayVisual(world, main.impacts.rows.subarray(0, main.impacts.n * NIC), m.impactId, main.seed, SNAPSHOT_ID);
 }
 
 // ---------------------------------------------------------------- dispatch
 
-export const LAB_TYPES = new Set(['orbits', 'satSearch', 'satInfo', 'orbitSummary', 'fleet', 'impacts', 'impactLab']);
+export const LAB_TYPES = new Set(['orbits', 'satSearch', 'satInfo', 'orbitSummary', 'fleet', 'impacts', 'impactLab', 'impactViz']);
 
 export function handleLab(m: LabReq, env: { world: World; main: () => Engine | null; stateAt: (step: number) => Engine; post: (r: LabRes, transfer?: Transferable[]) => void }): void {
   const main = env.main();
@@ -288,6 +310,10 @@ export function handleLab(m: LabReq, env: { world: World; main: () => Engine | n
   else if (m.type === 'impactLab') {
     try { env.post({ type: 'impactLab', id: m.id, result: impactLab(m, main, env.stateAt, env.world) }); }
     catch (e) { env.post({ type: 'impactLab', id: m.id, result: null, error: (e as Error).message }); }
+  }
+  else if (m.type === 'impactViz') {
+    try { const v = impactViz(m, main, env.world); env.post({ type: 'impactViz', id: m.id, visual: v, error: v ? undefined : 'Nothing to visualize for this request.' }); }
+    catch (e) { env.post({ type: 'impactViz', id: m.id, visual: null, error: (e as Error).message }); }
   }
 }
 

@@ -6,7 +6,7 @@ import type { SimClient } from '../sim/client.ts';
 import type { World } from '../sim/world.ts';
 import type { Ctx, View } from '../view/views.ts';
 import './data.css';
-import { DataPanel } from './dataPanel.ts';
+import { DataPanel, type DataHost } from './dataPanel.ts';
 import { TimeTab } from './dataTime.ts';
 import { Highlight } from './highlight.ts';
 import { RunTab } from './dataRun.ts';
@@ -30,6 +30,7 @@ export interface DeskOpts {
   selectBody: (b: number) => void;
   showSeries: (key: string) => void;
   pickYear?: (y: number) => void;
+  visualize?: DataHost['visualize'];
 }
 
 export function installDataDesk(o: DeskOpts): DataPanel {
@@ -41,6 +42,7 @@ export function installDataDesk(o: DeskOpts): DataPanel {
     setHighlight: (ids) => hl.set(ids),
     showSeries: o.showSeries,
     pickYear: o.pickYear,
+    visualize: o.visualize,
     snap: () => o.ctx.snap,
   });
   desk.add(new ChartsTab(desk.hostApi));

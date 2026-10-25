@@ -10,6 +10,8 @@ const STEPS: { name: string; cmd: [string, string[]] }[] = [
   { name: 'geo-check', cmd: ['node', ['scripts/geo-check.ts']] },
   { name: 'orbit-check', cmd: ['node', ['scripts/orbit-check.ts']] },
   { name: 'impact-check', cmd: ['node', ['scripts/impact-check.ts']] },
+  { name: 'camera-check', cmd: ['node', ['scripts/camera-check.ts']] },
+  { name: 'check:impactviz', cmd: ['npm', ['run', 'check:impactviz']] },
   { name: 'query-check', cmd: ['node', ['scripts/query-check.ts']] },
   { name: 'data-check', cmd: ['node', ['scripts/data-check.ts']] },
   { name: 'trends-check', cmd: ['node', ['scripts/trends-check.ts']] },

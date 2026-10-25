@@ -68,6 +68,19 @@ button, select, input { font: inherit; color: inherit; }
 .label span { display: block; font-size: 0.66rem; font-style: italic; opacity: 0.85; font-variant-numeric: tabular-nums; }
 .label.strong { color: var(--ink); }
 .sel-ring { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; }
+/* zoom buttons in the open area's lower right, clear of the legend and the inspector; the travel line above the bottom panel, quiet until a long flight */
+.zoom-ctl { position: absolute; right: calc(min(22rem, 34vw) + 16px); bottom: calc(var(--bottom-h, 200px) + 12px); display: flex; flex-direction: column; gap: 0.35rem; }
+.zoom-ctl button { width: 2.75rem; height: 2.75rem; border: 1px solid var(--faint); border-radius: 50%; background: var(--wash); color: var(--quiet); font: 1.15rem/1 var(--serif); cursor: pointer; }
+.zoom-ctl button:hover { color: var(--ink); border-color: var(--rule); }
+.travel { position: absolute; left: 50%; bottom: calc(var(--bottom-h, 200px) + 14px); transform: translateX(-50%); display: flex; align-items: center; gap: 0.7rem;
+  max-width: calc(100vw - 32px); font-size: 0.78rem; color: var(--quiet); text-shadow: 0 0 8px #000; white-space: nowrap; }
+.travel[hidden] { display: none; }
+.travel-to { overflow: hidden; text-overflow: ellipsis; }
+.travel-bar { position: relative; display: block; width: 7rem; height: 1px; background: var(--faint); flex: none; }
+.travel-bar b { position: absolute; inset: 0; background: var(--accent); transform-origin: 0 50%; transform: scaleX(0); opacity: calc(0.45 + 0.55 * var(--v, 0)); }
+.run select { background: transparent; border: 0; border-bottom: 1px solid var(--rule); border-radius: 0; padding: 0 0.1em; font-size: 0.85rem; cursor: pointer; }
+.run select option { background: var(--void); color: var(--ink); }
+@media (max-width: 40rem) { .zoom-ctl { right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(var(--bottom-h, 200px) + 3.6rem); } }
 .sel-ring i { position: absolute; left: calc(var(--r) * -1); top: calc(var(--r) * -1); width: calc(var(--r) * 2); height: calc(var(--r) * 2); box-sizing: border-box;
   border: 1px solid var(--accent); border-radius: 50%; opacity: 0.85; box-shadow: 0 0 10px rgba(127, 227, 255, 0.35), inset 0 0 6px rgba(127, 227, 255, 0.2); }
 .sel-ring i + i { opacity: 0; box-shadow: none; animation: ring-pulse 2.4s cubic-bezier(0.2, 0.6, 0.3, 1) infinite; }

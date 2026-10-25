@@ -15,25 +15,31 @@
 import { SENTRY } from '../data/snapshotCore.ts';
 import { hash01 } from '../sim/rng.ts';
 import type { World } from '../sim/world.ts';
-import { BODIES, genericProfile, type BodyProfile } from './bodies.ts';
+import { BODIES, genericProfile, type BodyProfile, type Material } from './bodies.ts';
 import { damageBoundKm } from './effects.ts';
 import { capability, defend, type DefenseOutcome } from './defense.ts';
 import { arcKm, sitesOf, spherePoint, type Site } from './exposure.ts';
 import { CATALOG_HORIZON_YEAR, completeness2026, impactRate } from './flux.ts';
-import { evaluateDraw, sampleInputs, type Draw, type ScenarioSpec } from './scenario.ts';
+import { evaluateDraw, sampleInputs, type Draw, type DrawInputs, type ScenarioSpec } from './scenario.ts';
 
 export const D_MIN = 10; // m: smaller bodies cannot harm a settlement
 export const D_MAX = 20000;
 
-/** Impact log columns (one row per logged impact or averted impact). */
+/**
+ * Impact log columns (one row per logged impact or averted impact). The columns from `strength` on are the
+ * rest of the draw's inputs and the settlement as it stood, so a replay rebuilds the exact draw (replayDraw)
+ * instead of rolling a new one; `stream` is the deterministic key the roll was drawn from.
+ */
 export const IC = {
   id: 0, year: 1, body: 2, diameterM: 3, density: 4, speedKms: 5, angleDeg: 6, outcome: 7, burstAltKm: 8, craterKm: 9, energyMt: 10,
   deaths: 11, capitalLost: 12, warningYears: 13, flags: 14, source: 15, px: 16, py: 17, pz: 18, kind: 19, popBefore: 20, globalFatality: 21,
+  strength: 22, season: 23, material: 24, stage: 25, capitalBefore: 26, orbitalShare: 27, earthU0: 28, earthU1: 29, earthU2: 30, stream: 31,
 } as const;
-export const NIC = 22;
+export const NIC = 32;
 export const IF = { detected: 1, deflected: 2, evacuated: 4, catalogued: 8, ocean: 16 } as const;
 export const OUTCOMES = ['no-atmosphere', 'ground-impact', 'airburst', 'deep-deposition', 'decelerated'] as const;
 export const KINDS = ['stony', 'carbonaceous', 'iron', 'cometary'] as const;
+export const MATERIAL_LIST: readonly Material[] = ['water', 'sand', 'dry-soil', 'wet-soil', 'soft-rock', 'hard-rock', 'ice'];
 
 export class ImpactLog {
   rows = new Float64Array(NIC * 64);
@@ -121,6 +127,9 @@ export interface ImpactRoll {
   deaths: number; capitalLost: number;
   logged: boolean;
   point: [number, number, number];
+  /** what the draw was made of, and the settlement it was judged against (logged for exact replay) */
+  inputs: DrawInputs | null;
+  stage: number; capital: number; orbitalShare: number; stream: number;
 }
 
 /**
@@ -158,17 +167,18 @@ export function rollImpact(info: BodyImpactInfo, b: number, seed: number, step: 
     if (x.deaths < 1e-5 * pop && x.capitalLost < 1e-5 * capital && !(pop < 1e6 && x.deaths >= 1) && e0Mt < 1000) return null;
   }
   const draw = evaluateDraw(spec, inputs);
+  const kept = { inputs, stage, capital, orbitalShare, stream: step };
   let deaths = Math.min(pop, draw.exposure.deaths), capitalLost = Math.min(capital, draw.exposure.capitalLost);
   // what is worth a record (and worth deflecting): real harm, or a very large event even if it hurt no one.
   // Losses below 0.001% of a large settlement are treated as negligible and not applied.
   const notable = deaths >= 1e-5 * pop || capitalLost >= 1e-5 * capital || draw.fx.energyMt >= 1000 || (pop < 1e6 && deaths >= 1);
   const noDefense: DefenseOutcome = { detected: false, warningYears: 0, deflected: false, evacuated: false, note: '' };
-  if (!notable) return { draw, defense: noDefense, diameterM: D, deaths, capitalLost, logged: false, point };
+  if (!notable) return { draw, defense: noDefense, diameterM: D, deaths, capitalLost, logged: false, point, ...kept };
   // defenders act on what their surveys predict would do harm
   const defense = defend(D, year, info.region, capability(has), [u(5), u(6), u(7)], !!catalogued);
-  if (defense.deflected) return { draw, defense, diameterM: D, deaths: 0, capitalLost: 0, logged: true, point };
+  if (defense.deflected) return { draw, defense, diameterM: D, deaths: 0, capitalLost: 0, logged: true, point, ...kept };
   if (defense.evacuated && defense.warningYears >= 1) deaths *= 0.05;
-  return { draw, defense, diameterM: D, deaths, capitalLost, logged: true, point };
+  return { draw, defense, diameterM: D, deaths, capitalLost, logged: true, point, ...kept };
 }
 
 export function packImpact(log: ImpactLog, id: number, year: number, b: number, r: ImpactRoll, pop: number, source: number): void {
@@ -181,4 +191,39 @@ export function packImpact(log: ImpactLog, id: number, year: number, b: number, 
   R[o + IC.flags] = (r.defense.detected ? IF.detected : 0) | (r.defense.deflected ? IF.deflected : 0) | (r.defense.evacuated ? IF.evacuated : 0) | (source >= 0 ? IF.catalogued : 0) | (d?.ocean ? IF.ocean : 0);
   R[o + IC.source] = source; R[o + IC.px] = r.point[0]; R[o + IC.py] = r.point[1]; R[o + IC.pz] = r.point[2];
   R[o + IC.kind] = d ? KINDS.indexOf(d.impactor.kind) : -1; R[o + IC.popBefore] = pop; R[o + IC.globalFatality] = d?.fx.globalFatality ?? 0;
+  const inp = r.inputs;
+  R[o + IC.strength] = inp?.impactor.strengthPa ?? NaN; R[o + IC.season] = inp?.season ?? NaN; R[o + IC.material] = inp ? MATERIAL_LIST.indexOf(inp.material) : -1;
+  R[o + IC.stage] = r.stage; R[o + IC.capitalBefore] = r.capital; R[o + IC.orbitalShare] = r.orbitalShare;
+  R[o + IC.earthU0] = inp?.earthU[0] ?? NaN; R[o + IC.earthU1] = inp?.earthU[1] ?? NaN; R[o + IC.earthU2] = inp?.earthU[2] ?? NaN; R[o + IC.stream] = r.stream;
+}
+
+/** One logged row, as the fields a replay needs. */
+export function logRow(rows: Float64Array, i: number): Record<keyof typeof IC, number> {
+  const out = {} as Record<keyof typeof IC, number>;
+  for (const k of Object.keys(IC) as (keyof typeof IC)[]) out[k] = rows[i * NIC + IC[k]];
+  return out;
+}
+
+/**
+ * The exact draw behind a logged impact, rebuilt from its logged inputs and the settlement as it stood:
+ * the same evaluation the engine ran (lite integration), so outcome, burst, crater, energy and site losses
+ * come out identical. Nothing is drawn again. `trace` adds the display record of the same integration.
+ */
+export function replayDraw(world: World, row: Record<keyof typeof IC, number>, trace = true): { draw: Draw; spec: ScenarioSpec; info: BodyImpactInfo } | null {
+  const b = row.body;
+  if (!(b >= 0) || !world.bodies[b] || !(row.material >= 0) || !Number.isFinite(row.density)) return null;
+  const info = bodyImpactInfo(world, b), p = info.profile, D = row.diameterM, pop = row.popBefore, capital = row.capitalBefore;
+  const point: [number, number, number] = [row.px, row.py, row.pz];
+  const earth = info.name === 'Earth';
+  const spec: ScenarioSpec = {
+    body: p, classification: row.source >= 0 ? 'hypothetical' : 'simulated', diameterM: [D, D, D], point,
+    sites: earth ? [] : sitesOf(b, row.stage, pop, capital, p.radiusKm), orbitalShare: row.orbitalShare,
+    earth: earth ? { pop, capital } : undefined, lite: true, trace,
+  };
+  const inputs: DrawInputs = {
+    impactor: { diameterM: D, densityKgM3: row.density, speedKms: row.speedKms, angleDeg: row.angleDeg, strengthPa: row.strength, kind: KINDS[row.kind] ?? 'stony' },
+    point, material: MATERIAL_LIST[row.material], ocean: !!(row.flags & IF.ocean), season: row.season, vImpKms: row.speedKms,
+    earthU: [row.earthU0, row.earthU1, row.earthU2],
+  };
+  return { draw: evaluateDraw(spec, inputs), spec, info };
 }
