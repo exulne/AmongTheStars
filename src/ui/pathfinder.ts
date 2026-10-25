@@ -6,9 +6,6 @@ import PathWorker from '../sim/pathWorker.ts?worker&inline';
 import type { FromPaths, ToPaths } from '../sim/pathWorker.ts';
 import type { FutureResult, Goal } from '../sim/milestones.ts';
 
-export const PATHS_MAX_SEEDS = 16;
-export const PATHS_WANT = 6;
-
 export class Pathfinder {
   private workers: Worker[] = [];
   private idle: Worker[] = [];
@@ -20,15 +17,14 @@ export class Pathfinder {
   private results: FutureResult[] = [];
   private doneSent = false;
   private onResult: (r: FutureResult) => void = () => {};
-  private onDone: (results: FutureResult[], tried: number) => void = () => {};
+  private onDone: (results: FutureResult[]) => void = () => {};
 
   /**
-   * Play up to PATHS_MAX_SEEDS seeds, stopping once PATHS_WANT reach the goal.
-   * `onResult` fires for every finished run (reached or not); `onDone` fires
-   * once at the end with all results and how many seeds ran. A new find()
-   * cancels whatever was still going.
+   * Play every seed given. `onResult` fires for every finished run (reached or
+   * not); `onDone` fires once at the end with all results — reached futures
+   * first by year, then the misses. A new run() cancels whatever was going.
    */
-  find(goal: Goal, firstSeed: number, onResult: (r: FutureResult) => void, onDone: (results: FutureResult[], tried: number) => void): void {
+  run(goal: Goal, seeds: number[], onResult: (r: FutureResult) => void, onDone: (results: FutureResult[]) => void): void {
     const t = ++this.token;
     this.goal = goal;
     this.onResult = onResult;
@@ -36,11 +32,7 @@ export class Pathfinder {
     this.results = [];
     this.doneSent = false;
     this.running = 0;
-    this.seeds = [firstSeed];
-    for (let k = 1; this.seeds.length < PATHS_MAX_SEEDS; k++) {
-      const s = ((firstSeed + k * 7919) % 99991) + 1;
-      if (s !== firstSeed) this.seeds.push(s);
-    }
+    this.seeds = seeds;
     this.nextSeed = 0;
     // any job still running is the old search's: cancel it and take the worker back
     for (const w of this.workers) w.postMessage({ type: 'cancel', token: t } satisfies ToPaths);
@@ -56,7 +48,6 @@ export class Pathfinder {
 
   private pump(): void {
     if (this.doneSent || !this.goal) return;
-    if (this.results.filter((r) => r.reached).length >= PATHS_WANT) return this.finish();
     while (this.idle.length && this.nextSeed < this.seeds.length) {
       const w = this.idle.pop()!;
       const seed = this.seeds[this.nextSeed++];
@@ -82,7 +73,7 @@ export class Pathfinder {
     this.idle = [...this.workers];
     this.running = 0;
     const rs = [...this.results].sort((a, b) => (b.reached ? 1 : 0) - (a.reached ? 1 : 0) || (a.year ?? 1e9) - (b.year ?? 1e9));
-    this.onDone(rs, rs.length);
+    this.onDone(rs);
   }
 
   stop(): void {

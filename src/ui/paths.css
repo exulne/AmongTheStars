@@ -6,12 +6,15 @@
 .paths .pf-sec { margin: 0.8rem 0 0.15rem; padding-top: 0.55rem; border-top: 1px solid var(--rule); font-size: 0.64rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--quiet); }
 .paths .pf-x { position: absolute; top: 0.1rem; right: 0.3rem; color: var(--quiet); font-size: 1.1rem; }
 .paths .pf-x:hover { color: var(--ink); }
-.paths .pf-ask { display: flex; gap: 0.4rem; align-items: baseline; }
-.paths .pf-ask input[type="text"] { flex: 1; background: transparent; border: 0; border-bottom: 1px solid var(--rule); color: var(--ink); font-size: 0.85rem; border-radius: 0; }
+.paths .pf-ask { display: flex; gap: 0.4rem; align-items: baseline; flex-wrap: wrap; }
+.paths .pf-ask input[type="text"] { flex: 1; min-width: 0; background: transparent; border: 0; border-bottom: 1px solid var(--rule); color: var(--ink); font-size: 0.85rem; border-radius: 0; }
 .paths .pf-chips { display: flex; flex-wrap: wrap; gap: 0.3rem 0.7rem; margin: 0.5rem 0 0; }
 .paths .pf-aux { display: flex; gap: 0.9rem; align-items: baseline; margin: 0.55rem 0 0; color: var(--quiet); font-size: 0.8rem; }
 .paths .pf-aux label { display: flex; gap: 0.3rem; align-items: baseline; }
 .paths .pf-mic.on { color: var(--accent); }
+.paths .pf-n { flex: 1 0 100%; display: flex; gap: 0.3rem; align-items: baseline; justify-content: flex-end; margin: 0.25rem 0 0; color: var(--quiet); font-size: 0.72rem; white-space: nowrap; }
+.paths .pf-n input { width: 3.5em; background: transparent; border: 0; border-bottom: 1px solid var(--rule); color: var(--ink); font-size: 0.8rem; border-radius: 0; text-align: right; }
+.paths .pf-all { display: block; margin: 0.5rem auto 0; color: var(--quiet); font-size: 0.78rem; }
 .paths .pf-status { margin: 0.5rem 0 0; font-size: 0.8rem; color: var(--quiet); min-height: 1.1em; }
 .paths .pf-mode { margin: 0.3rem 0 0; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
 .paths .pf-transcript { margin: 0.3rem 0 0; max-height: 9rem; overflow-y: auto; font-size: 0.78rem; }

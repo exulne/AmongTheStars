@@ -5,7 +5,7 @@ import { Engine, YEAR0 } from '../src/sim/engine.ts';
 import { STAGE, TECHS } from '../src/sim/catalog.ts';
 import { EV } from '../src/sim/catalog.ts';
 import { buildWorld } from '../src/sim/world.ts';
-import { compareFutures, countLine, huntLine, narrateOverview, parseGoal, reached, resultOf, toolSummary, type FutureResult, type Goal } from '../src/sim/milestones.ts';
+import { compareFutures, countLine, huntLine, lineageSeeds, narrateOverview, parseGoal, reached, resultOf, toolSummary, type FutureResult, type Goal } from '../src/sim/milestones.ts';
 
 let fails = 0;
 const fail = (m: string) => { fails++; console.log('  FAIL', m); };
@@ -59,6 +59,19 @@ eq('countLine live 1', countLine(1, 9, 'the colonisation of Mars', { live: true 
 eq('huntLine 3', huntLine(3, 16), 'Found 3 other futures (from 16 more simulated).');
 eq('huntLine 1', huntLine(1, 16), 'Found 1 other future (from 16 more simulated).');
 eq('huntLine 0', huntLine(0, 16), 'Found 0 other futures (from 16 more simulated).');
+
+console.log('\nlineageSeeds');
+const today = [1];
+for (let k = 1; today.length < 16; k++) { const s = ((1 + k * 7919) % 99991) + 1; if (s !== 1) today.push(s); }
+eq('lineage 16', lineageSeeds(1, 0, 16).seeds, today);
+const b1 = lineageSeeds(1, 0, 16), b2 = lineageSeeds(1, b1.nextK, 40);
+eq('batch sizes', [b1.seeds.length, b2.seeds.length], [16, 40]);
+eq('no repeats across batches', new Set([...b1.seeds, ...b2.seeds]).size, 56);
+const u = new Set(b2.seeds.slice(0, 3));
+const b3 = lineageSeeds(1, b1.nextK, 40, u);
+if (b3.seeds.length !== 40) fail(`used batch returned ${b3.seeds.length}, want 40`);
+else if (b3.seeds.some((s) => u.has(s))) fail('used batch kept a used seed');
+else ok('used batch skips 3 seeds, still returns 40');
 
 // ------------------------------------------------------------------ run futures to the goals
 // Probe values (calendar years), engines with no war minds and no ledger:

@@ -4,7 +4,7 @@
 
 import './paths.css';
 import { Pathfinder } from './pathfinder.ts';
-import { compareFutures, countLine, narrateFuture, narrateOverview, parseGoal, type FutureResult, type Goal, type Step } from '../sim/milestones.ts';
+import { compareFutures, countLine, lineageSeeds, narrateFuture, narrateOverview, parseGoal, shownFutures, type FutureResult, type Goal, type Step } from '../sim/milestones.ts';
 import type { World } from '../sim/world.ts';
 import type { Voice } from '../ship/voice.ts';
 import type { OracleAgent } from '../ship/agent.ts';
@@ -44,6 +44,8 @@ export class FuturePaths {
   private results: FutureResult[] = [];
   private seq = 0;
   private tried = 0;
+  private showAll = false;
+  private futuresEl: HTMLInputElement;
   onToggle: (open: boolean) => void = () => {};
 
   constructor(opts: PathsOpts) {
@@ -58,6 +60,7 @@ export class FuturePaths {
         <input type="text" autocomplete="off" placeholder="A moment in time: colonisation of Mars…" aria-label="Name a moment in the timeline">
         <button class="link pf-go" type="submit">Ask</button>
         <button class="link pf-mic" type="button" aria-label="Ask out loud">Speak</button>
+        <label class="pf-n">Futures to simulate <input type="number" min="1" max="100" step="1" aria-label="Futures to simulate"></label>
       </form>
       <div class="pf-chips">${CHIPS.map((c) => `<button class="link" type="button">${esc(c)}</button>`).join('')}</div>
       <p class="pf-aux">
@@ -78,6 +81,9 @@ export class FuturePaths {
     this.micBtn = this.el.querySelector('.pf-mic')!;
     this.speakBox = this.el.querySelector('.pf-speak')!;
     this.oracleBtn = this.el.querySelector('.pf-oracle')!;
+    this.futuresEl = this.el.querySelector('.pf-n input')!;
+    this.futuresEl.value = String(this.futures());
+    this.futuresEl.addEventListener('change', () => this.readFutures());
 
     this.el.querySelector('form')!.addEventListener('submit', (e) => { e.preventDefault(); const t = this.input.value; this.input.value = ''; void this.ask(t); });
     this.el.querySelectorAll<HTMLButtonElement>('.pf-chips button').forEach((b) => b.addEventListener('click', () => void this.ask(b.textContent!)));
@@ -114,6 +120,23 @@ export class FuturePaths {
   }
 
   status(text: string): void { this.statusEl.textContent = text; }
+
+  /** How many futures a hunt plays, kept across visits. */
+  private futures(): number {
+    try {
+      const n = Number(localStorage.getItem('paths.futures'));
+      return Number.isFinite(n) && n >= 1 ? Math.min(100, Math.max(1, Math.round(n))) : 16;
+    } catch { return 16; }
+  }
+
+  /** The field's current value, clamped 1–100; an empty/garbled field reverts to the last good one. */
+  private readFutures(): number {
+    const n = Number(this.futuresEl.value);
+    const v = Number.isFinite(n) && this.futuresEl.value.trim() !== '' ? Math.min(100, Math.max(1, Math.round(n))) : this.futures();
+    this.futuresEl.value = String(v);
+    try { localStorage.setItem('paths.futures', String(v)); } catch { /* private mode */ }
+    return v;
+  }
 
   toggle(): void { this.el.hidden ? this.open() : this.hide(); }
   hide(): void { this.el.hidden = true; this.onToggle(false); }
@@ -158,27 +181,29 @@ export class FuturePaths {
       return Promise.resolve(pr);
     }
     this.goal = pr.goal;
+    this.showAll = false;
     this.cardsEl.innerHTML = '';
     this.footerEl.textContent = '';
     this.status(`Simulating futures toward ${pr.goal.label}…`);
+    const { seeds } = lineageSeeds(this.opts.seed(), 0, this.readFutures());
     return new Promise((resolve) => {
-      this.pathfinder.find(pr.goal, this.opts.seed(), (r) => {
+      this.pathfinder.run(pr.goal, seeds, (r) => {
         if (seq !== this.seq) return;
         this.results.push(r);
         this.tried++;
         const got = this.results.filter((x) => x.reached).length;
         this.status(countLine(got, this.tried, pr.goal.label, { live: true }));
         this.render();
-      }, (results, tried) => {
-        if (seq !== this.seq) return resolve({ goal: pr.goal, results: [], tried });
+      }, (results) => {
+        if (seq !== this.seq) return resolve({ goal: pr.goal, results: [], tried: results.length });
         this.results = results;
-        this.tried = tried;
+        this.tried = results.length;
         const got = results.filter((r) => r.reached);
         const near = results.filter((r) => !r.reached).map((r) => r.progress).filter(Boolean)[0];
-        this.status(countLine(got.length, tried, pr.goal.label, { near }));
+        this.status(countLine(got.length, this.tried, pr.goal.label, { near }));
         this.render(true);
-        if (this.opts.voice.speak && !this.agent?.active) void this.opts.voice.say(narrateOverview(pr.goal, results, tried));
-        resolve({ goal: pr.goal, results, tried });
+        if (this.opts.voice.speak && !this.agent?.active) void this.opts.voice.say(narrateOverview(pr.goal, results, this.tried));
+        resolve({ goal: pr.goal, results, tried: this.tried });
       });
     });
   }
@@ -199,14 +224,18 @@ export class FuturePaths {
     const g = this.goal;
     if (!g) return;
     const got = this.results.filter((r) => r.reached).sort((a, b) => (a.year ?? 0) - (b.year ?? 0));
-    const { medianYear, highlights } = compareFutures(g, this.results);
+    const { medianYear, highlights, standouts } = compareFutures(g, this.results);
+    const medianCard = got.find((r) => r.year === medianYear);
+    const shown = this.showAll ? got : shownFutures(got, medianYear, standouts);
     this.cardsEl.innerHTML = '';
-    for (const r of got) {
+    for (const r of shown) {
       const card = document.createElement('div');
       card.className = 'pf-card';
-      const delta = got.length >= 2 && r.year !== undefined
-        ? (r.year === medianYear ? 'the middle future' : `${Math.abs(r.year - medianYear)} years ${r.year < medianYear ? 'before' : 'after'} the median`)
-        : '';
+      const delta = got.length < 2 || r.year === undefined ? ''
+        : r === got[0] ? 'the earliest'
+        : r === got[got.length - 1] ? 'the latest'
+        : r === medianCard ? 'the middle future'
+        : `${Math.abs(r.year - medianYear)} years ${r.year < medianYear ? 'before' : 'after'} the median`;
       const hl = highlights.get(r.seed);
       card.innerHTML = `
         <div class="pf-card-head"><b>Future #${r.seed} — ${r.year}</b><span class="pf-delta">${esc(delta)}</span></div>
@@ -224,6 +253,14 @@ export class FuturePaths {
       card.querySelector('.pf-enter')!.addEventListener('click', () => this.opts.show(r.seed, r.year!, { body: g.body !== undefined && g.body >= 0 ? g.body : r.steps[r.steps.length - 1]?.body, system: g.system }));
       this.cardsEl.append(card);
       this.spark(card.querySelector('canvas')!, r);
+    }
+    if (!this.showAll && shown.length < got.length) {
+      const b = document.createElement('button');
+      b.className = 'link pf-all';
+      b.type = 'button';
+      b.textContent = `Show all ${got.length}`;
+      b.addEventListener('click', () => { this.showAll = true; this.render(final); });
+      this.cardsEl.append(b);
     }
     const missed = this.results.filter((r) => !r.reached);
     if (final && got.length && missed.length) {

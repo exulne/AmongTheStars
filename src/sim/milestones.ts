@@ -638,12 +638,12 @@ export function progress(goal: Goal, e: Engine): string {
   }
 }
 
-export function compareFutures(goal: Goal, rs: FutureResult[]): { medianYear: number; minYear: number; maxYear: number; highlights: Map<number, string> } {
+export function compareFutures(goal: Goal, rs: FutureResult[]): { medianYear: number; minYear: number; maxYear: number; highlights: Map<number, string>; standouts: number[] } {
   const got = rs.filter((r) => r.reached && r.year !== undefined);
   const years = got.map((r) => r.year!).sort((a, b) => a - b);
   const medianYear = years.length ? years[Math.floor((years.length - 1) / 2)] : 0;
   const highlights = new Map<number, string>();
-  if (!got.length) return { medianYear, minYear: 0, maxYear: 0, highlights };
+  if (!got.length) return { medianYear, minYear: 0, maxYear: 0, highlights, standouts: [] };
 
   // candidate "how it differed" keys: each relevant tech's year, the goal body's founding, its city year
   interface Cand { key: string; name: string; year: number }
@@ -662,6 +662,7 @@ export function compareFutures(goal: Goal, rs: FutureResult[]): { medianYear: nu
   for (const r of got) for (const c of candOf(r)) { const l = lists.get(c.key) ?? []; l.push(c.year); lists.set(c.key, l); }
   for (const [k, l] of lists) if (l.length >= 2) { l.sort((a, b) => a - b); medians.set(k, l[Math.floor((l.length - 1) / 2)]); }
 
+  const devs: { seed: number; year: number; dev: number }[] = [];
   for (const r of got) {
     let best: Cand | null = null, bestDev = 0;
     for (const c of candOf(r)) {
@@ -670,6 +671,7 @@ export function compareFutures(goal: Goal, rs: FutureResult[]): { medianYear: nu
       const dev = c.year - m;
       if (Math.abs(dev) > Math.abs(bestDev)) { best = c; bestDev = dev; }
     }
+    if (best && Math.abs(bestDev) >= 10) devs.push({ seed: r.seed, year: r.year!, dev: bestDev });
     let h = best && Math.abs(bestDev) >= 10 ? `${best.name} came ${Math.abs(bestDev)} years ${bestDev < 0 ? 'early' : 'late'} (${best.year})` : '';
     const trouble = r.steps.filter((s) => s.kind === 'era' || s.kind === 'war').filter((s) => /collapse|war|pandemic/i.test(s.text) && s.year >= (r.year ?? 0) - 100 && s.year <= (r.year ?? 0));
     const last = trouble[trouble.length - 1];
@@ -679,7 +681,32 @@ export function compareFutures(goal: Goal, rs: FutureResult[]): { medianYear: nu
     }
     if (h) highlights.set(r.seed, h);
   }
-  return { medianYear, minYear: years[0], maxYear: years[years.length - 1], highlights };
+  const standouts = devs.sort((a, b) => Math.abs(b.dev) - Math.abs(a.dev) || a.year - b.year).slice(0, 2).map((d) => d.seed);
+  return { medianYear, minYear: years[0], maxYear: years[years.length - 1], highlights, standouts };
+}
+
+/** The futures a search plays: the first seed, then ((first + k·7919) mod 99991) + 1 for k = 1, 2, …
+ *  A batch carries on from k0; seeds already used in the lineage (or repeated) are skipped. */
+export function lineageSeeds(first: number, k0: number, n: number, used: ReadonlySet<number> = new Set()): { seeds: number[]; nextK: number } {
+  const seeds: number[] = [];
+  let k = k0;
+  while (seeds.length < n) {
+    const s = k === 0 ? first : ((first + k * 7919) % 99991) + 1;
+    if (!used.has(s) && !seeds.includes(s)) seeds.push(s);
+    k++;
+  }
+  return { seeds, nextK: k };
+}
+
+/** The futures the cards and the summary show when there are many: the first twelve,
+ *  the middle one, the latest and the standouts — in year order. */
+export function shownFutures(got: FutureResult[], medianYear: number, standouts: number[]): FutureResult[] {
+  const keep = new Set<number>(got.slice(0, 12).map((r) => r.seed));
+  const med = got.find((r) => r.year === medianYear);
+  if (med) keep.add(med.seed);
+  if (got.length) keep.add(got[got.length - 1].seed);
+  for (const r of got) if (standouts.includes(r.seed)) keep.add(r.seed);
+  return got.filter((r) => keep.has(r.seed));
 }
 
 // ------------------------------------------------------------------ narration
@@ -703,10 +730,10 @@ export function narrateOverview(goal: Goal, rs: FutureResult[], tried: number): 
   const missed = rs.filter((r) => !r.reached);
   const near = missed.map((r) => r.progress).filter(Boolean)[0];
   if (!got.length) return countLine(0, tried, goal.label, { near });
-  const { medianYear, minYear, maxYear, highlights } = compareFutures(goal, rs);
+  const { medianYear, minYear, maxYear, highlights, standouts } = compareFutures(goal, rs);
   let s = `${countLine(got.length, tried, goal.label)} ${minYear === maxYear ? `All of them in ${minYear}.` : `They got there between ${minYear} and ${maxYear}, the middle one in ${medianYear}.`}`;
-  const withH = got.find((r) => highlights.get(r.seed));
-  if (withH) s += ` One stands out: future ${withH.seed}, where ${highlights.get(withH.seed)!}.`;
+  const star = standouts.length ? got.find((r) => r.seed === standouts[0]) : got.find((r) => highlights.get(r.seed));
+  if (star) s += ` One stands out: future ${star.seed}, where ${highlights.get(star.seed)}.`;
   if (missed.length) s += ` The others never got there${near ? ` — the closest: ${near}` : ''}.`;
   return s;
 }
@@ -730,11 +757,11 @@ export function toolSummary(goal: Goal, rs: FutureResult[], tried: number): stri
   const missed = rs.filter((r) => !r.reached);
   const near = missed.map((r) => r.progress).filter(Boolean)[0];
   const lines: string[] = [`Goal: ${goal.label} (${goal.detail}).`];
-  const { medianYear, minYear, maxYear, highlights } = compareFutures(goal, rs);
+  const { medianYear, minYear, maxYear, highlights, standouts } = compareFutures(goal, rs);
   lines.push(countLine(got.length, tried, goal.label, { near }));
   if (got.length) {
     lines.push(`${minYear === maxYear ? `They got there in ${minYear}` : `They got there between ${minYear} and ${maxYear}`} (median ${medianYear}).${missed.length ? ` The others never did by 12040${near ? `; the closest: ${near}` : ''}.` : ''}`);
-    for (const r of got) {
+    for (const r of shownFutures(got, medianYear, standouts)) {
       const d = r.year! - medianYear;
       const delta = d === 0 ? 'at the median' : `${Math.abs(d)} years ${d < 0 ? 'before' : 'after'} the median`;
       const list = r.steps.length > 3
