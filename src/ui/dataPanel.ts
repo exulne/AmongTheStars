@@ -130,11 +130,12 @@ export class DataPanel {
     if (on) this.refresh(true);
   }
 
-  /** The year, the run or the selection changed. Cheap: the active tab updates at most every 200ms. */
+  /** The year, the run or the selection changed. Cheap: the active tab updates at most every 200ms, and at least that often while changes keep coming (playback included). */
   refresh(now = false): void {
-    if (!this.open) return;
+    if (!this.open || (this.timer && !now)) return;
     clearTimeout(this.timer);
     this.timer = window.setTimeout(() => {
+      this.timer = 0;
       const sim = this.host.sim;
       this.sub.textContent = sim.years.length ? `${fmtYear(this.host.year())} · future #${sim.seed}` : '';
       this.active?.refresh();
