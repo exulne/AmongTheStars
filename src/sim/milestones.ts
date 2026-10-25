@@ -7,7 +7,7 @@ import { YEAR0, type Engine, type SimEvent } from './engine.ts';
 import { ERAS, EV, STAGE, STAGE_NAMES, TECHS, isAlive } from './catalog.ts';
 import { F, GM, NF, NGM } from './metrics.ts';
 import { GF, Geo, NGEO } from './geo.ts';
-import type { World } from './world.ts';
+import { GALAXIES, type World } from './world.ts';
 import { wordsToNumbers } from '../ship/commands.ts';
 
 export interface Goal {
@@ -24,6 +24,7 @@ export interface Goal {
   metric?: string;    // GM key
   threshold?: number;
   event?: number;     // EV index
+  galaxy?: string;    // a GALAXIES name, or '*' = any galaxy except the Milky Way
 }
 
 export type ParseResult = { goal: Goal } | { error: string; suggestions: string[] };
@@ -76,7 +77,7 @@ function terraOK(world: World): Uint8Array {
 
 // ------------------------------------------------------------------ parsing
 
-interface Place { body?: number; system?: number }
+interface Place { body?: number; system?: number; words?: string[] }
 
 function normName(s: string): string { return s.toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim(); }
 
@@ -85,7 +86,7 @@ function findPlace(t: string, world: World): Place | null {
   let best: Place | null = null, bestLen = 0;
   const test = (name: string, p: Place) => {
     const n = normName(name);
-    if (n.length > bestLen && t.includes(` ${n} `)) { best = p; bestLen = n.length; }
+    if (n.length > bestLen && t.includes(` ${n} `)) { best = { ...p, words: n.split(' ') }; bestLen = n.length; }
   };
   for (const b of world.bodies) test(b.name, { body: b.id });
   for (const s of world.systems) test(s.name, { system: s.id });
@@ -189,15 +190,51 @@ const STAGE_WORDS: [RegExp, number][] = [
   [/\btowns?\b/, STAGE.TOWN],
   [/\bhubs?\b/, STAGE.HUB],
   [/\bbases?\b/, STAGE.BASE],
+  [/\bsettlements?\b/, STAGE.OUTPOST],
   [/\bcoloni[sz]|\bcolon(y|ies|ists?)\b|\bsettl/, STAGE.COLONY],
-  [/\boutposts?\b|\bland(ing|ed|s)?\b|\bboots on\b|\bfoot( |)print|first (foot|steps?)\b/, STAGE.OUTPOST],
+  [/\boutposts?\b|\bland(s|ed|ing)? on\b|\breach(es|ed|ing)?\b|\bget(s|ting)? to\b|\b(humans|people) (in|on|at)\b|\bboots on\b|\bfoot( |)print|first (foot|steps?)\b/, STAGE.OUTPOST],
 ];
+
+const GAL_ANY = /\b(another|a different|other) galax\w*|beyond the milky way|outside the milky way|intergalactic\b/;
+const GAL_ALIAS: [RegExp, string][] = [
+  [/\bm31\b/, 'Andromeda'], [/\bm33\b/, 'Triangulum'],
+  [/\blmc\b/, 'Large Magellanic Cloud'], [/\bsmc\b/, 'Small Magellanic Cloud'],
+];
+
+/** "Andromeda" | "the Large Magellanic Cloud" | "another galaxy" */
+function galName(gal: string): string {
+  return gal === '*' ? 'another galaxy' : /Magellanic/.test(gal) ? `the ${gal}` : gal;
+}
+
+/** A galaxy named in the text: a GALAXIES name or alias, or an any-galaxy phrase. */
+function findGalaxy(t: string): { gal: string; words: string[] } | null {
+  const any = t.match(GAL_ANY);
+  if (any) return { gal: '*', words: any[0].trim().split(/\s+/) };
+  let best: { gal: string; words: string[] } | null = null, bestLen = 0;
+  for (const g of GALAXIES.slice(1)) {
+    const n = normName(g.name);
+    if (n.length > bestLen && t.includes(` ${n} `)) { best = { gal: g.name, words: n.split(' ') }; bestLen = n.length; }
+  }
+  for (const [re, gal] of GAL_ALIAS) {
+    const w = re.source.replace(/\\b/g, '');
+    if (w.length > bestLen && re.test(t)) { best = { gal, words: [w] }; bestLen = w.length; }
+  }
+  return best;
+}
+
+/** The short capitalised tag form: "the first colony in Andromeda" → "First colony in Andromeda". */
+export function tagLabel(g: Goal): string {
+  const l = g.label.replace(/^the /, '');
+  return l[0].toUpperCase() + l.slice(1);
+}
 
 export function parseGoal(text: string, world: World): ParseResult {
   const fail = (error: string): ParseResult => ({ error, suggestions: [...SUGGESTIONS] });
   const pre = text.toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9.,\s]/g, ' ');
   const t = ` ${wordsToNumbers(pre).replace(/\s+/g, ' ').trim()} `;
   const place = findPlace(t, world);
+  const gal = findGalaxy(t);
+  if (!gal && /\bmilky way\b/.test(t)) return fail(`The Milky Way isn't an endpoint: every future starts there.`);
   const body = place?.body;
   const bName = (b: number) => world.bodies[b].name;
   const sName = (s: number) => world.systems[s].name;
@@ -264,7 +301,13 @@ export function parseGoal(text: string, world: World): ParseResult {
   // --- a settlement stage on a world
   let stage = -1;
   for (const [re, s] of STAGE_WORDS) if (re.test(t)) { stage = s; break; }
+  if (stage < 0 && (place || gal)) stage = STAGE.OUTPOST;  // a bare place means the first settlement there
   if (stage >= 0) {
+    if (gal) {
+      const G = galName(gal.gal);
+      const label = stage === STAGE.OUTPOST ? `the first settlement in ${G}` : `the first ${STAGE_NAMES[stage].toLowerCase()} in ${G}`;
+      return { goal: { id: `stage:${stage}:gal:${gal.gal}`, label, detail: `a world in ${G} becomes ${article(STAGE_NAMES[stage])} ${STAGE_NAMES[stage]}: ${STAGE_DETAIL[stage] ?? ''} — reachable only through traversable wormholes`, kind: 'stage', galaxy: gal.gal, stage } };
+    }
     if (place) {
       const label = stageLabel(world, place, stage);
       const who = place.body !== undefined ? bName(place.body) : `a world in ${sName(place.system!)}`;
@@ -304,6 +347,7 @@ function goalBodies(goal: Goal, world: World): number[] {
   if (goal.body !== undefined && goal.body >= 0) return [goal.body];
   if (goal.body === -1) return world.bodies.map((b) => b.id);
   if (goal.system !== undefined) return world.systems[goal.system].bodies;
+  if (goal.galaxy) return world.systems.filter((s) => goal.galaxy === '*' ? s.galaxy !== 'Milky Way' : s.galaxy === goal.galaxy).flatMap((s) => s.bodies);
   return [];
 }
 
@@ -441,7 +485,7 @@ export interface Step {
 function goalStepText(goal: Goal, e: Engine): string {
   const B = goalBodyNow(goal, e), bn = B !== undefined ? byName(e, B) : '';
   switch (goal.kind) {
-    case 'stage': return goal.stage === STAGE.UPLOADED ? `${bn} is uploaded` : `${bn} becomes ${article(STAGE_NAMES[goal.stage!])} ${STAGE_NAMES[goal.stage!]}`;
+    case 'stage': return goal.galaxy ? `${bn} in ${galName(goal.galaxy)} becomes ${article(STAGE_NAMES[goal.stage!])} ${STAGE_NAMES[goal.stage!]}` : goal.stage === STAGE.UPLOADED ? `${bn} is uploaded` : `${bn} becomes ${article(STAGE_NAMES[goal.stage!])} ${STAGE_NAMES[goal.stage!]}`;
     case 'terraform': return `${bn}: ${TERRA_TEXT[goal.level! - 1]}`;
     case 'swarm': {
       const w = e.st.swarm, k = goal.phase! - 1, gs = goalYear(goal, e);
@@ -717,6 +761,13 @@ export function progress(goal: Goal, e: Engine): string {
       const bodies = goalBodies(goal, e.world);
       let best = -2;
       for (const b of bodies) best = Math.max(best, p.stage[b]);
+      if (goal.galaxy) {
+        const wi = TECH_INDEX.get('wormholes')!;
+        if (st.techDone[wi] < 0) return st.techProg[wi] < 0 ? 'traversable wormholes proved impossible in this future' : 'traversable wormholes were never invented';
+        const G = galName(goal.galaxy);
+        const got = best < 0 ? `${G === 'another galaxy' ? 'no other galaxy' : G} was never settled` : `nowhere in ${G} passed ${article(STAGE_NAMES[best])} ${STAGE_NAMES[best]}`;
+        return `traversable wormholes came in ${YEAR0 + st.techDone[wi]}, but ${got}`;
+      }
       const where = goal.body !== undefined && goal.body >= 0 ? bName(goal.body) : goal.system !== undefined ? `the ${e.world.systems[goal.system].name} system` : 'anywhere';
       if (best < 0) return `${where} was never settled`;
       if (best < STAGE.OUTPOST) return `${where} was surveyed but never settled`;
