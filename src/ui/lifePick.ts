@@ -55,14 +55,18 @@ export class LifePick {
     this.el.innerHTML = `
       <button class="lp-x link" type="button" aria-label="Close">×</button>
       <p class="lp-title">Follow one life</p>
+      <p class="lp-sec">who</p>
       <label>Born on <select class="lp-body" aria-label="World they were born on"><option value="-1">anywhere at random</option></select></label>
       <label>Person # <input class="lp-n" inputmode="numeric" placeholder="random" aria-label="Their number among its births"></label>
       ${sel('lp-kind', 'Kind', [['any', 'anyone'], ['random', 'at random'], ['baseline', 'baseline human'], ['adapted', 'adapted to their world'], ['uploaded', 'uploaded']])}
       ${sel('lp-sex', 'Sex', [['', 'anyone'], ['f', 'a woman'], ['m', 'a man']])}
-      ${range('lp-wealth', 'Wealth, top %', '0', '100')}
+      <p class="lp-sec">their life</p>
+      ${range('lp-born', 'Born, year', '2040', 'any')}
       ${range('lp-age', 'Age', '0', 'any')}
       ${range('lp-moves', 'Moves', '0', 'any')}
       ${range('lp-height', 'Height, cm', 'short', 'tall')}
+      <p class="lp-sec">their standing</p>
+      ${range('lp-wealth', 'Wealth, top %', '0', '100')}
       ${sel('lp-mood', 'Mood', [['', 'any'], ...[...MOODS_GOOD, ...MOODS_BAD].map((m) => [m, m] as [string, string])])}
       ${sel('lp-health', 'Health', [['', 'any'], ...HEALTH_OPTS])}
       ${sel('lp-edu', 'Education', [['', 'any'], ...EDU_OPTS.map((e) => [e, e] as [string, string])])}
@@ -114,15 +118,19 @@ export class LifePick {
   /** The filters the form asks for; undefined fields mean "anyone". */
   private want(): PickWant {
     const num = (cls: string) => { const v = parseCount(this.get<HTMLInputElement>(cls).value); return Number.isFinite(v) ? v : undefined; };
+    /** a year the user typed: calendar years (>2040) convert to sim years, small numbers are sim years */
+    const yr = (v: number | undefined) => (v === undefined ? undefined : v > 2040 ? v - 2040 : v);
     const loW = num('.lp-wealth-lo'), hiW = num('.lp-wealth-hi');
     const loA = num('.lp-age-lo'), hiA = num('.lp-age-hi');
     const loH = num('.lp-height-lo'), hiH = num('.lp-height-hi');
     const loM = num('.lp-moves-lo'), hiM = num('.lp-moves-hi');
+    const loB = yr(num('.lp-born-lo')), hiB = yr(num('.lp-born-hi'));
     const w: PickWant = {};
     if (loW !== undefined || hiW !== undefined) w.wealth = [Math.max(0, Math.min(100, 100 - (hiW ?? 100))), Math.max(0, Math.min(100, 100 - (loW ?? 0)))];
     if (loA !== undefined || hiA !== undefined) w.age = [loA ?? 0, hiA ?? 1e6];
     if (loH !== undefined || hiH !== undefined) w.height = [loH ?? 0, hiH ?? 1e6];
     if (loM !== undefined || hiM !== undefined) w.moves = [loM ?? 0, hiM ?? 1e6];
+    if (loB !== undefined || hiB !== undefined) w.born = [loB ?? -1e6, hiB ?? 1e6];
     if (this.val('.lp-sex')) w.sex = this.val('.lp-sex') as 'f' | 'm';
     if (this.val('.lp-mood')) w.mood = this.val('.lp-mood');
     if (this.val('.lp-health')) w.health = this.val('.lp-health');

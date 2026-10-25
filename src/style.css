@@ -139,10 +139,12 @@ button, select, input { font: inherit; color: inherit; }
 #lifepick[aria-expanded="true"] { color: var(--accent); }
 
 /* the life picker: a quiet drop-down under the header buttons */
-.lifepick { position: absolute; z-index: 6; top: 4.4rem; right: max(16px, env(safe-area-inset-right, 0px)); width: min(21rem, calc(100vw - 32px)); padding: 0.9rem 1.1rem;
+.lifepick { position: absolute; z-index: 6; top: 4.4rem; right: max(16px, env(safe-area-inset-right, 0px)); width: min(21rem, calc(100vw - 32px)); padding: 0.9rem 1.1rem; max-height: calc(100vh - 6rem); overflow-y: auto; }
   background: rgba(4, 4, 7, 0.94); border-top: 1px solid var(--rule); box-shadow: 0 12px 32px #000; font-size: 0.85rem; box-sizing: border-box; }
 .lifepick[hidden] { display: none; }
 .lifepick .lp-title { margin: 0 0 0.5rem; }
+.lifepick .lp-sec { margin: 0.8rem 0 0.15rem; padding-top: 0.55rem; border-top: 1px solid var(--rule); font-size: 0.64rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--quiet); }
+.lifepick .lp-sec:first-of-type { border-top: 0; margin-top: 0.2rem; padding-top: 0; }
 .lifepick label { display: flex; justify-content: space-between; align-items: baseline; gap: 0.6rem; color: var(--quiet); margin: 0.35rem 0; }
 .lifepick select, .lifepick input { background: transparent; border: 0; border-bottom: 1px solid var(--rule); color: var(--ink); font-size: 0.85rem; border-radius: 0; max-width: 13rem; }
 .lifepick select option { background: #111; color: var(--ink); }

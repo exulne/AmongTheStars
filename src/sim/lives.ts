@@ -105,6 +105,7 @@ export interface PickWant {
   age?: [number, number];
   height?: [number, number];
   moves?: [number, number];  // relocations so far: 0 = born-and-stayed
+  born?: [number, number];   // birth year bounds (sim years: 0 = 2040)
   mood?: string;
   health?: string;        // healthy | scarred | frail | chronic | uploaded | engineered
   education?: string;
@@ -405,6 +406,7 @@ export class Lives {
     const life = this.D.life(id, this.D.lastPeriod);
     if (!life) return false;
     const born = this.D.birthYear(id);
+    if (want.born && (born < want.born[0] || born > want.born[1])) return false;
     const last = life[life.length - 1];
     const dead = last.end === 'died' || last.end === 'lost';
     const ey = Math.min(year, dead ? Math.max(born, last.diedYear! - 1) : year);
@@ -437,11 +439,12 @@ export class Lives {
     return st;
   }
 
-  /** The n-th person born on `body` in a birth period starting at or before `year`
-   *  (a few may land just after it — callers check ages). */
-  private bornBy(body: number, n: number, year: number): { person: Id | null; total: number } {
+  /** The n-th person born on `body` in a birth period starting at or before `year`,
+   *  optionally only those in birth periods overlapping [lo, hi] (a few may land just
+   *  outside it — callers check exact birth years). */
+  private bornBy(body: number, n: number, year: number, lo = -Infinity, hi = Infinity): { person: Id | null; total: number } {
     const t = this.D.ensure(body, Math.min(this.D.lastPeriod, Math.max(0, periodOf(year))));
-    const pools = t.pools.filter((x) => x.native && (x.q < 0 || periodStart(x.q) <= year)).sort((a, b) => a.q - b.q);
+    const pools = t.pools.filter((x) => x.native && (x.q < 0 ? lo < 0 : periodStart(x.q) <= year && periodStart(x.q) <= hi && periodStart(x.q + 1) > lo)).sort((a, b) => a.q - b.q);
     const total = pools.reduce((a, x) => a + x.n, 0);
     if (n < 1 || n > total) return { person: null, total };
     let left = n;
@@ -501,8 +504,9 @@ export class Lives {
       let id: Id | null;
       if (moverFlows?.length && hash01(this.e.seed, salt, t, 9) >= 0.3) {
         id = rider(t);
-      } else if (filtered) {
-        // filters need someone assessable at the year: draw from the living census
+      } else if (filtered && !want?.born) {
+        // filters need someone assessable at the year: draw from the living census —
+        // unless a born range is set, since the dead were born then too
         const p = Math.max(0, Math.min(this.D.lastPeriod, periodOf(year) - (year >= 5 ? 1 : 0)));
         let c = censuses.get(b);
         if (!c) { c = this.D.census(b, p); censuses.set(b, c); }
@@ -510,11 +514,12 @@ export class Lives {
         total = Math.max(total, c.total);
         id = c.at(Math.floor(hash01(this.e.seed, salt, t, 2) * c.total));
       } else {
+        const lo = want?.born?.[0] ?? -Infinity, hi = want?.born?.[1] ?? Infinity;
         let tot = birthsOf.get(b);
-        if (tot === undefined) { tot = this.bornBy(b, 1, year).total; birthsOf.set(b, tot); }
+        if (tot === undefined) { tot = this.bornBy(b, 1, year, lo, hi).total; birthsOf.set(b, tot); }
         if (!tot || (n > 0 && n > tot)) continue;
         total = Math.max(total, tot);
-        id = this.bornBy(b, n > 0 ? n : 1 + Math.floor(hash01(this.e.seed, salt, t, 2) * tot), year).person;
+        id = this.bornBy(b, n > 0 ? n : 1 + Math.floor(hash01(this.e.seed, salt, t, 2) * tot), year, lo, hi).person;
       }
       if (!id) continue;
       const kk = kind === 'random' ? KINDS[Math.floor(hash01(this.e.seed, salt, t, 3) * KINDS.length)] : kind;
