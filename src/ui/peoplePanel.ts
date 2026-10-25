@@ -84,6 +84,7 @@ export function biographyHtml(b: Biography | null, year: number, loading: boolea
     <p class="lede">${status}</p>
     ${where}
     ${b.status !== 'unborn' ? `<p class="act"><button class="link" data-act="look-closer" data-pid="${b.id}" type="button">Look closer: ${b.body === 'uploaded' ? 'the substrate their mind runs on' : 'their body'}, its cells, molecules and atoms</button></p>` : ''}
+    <p class="act"><button class="link" data-act="follow-person" data-pid="${b.id}" type="button">Follow them: the camera goes where they go, birth to death</button></p>
     <p class="muted">This person stays open as you move through time. Drag the slider to see them younger, older, or not yet born.</p>
     <h3>Life</h3><ol class="events story">${story || '<li class="muted">Nothing yet.</li>'}</ol>
     <h3>Pathway</h3><ol class="events path">${path || '<li class="muted">Nowhere yet.</li>'}</ol>

@@ -37,7 +37,7 @@ import { names as naming } from './ui/names.ts';
 import { StreetView } from './view/street.ts';
 import { Picker } from './explain/picker.ts';
 import { explainLocate, explainName, explainerFor } from './explain/registry.ts';
-import { resetShips, setShipApi } from './explain/ships.ts';
+import { resetShips, setShipApi, shipId } from './explain/ships.ts';
 import { GalaxyView, LocalView, LEVELS, PLANET_SUN, PlanetView, SystemView, UniverseView, alive, cityCount, cityDir, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
 
 // ------------------------------------------------------------------ DOM
@@ -210,6 +210,7 @@ const views: Record<Level, View> = {
   street: new StreetView((b, y, o, n) => sim.residents(b, y, o, n)),
 };
 const street = views.street as StreetView;
+street.setPersonFetch((pid, y) => sim.person(pid, y));
 // seen from the Sun in the local view; behind the whole galaxy it is only a backdrop
 const sky = makeSky(1, 7000, 'sky', () => (level === 'local' ? { name: 'the Sun', x: 0, y: 0, z: 0, sol: true } : null));
 scene.add(sky);
@@ -573,12 +574,81 @@ const lifePick = new LifePick({
   nameOf: (b) => naming.place(world, b),
   year: () => ctx.year,
   find: (b, n, k, y) => sim.findPerson(b, n, k, y),
-  open: (pid) => { inspector.openPerson(pid); inspector.el.classList.add('open'); },
+  open: (pid) => { inspector.openPerson(pid); inspector.el.classList.add('open'); startFollow(pid); },
 });
 app.append(lifePick.el);
 const lifePickBtn = app.querySelector<HTMLButtonElement>('#lifepick')!;
 lifePick.onToggle = (on) => lifePickBtn.setAttribute('aria-expanded', String(on));
-lifePickBtn.addEventListener('click', () => lifePick.toggle());
+lifePickBtn.addEventListener('click', () => { if (following) stopFollow(); else lifePick.toggle(); });
+
+// ------------------------------------------------------------------ following one life
+
+/** The person whose pathway the camera is shadowing, if any. */
+let following: { pid: string; name: string; path: Biography['path']; idx: number } | null = null;
+
+function stopFollow(): void {
+  if (!following) return;
+  following = null;
+  street.followPid = null;
+  pull = null;
+  lifePickBtn.textContent = 'Follow a life';
+  lifePickBtn.setAttribute('aria-pressed', 'false');
+}
+
+/** Read their whole path once, then track them through it as time moves. */
+async function startFollow(pid: string): Promise<void> {
+  const g = runGen;
+  const m = await sim.person(pid, ctx.year);
+  if (g !== runGen || inspector.personId !== pid || !m.bio?.path.length) return;
+  following = { pid, name: m.bio.name, path: m.bio.path, idx: -1 };
+  street.followPid = pid;
+  lifePickBtn.textContent = 'Stop following';
+  lifePickBtn.setAttribute('aria-pressed', 'true');
+  followYear(ctx.year);
+}
+
+/** The next stop of theirs with solid ground under it. */
+function nextStop(path: Biography['path'], i: number): number | undefined {
+  for (let j = i; j < path.length; j++) if (path[j].body !== null) return path[j].body!;
+  return undefined;
+}
+
+/** Where they are at year y → where the camera goes. A no-op once in place. */
+function followYear(y: number): void {
+  if (!following || !sim.years.length) return;
+  const p = following.path;
+  let idx = p.findIndex((s) => y < (s.to ?? Infinity));
+  if (idx < 0) idx = p.length - 1;               // after death: linger where they ended
+  const s = p[idx];
+  const moved = idx !== following.idx;
+  following.idx = idx;
+  if (s.body !== null && world.bodies[s.body]) {
+    pull = null;
+    if (moved || level !== 'street' || ctx.body !== s.body) {
+      const b = s.body;
+      if (level === 'street' && ctx.body !== b) { ctx.body = b; ctx.system = world.bodies[b].system; ctx.city = 0; setLevel('street', { kind: 'city', id: 0 }); }
+      else if (level !== 'street') setLevel('street', { kind: 'city', id: 0 }, () => { ctx.body = b; ctx.system = world.bodies[b].system; ctx.city = 0; });
+    }
+    return;
+  }
+  // mid-voyage (or lost): if their ship is drawn among the stars, shadow the ship itself
+  const rec = s.ship && ctx.snap ? ctx.snap.ships.find((sh) => sh.kind !== 1 && sh.from === s.ship!.from && sh.to === s.ship!.to && Math.abs(sh.depart - s.ship!.depart) < 0.6) : undefined;
+  const at = rec ? explainLocate('shipl', shipId(rec)) : null;
+  if (rec && at) {
+    const ref: Ref = { kind: 'thing', ex: 'shipl', id: shipId(rec) };
+    if (level !== 'local') setLevel('local');
+    pull = ref;
+    return;
+  }
+  // an untrackable leg — a warp hop, or a ship already gone: wait at the world they're bound for
+  pull = null;
+  const anchor = (s.ship && world.bodies[s.ship.to]) ? s.ship.to : nextStop(p, idx);
+  if (anchor !== undefined && (level !== 'planet' || ctx.body !== anchor))
+    setLevel('planet', { kind: 'body', id: anchor }, () => { ctx.body = anchor; ctx.system = world.bodies[anchor].system; });
+}
+
+inspector.onFollow = (pid) => { inspector.el.classList.add('open'); startFollow(pid); };
+inspector.onPerson = (id) => { if (following && id !== following.pid) stopFollow(); };
 
 // Wheel out past the outer limit goes up a level. Wheel in over a thing pulls
 // it to the centre of the view, and once close enough enters it.
@@ -971,6 +1041,7 @@ function refreshPanels(): void {
   const sel = ctx.selected, place = sel?.kind === 'body' ? sel.id : sel?.kind === 'city' || level === 'planet' || level === 'street' ? ctx.body : -1;
   calendar.place(ctx.snap, place, ctx.year, sim.years[sim.frontier] ?? 0);
   dataPanel.refresh();
+  followYear(ctx.year);
 }
 
 charts.setSource((key): Series | null => {
@@ -1085,6 +1156,7 @@ function startRun(seed: number): void {
   clearSocietyLooks();
   inspector.resetPeople();
   lifePick.hide();
+  stopFollow();
   resetShips();
   ctx.snap = null; lastStep = -1; wanted = -1; inFlight = false; events = []; history = null; fc = null;
   ticker.clear(); tickFrom = 0;
@@ -1123,7 +1195,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key.length === 1 && /[\p{L}\p{N}#]/u.test(e.key)) { e.preventDefault(); search.focus(e.key); return; }
   if (e.code === 'Space') { e.preventDefault(); timeline.toggle(); }
   else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); timeline.step(e.key === 'ArrowRight' ? 1 : -1, e.shiftKey); }
-  else if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; else if (!lifePick.el.hidden) lifePick.hide(); else if (level === 'street' && street.follow >= 0) street.follow = -1; else select(null); }
+  else if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; else if (!lifePick.el.hidden) lifePick.hide(); else if (following) stopFollow(); else if (level === 'street' && street.follow >= 0) street.follow = -1; else select(null); }
   else if (e.key === '/') { e.preventDefault(); search.focus(); }
   else if (e.key === '?') help.hidden = !help.hidden;
   else if (e.key === 'Enter' && ctx.selected && !(e.target instanceof HTMLButtonElement)) dive(ctx.selected);
