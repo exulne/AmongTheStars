@@ -15,6 +15,8 @@ export interface FollowHandle {
   stopFollow(): void;
   /** The person whose pathway the camera is shadowing, if any. */
   following(): { pid: string; name: string; path: Biography['path']; idx: number } | null;
+  /** Call `cb` whenever the life picker opens (only then: not on "Stop following"). */
+  onPickerOpen(cb: () => void): void;
 }
 
 export function installFollow(api: AppApi): FollowHandle {
@@ -29,7 +31,8 @@ export function installFollow(api: AppApi): FollowHandle {
   });
   api.app.append(lifePick.el);
   const lifePickBtn = api.app.querySelector<HTMLButtonElement>('#lifepick')!;
-  lifePick.onToggle = (on) => lifePickBtn.setAttribute('aria-expanded', String(on));
+  const pickerOpen: (() => void)[] = [];
+  lifePick.onToggle = (on) => { lifePickBtn.setAttribute('aria-expanded', String(on)); if (on) for (const cb of pickerOpen) cb(); };
   lifePickBtn.addEventListener('click', () => { if (following) stopFollow(); else lifePick.toggle(); });
 
   // ------------------------------------------------------------------ following one life
@@ -101,5 +104,5 @@ export function installFollow(api: AppApi): FollowHandle {
   api.inspector.onFollow = (pid) => { api.inspector.el.classList.add('open'); startFollow(pid); };
   api.inspector.onPerson = (id) => { if (following && id !== following.pid) stopFollow(); };
 
-  return { lifePick, lifePickBtn, followYear, stopFollow, following: () => following };
+  return { lifePick, lifePickBtn, followYear, stopFollow, following: () => following, onPickerOpen: (cb) => { pickerOpen.push(cb); } };
 }
