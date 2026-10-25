@@ -1,0 +1,12 @@
+node_modules
+dist
+.DS_Store
+.claude/worktrees
+ml/.venv
+ml/data
+ml/data
+.env
+.env.local
+.env.*.local
+ml/rl/runs
+demo/*.mp4

@@ -1,0 +1,38 @@
+/* Vela: a small glowing orb at the bottom centre, a caption that fades, a text field only when typing. */
+.vela { position: absolute; left: 50%; bottom: calc(var(--bottom-h, 200px) + 14px); transform: translateX(-50%); z-index: 6; display: flex; flex-direction: column; align-items: center; gap: 0.45rem; pointer-events: none; font-family: Georgia, 'Times New Roman', serif; }
+.aboard .vela { display: none; }
+.vela > * { pointer-events: auto; }
+.vela-orb { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; cursor: pointer; background: radial-gradient(circle at 38% 34%, #ffffff 0%, #f2f2f2 22%, rgba(190, 205, 230, 0.75) 52%, rgba(120, 140, 180, 0.25) 78%, transparent 100%); animation: vela-breathe 4.2s ease-in-out infinite; touch-action: none; user-select: none; -webkit-user-select: none; transform-origin: 50% 70%; }
+.vela-orb span { display: block; width: 100%; height: 100%; border-radius: 50%; }
+.vela-orb:focus-visible { outline: 1px solid var(--accent, #f2f2f2); outline-offset: 4px; }
+@keyframes vela-breathe { 0%, 100% { box-shadow: 0 0 8px rgba(242, 242, 242, 0.25), 0 0 20px rgba(170, 190, 230, 0.12); } 50% { box-shadow: 0 0 14px rgba(242, 242, 242, 0.5), 0 0 34px rgba(170, 190, 230, 0.26); } }
+/* the wake-up: springy squash and stretch with a little sway */
+.vela .vela-orb.wiggle { animation: vela-wiggle 0.72s cubic-bezier(0.3, 1.6, 0.5, 1) 1, vela-breathe 4.2s ease-in-out 0.72s infinite; }
+@keyframes vela-wiggle {
+  0% { transform: scale(1, 1) rotate(0); }
+  14% { transform: scale(1.32, 0.7) rotate(-6deg); }
+  30% { transform: scale(0.78, 1.28) rotate(7deg) translateY(-5px); }
+  46% { transform: scale(1.14, 0.88) rotate(-5deg); }
+  62% { transform: scale(0.94, 1.08) rotate(3deg) translateY(-1px); }
+  80% { transform: scale(1.03, 0.97) rotate(-1deg); }
+  100% { transform: scale(1, 1) rotate(0); }
+}
+/* listening (your voice) and speaking (hers): the orb swells and glows in time */
+.vela.listening .vela-orb:not(.wiggle) { animation: vela-listen 0.9s ease-in-out infinite; }
+.vela.speaking .vela-orb:not(.wiggle) { animation: vela-speak 0.42s ease-in-out infinite alternate; }
+.vela.busy .vela-orb:not(.wiggle), .vela.connecting .vela-orb:not(.wiggle) { animation: vela-think 1.4s linear infinite; }
+@keyframes vela-listen { 0%, 100% { transform: scale(1); box-shadow: 0 0 12px rgba(242, 242, 242, 0.5), 0 0 28px rgba(170, 190, 230, 0.25); } 50% { transform: scale(1.18); box-shadow: 0 0 20px rgba(242, 242, 242, 0.75), 0 0 44px rgba(170, 190, 230, 0.4); } }
+@keyframes vela-speak { from { transform: scale(1.02); box-shadow: 0 0 12px rgba(242, 242, 242, 0.5), 0 0 26px rgba(170, 190, 230, 0.22); } to { transform: scale(1.22); box-shadow: 0 0 24px rgba(255, 255, 255, 0.85), 0 0 52px rgba(170, 190, 230, 0.45); } }
+@keyframes vela-think { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.6; transform: scale(0.9); } }
+.vela.hands .vela-orb { outline: 1px solid rgba(242, 242, 242, 0.35); outline-offset: 5px; }
+.vela-cap { order: -2; margin: 0; max-width: min(34rem, 80vw); text-align: center; font-size: 0.8125rem; line-height: 1.45; color: #f2f2f2; text-shadow: 0 0 6px #000, 0 0 2px #000; opacity: 0; transform: translateY(4px); transition: opacity 0.6s ease, transform 0.6s ease; pointer-events: none; }
+.vela-cap.show { opacity: 1; transform: none; }
+.vela-cap.you, .vela-cap.sys { color: var(--quiet, #9a9a9a); }
+.vela-cap.sys { font-style: italic; font-size: 0.75rem; }
+.vela-form { order: -1; margin: 0; }
+.vela-form[hidden] { display: none; }
+.vela-form input { width: min(22rem, 70vw); background: rgba(4, 4, 7, 0.7); border: 0; border-bottom: 1px solid var(--rule, #444); color: #f2f2f2; font: inherit; font-size: 0.8125rem; padding: 0.25rem 0.3rem; border-radius: 0; text-align: center; }
+.vela-form input:focus { outline: none; border-bottom-color: var(--accent, #f2f2f2); }
+.vela-state { font-size: 0.66rem; letter-spacing: 0.06em; color: var(--quiet, #9a9a9a); min-height: 0.9em; }
+#ask[aria-pressed="true"] { color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .vela-orb, .vela .vela-orb.wiggle { animation: none !important; } }

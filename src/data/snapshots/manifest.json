@@ -1,0 +1,67 @@
+{
+ "schema": 1,
+ "snapshotId": "ce8db3b093eb",
+ "created": "2026-10-25T06:53:20.789Z",
+ "files": {
+  "satcat.json": {
+   "sha256": "04542d1d0411f4738e30f0fd3c9120ec7036f58159275e5b11ffebe412f2ac64",
+   "bytes": 29963,
+   "sources": [
+    "https://celestrak.org/satcat/records.php"
+   ],
+   "retrieved": "2026-10-25T05:08:49.129Z"
+  },
+  "cad.json": {
+   "sha256": "f7a05f801511a7dad585e6869d515b3fc41f330078b3363a5a090100524be33e",
+   "bytes": 366175,
+   "sources": [
+    "https://ssd-api.jpl.nasa.gov/doc/cad.html"
+   ],
+   "retrieved": "2026-10-25T05:07:42.796Z"
+  },
+  "sbdb.json": {
+   "sha256": "ec621883091c63ed50ebcc69edfbaf0427bfdfc05a890662768c8f351faaab46",
+   "bytes": 8301,
+   "sources": [
+    "https://ssd-api.jpl.nasa.gov/doc/sbdb.html"
+   ],
+   "retrieved": "2026-10-25T05:07:55.990Z"
+  },
+  "horizons.json": {
+   "sha256": "5da513b43e4fa50d7dc21efee5e79551ae687becbe09275a41143b45444aac8d",
+   "bytes": 23410,
+   "sources": [
+    "https://ssd-api.jpl.nasa.gov/doc/horizons.html"
+   ],
+   "retrieved": "2026-10-25T05:07:57.913Z"
+  },
+  "spaceweather.json": {
+   "sha256": "77198ae1b79cac666706904ecd3da945251473facf8ba8f978ba247ac24d204d",
+   "bytes": 28491,
+   "sources": [
+    "https://services.swpc.noaa.gov/json/f107_cm_flux.json",
+    "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+    "https://services.swpc.noaa.gov/json/solar-cycle/predicted-solar-cycle.json",
+    "https://services.swpc.noaa.gov/json/solar-cycle/observed-solar-cycle-indices.json",
+    "https://kp.gfz.de/app/files/Kp_ap_Ap_SN_F107_since_1932.txt"
+   ],
+   "retrieved": "2026-10-25T05:14:18.899Z"
+  },
+  "sentry.json": {
+   "sha256": "c1c6f2c1765c799f8e4ad88d82625ccbaaf88f76b95da716c5c77c8d8f74302b",
+   "bytes": 370989,
+   "sources": [
+    "https://ssd-api.jpl.nasa.gov/doc/sentry.html"
+   ],
+   "retrieved": "2026-10-25T05:09:38.335Z"
+  },
+  "gp.json": {
+   "sha256": "a3f13f2694345b39601f69e49d02da74b1471ba2fd6feb4363e019555f8afcd8",
+   "bytes": 2184069,
+   "sources": [
+    "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json"
+   ],
+   "retrieved": "2026-10-25T06:53:20.711Z"
+  }
+ }
+}

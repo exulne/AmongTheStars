@@ -1,0 +1,338 @@
+// Runs the simulation off the main thread. Streams the global series while it
+// runs, keeps full snapshots every SNAP_EVERY steps, and answers "what did the
+// universe look like at year Y" by replaying from the nearest snapshot.
+
+import { EV } from './catalog.ts';
+import { Engine, type SimState } from './engine.ts';
+import { F, HIST_FIELDS, NF, NGM } from './metrics.ts';
+import { Chronicle, type Annals, type Entry } from './chronicle.ts';
+import { buildTrends, type Trends } from './trends.ts';
+import { Lives, type Biography, type PersonBrief, type PickWant } from './lives.ts';
+import { SocietyModel, type Society } from './society.ts';
+import { buildWorld } from './world.ts';
+import { H, HG, NH, NWC, OUTCOME, WAR_KIND, WC } from './civ.ts';
+import { SHIP_BODY, periodOf, periodStart } from './ledger.ts';
+import { idStr } from './demography.ts';
+import { handleData, isDataReq, type DataReq, type DataRes } from './dataApi.ts';
+import { NGEO, type GeoSnap } from './geo.ts';
+import { NetMind } from '../ml/netMind.ts';
+import { loadWarGens, type WarGens } from '../ml/warGens.ts';
+
+const SNAP_EVERY = 20;
+// event types whose `a` is a second body (source, opponent, old capital); elsewhere it is a stage, tech or era index
+const A_IS_BODY = new Set([EV['Colony founded'], EV.War, EV.Independence, EV['Mutiny in transit'], EV['Ship lost'], EV['Ship launched'], EV['Ship arrived'], EV['Mission launched'], EV['Mission lost']]);
+
+export type ToWorker =
+  | { type: 'run'; seed: number }
+  | { type: 'state'; id: number; step: number }
+  | { type: 'history'; id: number; body: number }
+  | { type: 'events'; id: number; fromYear: number; toYear: number; body?: number; limit?: number }
+  | { type: 'residents'; id: number; body: number; year: number; offset: number; count: number }
+  | { type: 'person'; id: number; person: string; year: number }
+  | { type: 'residentAt'; id: number; body: number; year: number; k: number }
+  | { type: 'findPerson'; id: number; body: number; n: number; kind: string; year: number; want?: PickWant }
+  | { type: 'birthPlaces'; id: number }
+  | { type: 'chronicle'; id: number; from: number; to: number; body?: number; query?: string; limit?: number; minWeight?: number }
+  | { type: 'inventions'; id: number }
+  | { type: 'society'; id: number; body: number; step: number }
+  | { type: 'placeNames'; id: number }
+  | { type: 'faithNames'; id: number }
+  | DataReq
+  | { type: 'ship'; id: number; from: number; to: number; depart: number }
+  | { type: 'annals'; id: number }
+  | { type: 'trends'; id: number }
+  | { type: 'wayOfWar'; id: number; year: number; span: number };
+
+export type FromWorker =
+  | { type: 'progress'; seed: number; step: number; years: number[]; series: Float64Array; done: boolean; ms: number }
+  | { type: 'state'; id: number; step: number; S: Float64Array; techDone: Float64Array; techWhere: Float64Array; ships: ReturnType<Engine['shipList']>; globals: ReturnType<Engine['globals']>; settled: Int32Array; wars: WarVis[]; postures: [number, number][]; geo: GeoSnap }
+  | { type: 'history'; id: number; body: number; steps: number[]; cols: Record<string, number[]> }
+  | { type: 'events'; id: number; events: Engine['events'] }
+  | { type: 'residents'; id: number; pending?: boolean; total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] }
+  | { type: 'person'; id: number; pending?: boolean; bio: Biography | null }
+  | { type: 'residentAt'; id: number; pending?: boolean; person: string | null }
+  | { type: 'findPerson'; id: number; pending?: boolean; person: string | null; brief: PersonBrief | null; total: number; scanned: number; standing?: Biography['standing']; life?: { year: number; text: string; body?: number }[] }
+  | { type: 'birthPlaces'; id: number; pending?: boolean; bodies: number[] }
+  | { type: 'chronicle'; id: number; pending?: boolean; entries: Entry[] }
+  | { type: 'inventions'; id: number; pending?: boolean; list: { tech: number; year: number; entry: Entry | null }[] }
+  | { type: 'society'; id: number; pending?: boolean; society: Society | null }
+  /** places whose people call them something other than the catalogue name: [body, name] */
+  | { type: 'placeNames'; id: number; pending?: boolean; names: [number, string][] }
+  /** every faith by number (0: Earth's old faiths): [n, name] — narrative only, not data */
+  | { type: 'faithNames'; id: number; pending?: boolean; names: [number, string][] }
+  | DataRes
+  | { type: 'ship'; id: number; pending?: boolean; ship: ShipInfo | null }
+  | { type: 'annals'; id: number; pending?: boolean; annals: Annals | null }
+  | { type: 'trends'; id: number; pending?: boolean; trends: Trends | null }
+  | { type: 'wayOfWar'; id: number; way: WayOfWar };
+
+/** Wars begun in a span of years, and how they went. */
+export interface WarSpan { wars: number; kinetic: number; killed: number; annex: number; rep: number; peace: number; rounds: number; years: number }
+/** How this future fights at a year: which trained generation (if any), now and in the span before. */
+export interface WayOfWar { run: string; gen: number; gens: number; now: WarSpan; before: WarSpan }
+
+/**
+ * A war the star map draws at a year. Local: a and b are the two factions (capital bodies), sys the
+ * contested system. Kinetic: a launches from system `from` at body b in system `sys`; the strike lands
+ * at `arrive` and, if the target could reply from elsewhere, the reply lands on a at `end`.
+ */
+export interface WarVis { id: number; kinetic: boolean; a: number; b: number; sys: number; from: number; start: number; end: number; arrive: number; outcome: number; winner: number; killed: number }
+/** How long an ended war stays on the map, fading, years. */
+export const WAR_LINGER = 40;
+
+/** A ship in transit, as the people model knows it: its name, who boarded, and the Chronicle's launch entry (with its captain). */
+export interface ShipInfo { name: string; n: number; generation: boolean; launch: Entry | null; body: number; born: [number, number][] }
+
+const world = buildWorld();
+let main: Engine | null = null;
+let replay: Engine | null = null;
+let snaps: SimState[] = [];
+let runToken = 0;
+let lives: Lives | null = null;
+let chron: Chronicle | null = null;
+let society: SocietyModel | null = null;
+/** People need the whole ledger (and every event) of the run, so they wait for it to finish. */
+function people(): Lives | null {
+  if (!main || !main.done) return null;
+  if (!lives) {
+    lives = new Lives(main);
+    const c = (chron = new Chronicle(main, lives));
+    society = new SocietyModel(main, (b, n) => lives!.coinedWord(b, n));
+    society.faithInfo = (f) => ({ name: c.faithName(f), tenets: c.tenetsOf(f) });
+    society.polityName = (p) => c.polityName(p);
+    const civ = main.civ;
+    lives.faithAt = (b, year, u) => {
+      for (const [f, sh] of civ.faithsAt(b, periodOf(year))) { if (u < sh) return c.faithName(f); u -= sh; }
+      return null;
+    };
+    lives.bodyShares = (b, year) => civ.bodiesAt(b, periodOf(year));
+    lives.deeds = (pid, stays) => c.deedsOf(pid, stays).map((en) => ({ year: en.year, text: en.segs.map((s) => (typeof s === 'string' ? s : s.t)).join('') }));
+  }
+  return lives;
+}
+
+const post = (m: FromWorker, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage(m, transfer);
+
+/** Polities fight with the trained generation for their year, when there are trained generations. */
+function minds(e: Engine, seed: number, gens: WarGens | null): void {
+  if (!gens) return;
+  const m = new NetMind(e, gens.nets, () => 0, seed);
+  m.byYear = gens.genAt;
+  e.civ.pol.mind = m;
+}
+
+let warGens: WarGens | null = null;
+
+function run(seed: number): void {
+  const token = ++runToken;
+  loadWarGens().catch(() => null).then((gens) => { if (token === runToken) { warGens = gens; start(seed, token, gens); } });
+}
+
+function start(seed: number, token: number, gens: WarGens | null): void {
+  main = new Engine(world, seed);
+  minds(main, seed, gens);
+  lives = null; chron = null; society = null;
+  replay = new Engine(world, seed);
+  replay.logEvents = false;
+  minds(replay, seed, gens);
+  snaps = [main.snapshot()];
+  const t0 = performance.now();
+  let sent = 0;
+  const chunk = () => {
+    if (token !== runToken || !main) return;
+    const tEnd = performance.now() + 30;
+    while (!main.done && performance.now() < tEnd) {
+      main.step();
+      if (main.st.step % SNAP_EVERY === 0) snaps.push(main.snapshot());
+    }
+    // row k is written when the engine reaches step k, so rows 0..step are complete
+    const complete = main.st.step + 1;
+    const series = main.series.slice(sent * NGM, complete * NGM);
+    post({ type: 'progress', seed, step: complete - 1, years: main.years, series, done: main.done, ms: performance.now() - t0 }, [series.buffer]);
+    sent = complete;
+    if (!main.done) setTimeout(chunk, 0);
+  };
+  chunk();
+}
+
+function stateAt(step: number): Engine {
+  if (!main || !replay) throw new Error('not running');
+  // a seek can ask for the future: grind the engine forward until covered, bounded
+  // so the worker stays responsive — whatever's still missing keeps coming via chunks
+  if (step > main.st.step) {
+    const tEnd = performance.now() + 2000;
+    while (!main.done && main.st.step < step && performance.now() < tEnd) {
+      main.step();
+      if (main.st.step % SNAP_EVERY === 0) snaps.push(main.snapshot());
+    }
+  }
+  step = Math.min(step, main.st.step);
+  if (step === main.st.step) return main;
+  if (replay.st.step !== step) {
+    const snap = snaps[Math.floor(step / SNAP_EVERY)];
+    if (replay.st.step > step || replay.st.step < snap.step) replay.restore(snap);
+    while (replay.st.step < step) replay.step();
+  }
+  return replay;
+}
+
+function warSpan(e: Engine, from: number, to: number): WarSpan {
+  const X = e.st.hx, W = X.war, out: WarSpan = { wars: 0, kinetic: 0, killed: 0, annex: 0, rep: 0, peace: 0, rounds: 0, years: Math.max(0, to - from) };
+  for (let w = 0; w < X.hg[HG.nWar]; w++) {
+    const o = w * NWC, y = W[o + WC.start];
+    if (y < from || y >= to) continue;
+    out.wars++; out.killed += W[o + WC.killed]; out.rounds += W[o + WC.rounds];
+    if (W[o + WC.kind] === WAR_KIND.KINETIC) out.kinetic++;
+    const r = W[o + WC.outcome];
+    if (r === OUTCOME.ANNEX) out.annex++; else if (r === OUTCOME.REPARATIONS) out.rep++; else if (r === OUTCOME.PEACE) out.peace++;
+  }
+  return out;
+}
+
+/** The wars on the map at this engine's year: under way, or ended within WAR_LINGER years. */
+function warsNow(e: Engine): WarVis[] {
+  const X = e.st.hx, W = X.war, y = e.year, out: WarVis[] = [];
+  for (let w = X.hg[HG.nWar] - 1; w >= 0 && out.length < 256; w--) {
+    const o = w * NWC, start = W[o + WC.start], end = W[o + WC.end];
+    if (start > y || (W[o + WC.outcome] !== OUTCOME.ONGOING && end + WAR_LINGER < y) || (W[o + WC.outcome] === OUTCOME.ONGOING && end + 4 * WAR_LINGER < y)) continue;
+    const kinetic = W[o + WC.kind] === WAR_KIND.KINETIC;
+    let arrive = end;
+    if (kinetic) {
+      const A = world.systems[W[o + WC.from]], B = world.systems[W[o + WC.sys]];
+      arrive = start + Math.hypot(A.x - B.x, A.y - B.y, A.z - B.z) / Math.max(1e-3, W[o + WC.speed]);
+    }
+    out.push({ id: w, kinetic, a: W[o + WC.a], b: W[o + WC.b], sys: W[o + WC.sys], from: kinetic ? W[o + WC.from] : -1, start, end, arrive: Math.min(arrive, end), outcome: W[o + WC.outcome], winner: W[o + WC.winner], killed: W[o + WC.killed] });
+  }
+  return out;
+}
+
+/** Factions whose war mind is arming above the base rate (H.posture > 0): [capital, posture]. */
+function posturesNow(e: Engine): [number, number][] {
+  const S = e.st.S, Hh = e.st.hx.H, out: [number, number][] = [];
+  for (let m = 0; m < e.st.nSettled; m++) {
+    const b = e.st.settled[m];
+    if (S[b * NF + F.faction] !== b) continue;
+    const p = Hh[b * NH + H.posture];
+    if (p > 0) out.push([b, p]);
+  }
+  return out;
+}
+
+function wayOfWar(year: number, span: number): WayOfWar {
+  const e = main!, y = Math.min(year, e.year);
+  return {
+    run: warGens?.run ?? '', gen: warGens ? warGens.genAt(y) : -1, gens: warGens?.nets.length ?? 0,
+    now: warSpan(e, Math.max(0, y - span), y), before: warSpan(e, Math.max(0, y - 2 * span), Math.max(0, y - span)),
+  };
+}
+
+const dataEnv = { world, main: () => main, snaps: () => snaps, stateAt, post: (m: DataRes, t: Transferable[] = []) => post(m, t), minds: (e: Engine) => minds(e, e.seed, warGens) };
+
+self.onmessage = (ev: MessageEvent<ToWorker>) => {
+  const m = ev.data;
+  if (isDataReq(m)) handleData(m, dataEnv);
+  else if (m.type === 'run') run(m.seed);
+  else if (m.type === 'state') {
+    const e = stateAt(m.step);
+    const S = e.st.S.slice();
+    const techDone = e.st.techDone.slice(), techWhere = e.st.techWhere.slice();
+    const settled = e.st.settled.slice(0, e.st.nSettled);
+    const geo: GeoSnap = { seed: e.seed, rows: e.st.geo.slice(0, (e.geo.nSol + e.st.nSettled) * NGEO), g: e.st.geoG.slice(), scars: e.st.scars.slice() };
+    post({ type: 'state', id: m.id, step: e.st.step, S, techDone, techWhere, ships: e.shipList(), globals: e.globals(), settled, wars: warsNow(e), postures: posturesNow(e), geo }, [S.buffer, techDone.buffer, techWhere.buffer, settled.buffer, geo.rows.buffer, geo.g.buffer, geo.scars.buffer]);
+  } else if (m.type === 'history' && main) {
+    const w = 2 + HIST_FIELDS.length;
+    const steps: number[] = [];
+    const cols: Record<string, number[]> = Object.fromEntries(HIST_FIELDS.map((f) => [f, [] as number[]]));
+    for (let i = 0; i < main.histLen; i++) {
+      if (main.hist[i * w + 1] !== m.body) continue;
+      steps.push(main.hist[i * w]);
+      HIST_FIELDS.forEach((f, k) => cols[f].push(main!.hist[i * w + 2 + k]));
+    }
+    post({ type: 'history', id: m.id, body: m.body, steps, cols });
+  } else if (m.type === 'residents') {
+    const L = people();
+    if (!L) post({ type: 'residents', id: m.id, pending: true, total: 0, asOf: m.year, offset: 0, people: [], pyramid: [] });
+    else post({ type: 'residents', id: m.id, ...L.residents(m.body, m.year, m.offset, m.count) });
+  } else if (m.type === 'person') {
+    const L = people();
+    post({ type: 'person', id: m.id, pending: !L, bio: L ? L.biography(m.person, m.year) : null });
+  } else if (m.type === 'residentAt') {
+    const L = people();
+    post({ type: 'residentAt', id: m.id, pending: !L, person: L ? L.residentAt(m.body, m.year, m.k) : null });
+  } else if (m.type === 'findPerson') {
+    const L = people();
+    if (!L) post({ type: 'findPerson', id: m.id, pending: true, person: null, brief: null, total: 0, scanned: 0 });
+    else {
+      const r = L.pickLife(m.body, Math.floor(m.n), m.kind, m.year, m.want, (m.id * 2654435761) >>> 0);
+      post({ type: 'findPerson', id: m.id, person: r.person ? idStr(r.person) : null, brief: r.person ? L.brief(r.person, m.year) : null, total: r.total, scanned: r.scanned, standing: r.standing, life: r.person ? L.lifeEvents(idStr(r.person)) : undefined });
+    }
+  } else if (m.type === 'birthPlaces') {
+    const L = people();
+    post({ type: 'birthPlaces', id: m.id, pending: !L, bodies: L ? L.birthBodies() : [] });
+  } else if (m.type === 'chronicle') {
+    const ok = people() && chron;
+    post({ type: 'chronicle', id: m.id, pending: !ok, entries: ok ? chron!.list(m.from, m.to, { body: m.body, query: m.query, limit: m.limit, minWeight: m.minWeight }) : [] });
+  } else if (m.type === 'society') {
+    const ok = people() && society;
+    if (!ok) post({ type: 'society', id: m.id, pending: true, society: null });
+    else {
+      const e = stateAt(m.step);
+      post({ type: 'society', id: m.id, society: society!.at(m.body, e.years[e.st.step], e.st.S, e.st.techDone, e.st.g[1], e.st.hx, e.st.techWhere) });
+    }
+  } else if (m.type === 'placeNames') {
+    const L = people(), names: [number, string][] = [];
+    if (L) world.bodies.forEach((b, i) => { const n = L.placeName(i); if (n && n !== b.name) names.push([i, n]); });
+    post({ type: 'placeNames', id: m.id, pending: !L, names });
+  } else if (m.type === 'faithNames') {
+    // a place's culture is its biggest faith: 0 for Earth's old faiths, else 1 + its row in the faith table
+    const ok = !!(people() && chron && main), names: [number, string][] = [[0, "Earth's old faiths"]];
+    if (ok) {
+      const nF = main!.st.hx.hg[HG.nFaith];
+      for (let f = 0; f < nF; f++) names.push([f + 1, chron!.faithName(f)]);
+    }
+    post({ type: 'faithNames', id: m.id, pending: !ok, names: ok ? names : [] });
+  } else if (m.type === 'ship') {
+    const L = people();
+    post({ type: 'ship', id: m.id, pending: !L, ship: L ? shipInfo(L, m.from, m.to, m.depart) : null });
+  } else if (m.type === 'wayOfWar') {
+    if (main) post({ type: 'wayOfWar', id: m.id, way: wayOfWar(m.year, m.span) });
+  } else if (m.type === 'annals') {
+    const ok = people() && chron;
+    post({ type: 'annals', id: m.id, pending: !ok, annals: ok ? chron!.annals() : null });
+  } else if (m.type === 'trends') {
+    const t = main ? buildTrends(main) : null;
+    post({ type: 'trends', id: m.id, pending: !t, trends: t });
+  } else if (m.type === 'inventions') {
+    const ok = people() && chron;
+    post({ type: 'inventions', id: m.id, pending: !ok, list: ok ? chron!.inventions() : [] });
+  } else if (m.type === 'events' && main) {
+    const out: Engine['events'] = [];
+    const limit = m.limit ?? 200;
+    for (let i = main.events.length - 1; i >= 0 && out.length < limit; i--) {
+      const e = main.events[i];
+      if (e.year > m.toYear || e.year < m.fromYear) continue;
+      if (m.body !== undefined && e.body !== m.body && !(e.a === m.body && A_IS_BODY.has(e.type))) continue;
+      out.push(e);
+    }
+    post({ type: 'events', id: m.id, events: out });
+  }
+};
+
+/** Find the launch event for a ship (same route, launched in its departure year) and name it. */
+function shipInfo(L: Lives, from: number, to: number, depart: number): ShipInfo | null {
+  if (!main) return null;
+  const evs = main.events, T = EV['Ship launched'];
+  for (let i = evs.length - 1; i >= 0; i--) {
+    const e = evs[i];
+    if (e.type !== T || e.body !== from || e.a !== to || Math.abs(e.year - depart) > 0.5) continue;
+    const v = L.voyage(e.b);
+    if (!v || main.ledger === null) return null;
+    const fl = main.ledger.flows[v.flow];
+    // a generation ship is a place: its own residents, and children born aboard period by period
+    const body = v.generation ? SHIP_BODY + e.b : -1, born: [number, number][] = [];
+    const br = body >= 0 ? main.ledger.births.get(body) : undefined;
+    if (br) for (let p = periodOf(v.depart), sum = 0; p < br.length && periodStart(p) <= v.arrive; p++) { sum += Math.max(0, br[p]); born.push([Math.min(periodStart(p + 1), v.arrive), Math.round(sum)]); }
+    return { name: L.shipName(fl), n: v.n, generation: v.generation, launch: chron ? chron.entry(i) : null, body, born };
+  }
+  return null;
+}
