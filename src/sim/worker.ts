@@ -6,7 +6,7 @@ import { EV } from './catalog.ts';
 import { Engine, type SimState } from './engine.ts';
 import { HIST_FIELDS, NGM } from './metrics.ts';
 import { Chronicle, type Annals, type Entry } from './chronicle.ts';
-import { Lives, type Biography, type PersonBrief } from './lives.ts';
+import { Lives, type Biography, type PersonBrief, type PickWant } from './lives.ts';
 import { SocietyModel, type Society } from './society.ts';
 import { buildWorld } from './world.ts';
 import { HG, NWC, OUTCOME, WAR_KIND, WC } from './civ.ts';
@@ -29,7 +29,8 @@ export type ToWorker =
   | { type: 'residents'; id: number; body: number; year: number; offset: number; count: number }
   | { type: 'person'; id: number; person: string; year: number }
   | { type: 'residentAt'; id: number; body: number; year: number; k: number }
-  | { type: 'findPerson'; id: number; body: number; n: number; kind: string; year: number }
+  | { type: 'findPerson'; id: number; body: number; n: number; kind: string; year: number; want?: PickWant }
+  | { type: 'birthPlaces'; id: number }
   | { type: 'chronicle'; id: number; from: number; to: number; body?: number; query?: string; limit?: number; minWeight?: number }
   | { type: 'inventions'; id: number }
   | { type: 'society'; id: number; body: number; step: number }
@@ -47,7 +48,8 @@ export type FromWorker =
   | { type: 'residents'; id: number; pending?: boolean; total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] }
   | { type: 'person'; id: number; pending?: boolean; bio: Biography | null }
   | { type: 'residentAt'; id: number; pending?: boolean; person: string | null }
-  | { type: 'findPerson'; id: number; pending?: boolean; person: string | null; brief: PersonBrief | null; total: number; scanned: number }
+  | { type: 'findPerson'; id: number; pending?: boolean; person: string | null; brief: PersonBrief | null; total: number; scanned: number; standing?: Biography['standing'] }
+  | { type: 'birthPlaces'; id: number; pending?: boolean; bodies: number[] }
   | { type: 'chronicle'; id: number; pending?: boolean; entries: Entry[] }
   | { type: 'inventions'; id: number; pending?: boolean; list: { tech: number; year: number; entry: Entry | null }[] }
   | { type: 'society'; id: number; pending?: boolean; society: Society | null }
@@ -208,9 +210,12 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
     const L = people();
     if (!L) post({ type: 'findPerson', id: m.id, pending: true, person: null, brief: null, total: 0, scanned: 0 });
     else {
-      const r = L.bornAt(m.body, Math.floor(m.n), m.kind, m.year);
-      post({ type: 'findPerson', id: m.id, person: r.person ? idStr(r.person) : null, brief: r.person ? L.brief(r.person, m.year) : null, total: r.total, scanned: r.scanned });
+      const r = L.pickLife(m.body, Math.floor(m.n), m.kind, m.year, m.want, (m.id * 2654435761) >>> 0);
+      post({ type: 'findPerson', id: m.id, person: r.person ? idStr(r.person) : null, brief: r.person ? L.brief(r.person, m.year) : null, total: r.total, scanned: r.scanned, standing: r.standing });
     }
+  } else if (m.type === 'birthPlaces') {
+    const L = people();
+    post({ type: 'birthPlaces', id: m.id, pending: !L, bodies: L ? L.birthBodies() : [] });
   } else if (m.type === 'chronicle') {
     const ok = people() && chron;
     post({ type: 'chronicle', id: m.id, pending: !ok, entries: ok ? chron!.list(m.from, m.to, { body: m.body, query: m.query, limit: m.limit, minWeight: m.minWeight }) : [] });

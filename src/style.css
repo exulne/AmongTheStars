@@ -147,6 +147,8 @@ button, select, input { font: inherit; color: inherit; }
 .lifepick select, .lifepick input { background: transparent; border: 0; border-bottom: 1px solid var(--rule); color: var(--ink); font-size: 0.85rem; border-radius: 0; max-width: 13rem; }
 .lifepick select option { background: #111; color: var(--ink); }
 .lifepick .lp-n { width: 7em; text-align: right; }
+.lifepick .lp-range { display: flex; align-items: baseline; gap: 0.25rem; color: var(--quiet); }
+.lifepick .lp-range input { width: 3.6em; text-align: right; }
 .lifepick .lp-row { display: flex; gap: 0.9rem; margin: 0.6rem 0 0; }
 .lifepick .lp-result { margin: 0.45rem 0 0; font-size: 0.8rem; }
 .lifepick .lp-x { position: absolute; top: 0.1rem; right: 0.3rem; color: var(--quiet); font-size: 1.1rem; }

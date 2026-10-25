@@ -41,15 +41,23 @@ function probit(p: number): number {
   const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572];
   const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
   const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+  const tail = (x: number) => (((((c[0] * x + c[1]) * x + c[2]) * x + c[3]) * x + c[4]) * x + c[5]) / ((((d[0] * x + d[1]) * x + d[2]) * x + d[3]) * x + 1);
   const q = p - 0.5;
   if (Math.abs(q) <= 0.425) {
     const r = 0.180625 - q * q;
     return (q * (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5])) / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
   }
-  const r = Math.sqrt(-Math.log(Math.min(p, 1 - p)));
-  const x = (((((c[0] * r + c[1]) * r + c[2]) * r + c[3]) * r + c[4]) * r + c[5]) / ((((d[0] * r + d[1]) * r + d[2]) * r + d[3]) * r + 1);
-  return q < 0 ? -x : x;
+  if (q < 0) return tail(Math.sqrt(-2 * Math.log(p)));
+  return -tail(Math.sqrt(-2 * Math.log(1 - p)));
 }
+
+/** erf approximation (Abramowitz–Stegun 7.1.26). */
+function erf(x: number): number {
+  const t = 1 / (1 + 0.5 * Math.abs(x));
+  const tau = t * Math.exp(-x * x - 1.26551223 + t * (1.00002368 + t * (0.37409196 + t * (0.09678418 + t * (-0.18628806 + t * (0.27886807 + t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
+  return x >= 0 ? 1 - tau : tau - 1;
+}
+const ncdf = (x: number) => 0.5 * (1 + erf(x / Math.SQRT2));
 
 const MORTAL: Record<number, string> = {
   [EV.Plague]: 'the plague', [EV['Habitat breach']]: 'a habitat breach', [EV['Asteroid strike']]: 'the asteroid strike',
@@ -86,6 +94,18 @@ export interface Biography extends PersonBrief {
     worth: number;            // indicative net worth in $, from local product and inequality
     class: string; education: string; health: string; mood: string; language: string; devotion: string | null;
   } | null;
+}
+
+/** Filters for pickLife: leave a field undefined for "anyone". wealth bounds are percentiles 0–100. */
+export interface PickWant {
+  sex?: 'f' | 'm';
+  wealth?: [number, number];
+  age?: [number, number];
+  height?: [number, number];
+  mood?: string;
+  health?: string;        // healthy | scarred | frail | chronic | uploaded | engineered
+  education?: string;
+  devotion?: string;      // devout | observant | nominal | lapsed | none
 }
 
 export class Lives {
@@ -356,6 +376,130 @@ export class Lives {
     return k >= 0 && k < c.total ? idStr(c.at(k)) : null;
   }
 
+  /** Worlds anyone was ever born on (by `year`): Earth plus real bodies the ledger recorded births for. */
+  birthBodies(year = Infinity): number[] {
+    const out = new Set<number>([this.e.world.earth]);
+    const pMax = Number.isFinite(year) ? Math.min(this.D.lastPeriod, Math.max(0, periodOf(year))) : Infinity;
+    for (const [b, arr] of this.e.ledger?.births ?? []) {
+      if (b >= this.e.world.bodies.length || isShipBody(b)) continue;
+      for (let p = 0; p < arr.length && p <= pMax; p++) if (arr[p] > 0) { out.add(b); break; }
+    }
+    return [...out];
+  }
+
+  private heightOf(id: Id, born: number): number {
+    const bodyG = isShipBody(id.b) ? 0.9 : this.e.world.bodies[id.b].g;
+    return Math.round(172 + (1 - Math.min(bodyG, 1.5)) * 24 * Math.min(1, (born - (isShipBody(id.b) ? born - 100 : this.e.st.S[id.b * NF + F.founded])) / 300) + (hash01(id.b, id.q, id.i, 61) - 0.5) * 22);
+  }
+  private personalityOf(id: Id): Biography['personality'] {
+    return [62, 63, 64, 65, 66].map((k) => Math.round(hash01(id.b, id.q, id.i, k) * 100) / 100) as Biography['personality'];
+  }
+
+  /** Does this person fit the picker's filters at `year`? undefined = no filters set (any
+   *  candidate passes); false = filtered out; otherwise their standing at the year. */
+  private match(id: Id, year: number, want: PickWant): Biography['standing'] | false | undefined {
+    if (!Object.values(want).some((v) => v !== undefined)) return undefined;
+    const life = this.D.life(id, this.D.lastPeriod);
+    if (!life) return false;
+    const born = this.D.birthYear(id);
+    const last = life[life.length - 1];
+    const dead = last.end === 'died' || last.end === 'lost';
+    const ey = Math.min(year, dead ? Math.max(born, last.diedYear! - 1) : year);
+    const age = ey - born;
+    if (age < 0) return false;
+    const brief = this.brief(id, ey);
+    if (want.sex && brief.sex !== want.sex) return false;
+    const h = this.heightOf(id, born);
+    if (want.height && (h < want.height[0] || h > want.height[1])) return false;
+    if (want.age && (age < want.age[0] || age > want.age[1])) return false;
+    const stay = this.stayAt(life, ey);
+    const at = this.home(stay?.body ?? id.b);
+    const faith = this.faithAt?.(this.home(id.b), born, hash01(id.b, id.q, id.i, 71)) ?? null;
+    const st = this.standing(id, ey, life, at, brief.job, brief.body, faith);
+    if (!st) return false;
+    if (want.wealth && (st.wealthPct * 100 < want.wealth[0] || st.wealthPct * 100 > want.wealth[1])) return false;
+    if (want.mood && st.mood !== want.mood) return false;
+    if (want.education && st.education !== want.education) return false;
+    if (want.devotion && (want.devotion === 'none' ? st.devotion !== null : st.devotion !== want.devotion)) return false;
+    if (want.health) {
+      const cat = st.health.includes('scarred') ? 'scarred' : st.health.startsWith('a mind') ? 'uploaded' : st.health.startsWith('engineered') ? 'engineered' : st.health === 'a chronic condition' ? 'chronic' : st.health;
+      if (cat !== want.health) return false;
+    }
+    return st;
+  }
+
+  /** The n-th person born on `body` in a birth period starting at or before `year`
+   *  (a few may land just after it — callers check ages). */
+  private bornBy(body: number, n: number, year: number): { person: Id | null; total: number } {
+    const t = this.D.ensure(body, Math.min(this.D.lastPeriod, Math.max(0, periodOf(year))));
+    const pools = t.pools.filter((x) => x.native && (x.q < 0 || periodStart(x.q) <= year)).sort((a, b) => a.q - b.q);
+    const total = pools.reduce((a, x) => a + x.n, 0);
+    if (n < 1 || n > total) return { person: null, total };
+    let left = n;
+    for (const x of pools) {
+      if (left <= x.n) return { person: { b: body, q: x.q, i: left - 1 }, total };
+      left -= x.n;
+    }
+    return { person: null, total };
+  }
+
+  /** Someone matching `want` on `body` (-1: any world that saw births). `n` > 0 picks that
+   *  birth number; 0 draws at random, up to a few hundred tries until the filters fit. */
+  pickLife(body: number, n: number, kind: string, year: number, want: PickWant | undefined, salt: number): { person: Id | null; total: number; scanned: number; standing: Biography['standing'] } {
+    const KIND_WORD: Record<string, string> = { baseline: 'baseline human', adapted: 'adapted to this world', uploaded: 'uploaded' };
+    const KINDS = Object.keys(KIND_WORD);
+    // one named person on one named world: the exact lookup, filters checked once
+    if (body >= 0 && n > 0) {
+      const r = this.bornAt(body, n, kind === 'random' ? 'any' : kind, year);
+      const got = r.person ? this.match(r.person, year, want ?? {}) : false;
+      return { person: r.person && got !== false ? r.person : null, total: r.total, scanned: r.scanned, standing: got || null };
+    }
+    const bodies = body >= 0 ? [body] : this.birthBodies(year);
+    // scars and dark moods come from living through an event: when asked for one,
+    // most draws go to worlds that saw something mortal — fresh wounds for a bad
+    // mood (<8y, matching `recent`), any event in living memory for a scar
+    const wantsEvent = want?.health === 'scarred' || (want?.mood !== undefined && MOODS_BAD.includes(want.mood));
+    const badMood = want?.mood !== undefined && MOODS_BAD.includes(want.mood);
+    const win = badMood ? 8 : 200;
+    const eventBodies = wantsEvent
+      ? bodies.filter((b) => (this.eventsBy.get(b) ?? []).some((ev) => ev.year <= year && ev.year > year - win))
+      : [];
+    let total = 0;
+    const filtered = !!want && Object.values(want).some((v) => v !== undefined);
+    const TRIES = filtered || kind === 'random' ? 500 : 120;
+    const censuses = new Map<number, { total: number; at: (k: number) => Id }>();
+    const birthsOf = new Map<number, number>();
+    for (let t = 0; t < TRIES; t++) {
+      const pool = eventBodies.length && hash01(this.e.seed, salt, t, 9) < 0.7 ? eventBodies : bodies;
+      const b = pool.length === 1 ? pool[0] : pool[Math.floor(hash01(this.e.seed, salt, t, 1) * pool.length)];
+      let id: Id | null;
+      if (filtered) {
+        // filters need someone assessable at the year: draw from the living census
+        const p = Math.max(0, Math.min(this.D.lastPeriod, periodOf(year) - (year >= 5 ? 1 : 0)));
+        let c = censuses.get(b);
+        if (!c) { c = this.D.census(b, p); censuses.set(b, c); }
+        if (!c.total) continue;
+        total = Math.max(total, c.total);
+        id = c.at(Math.floor(hash01(this.e.seed, salt, t, 2) * c.total));
+      } else {
+        let tot = birthsOf.get(b);
+        if (tot === undefined) { tot = this.bornBy(b, 1, year).total; birthsOf.set(b, tot); }
+        if (!tot || (n > 0 && n > tot)) continue;
+        total = Math.max(total, tot);
+        id = this.bornBy(b, n > 0 ? n : 1 + Math.floor(hash01(this.e.seed, salt, t, 2) * tot), year).person;
+      }
+      if (!id) continue;
+      const kk = kind === 'random' ? KINDS[Math.floor(hash01(this.e.seed, salt, t, 3) * KINDS.length)] : kind;
+      if (kk !== 'any') {
+        const age = year - this.D.birthYear(id);
+        if (this.bodyKind(id, Math.max(0, age), year) !== KIND_WORD[kk]) continue;
+      }
+      const got = this.match(id, year, want ?? {});
+      if (got !== false) return { person: id, total, scanned: t + 1, standing: got || null };
+    }
+    return { person: null, total, scanned: TRIES, standing: null };
+  }
+
   private deathCause(id: Id, s: Stay, age: number): string {
     if (s.end === 'lost') return `lost with the ${this.shipName(s.flow!)} in deep space`;
     if (isShipBody(s.body)) return age > 70 ? 'old age, aboard ship' : ['a hull breach', 'a fever that ran through the decks', 'an accident in the drive section', 'heart failure'][Math.floor(hash01(id.b, id.q, id.i, 54) * 4)];
@@ -391,17 +535,22 @@ export class Lives {
   }
 
   /** Where a person sits in the local wealth distribution: mostly luck, part accumulation
-   *  with age, part inherited from a parent (one level up, keeping it cheap). */
+   *  with age, part inherited from a parent (one level up). The mix happens in normal
+   *  space so the result is a true percentile — uniform across the population. */
   private wealthPct(id: Id, year: number, depth = 0): number {
     const age = Math.max(0, year - this.D.birthYear(id));
     const u = hash01(id.b, id.q, id.i, 81);
-    const a = age < 20 ? 0 : age < 45 ? ((age - 20) / 25) * 0.6 : 0.6 + Math.min(0.4, (age - 45) / 80);
-    let inherit = u;
+    // age and inheritance tilt the draw rather than dominate it: map each into a
+    // moderate quantile band before going through probit
+    const a = age < 20 ? 0 : age < 45 ? ((age - 20) / 25) * 0.7 : 0.7 + Math.min(0.3, (age - 45) / 120);
+    let inherit = 0.5;
     if (depth === 0) {
       const p = this.D.father(id) ?? this.D.mother(id);
       if (p) inherit = this.wealthPct(p, year, 1);
     }
-    return Math.max(0.02, Math.min(0.995, 0.55 * u + 0.2 * a + 0.25 * inherit));
+    const soft = (v: number) => probit(0.15 + 0.7 * Math.max(0, Math.min(1, v)));
+    const z = (0.6 * probit(u) + 0.2 * soft(a) + 0.25 * soft(inherit)) / Math.sqrt(0.6 * 0.6 + 0.2 * 0.2 + 0.25 * 0.25);
+    return Math.max(0.001, Math.min(0.999, ncdf(z)));
   }
 
   private education(job: string): string {
@@ -435,11 +584,14 @@ export class Lives {
     for (const s of life) {
       const y0 = Math.max(periodStart(s.from), born), y1 = Math.min(periodStart(s.to + 1), year);
       for (const ev of this.eventsBy.get(s.body) ?? []) {
-        if (ev.year >= y0 && ev.year < y1 && ev.type in MORTAL) { scar = MORTAL[ev.type]; if (year - ev.year < 8) recent = true; }
+        // 'left' is the only ending that closes strictly at the boundary (they'd gone);
+        // everyone else was there through their last period, so the boundary event counts
+        const inStay = ev.year >= y0 && (s.end === 'left' ? ev.year < y1 : ev.year <= y1);
+        if (inStay && ev.type in MORTAL) { scar = MORTAL[ev.type]; if (year - ev.year < 8) recent = true; }
       }
     }
-    const health = body === 'uploaded' ? 'no body to fail; a mind on a substrate'
-      : body === 'adapted to this world' ? 'engineered for this world'
+    const bodyOf = body === 'uploaded' ? 'a mind on a substrate' : body === 'adapted to this world' ? 'engineered for this world' : null;
+    const health = bodyOf ? `${bodyOf}${scar ? `; scarred by ${scar}` : ''}`
       : scar ? `scarred by ${scar}`
       : age > this.expectedLife(year) * 0.85 ? 'frail'
       : hash01(id.b, id.q, id.i, 82) < 0.08 ? 'a chronic condition' : 'healthy';
@@ -565,8 +717,6 @@ export class Lives {
       path.push({ body: isShipBody(s.body) ? null : s.body, name: this.bodyName(s.body), from: k === 0 ? born : f ? f.arrive : periodStart(s.from), to: s.end === 'alive' ? null : s.end === 'left' ? s.flow?.depart ?? null : s.diedYear ?? null, ship: v ? { from: v.src, to: v.dst, depart: v.depart } : undefined });
     });
 
-    const bodyG = isShipBody(id.b) ? 0.9 : this.e.world.bodies[id.b].g;
-    const S = this.e.st.S;
     const status: Biography['status'] = year < born ? 'unborn' : dead && year >= deathYear ? 'dead'
       : stay && stay.end === 'left' && stay.flow && year > stay.flow.depart && year < stay.flow.arrive ? 'travelling' : 'alive';
     // where their life is lived for standing purposes: where they are at the asked year
@@ -585,8 +735,8 @@ export class Lives {
       children: kids.slice(0, 24).map((x) => this.brief(x, year)),
       siblings: siblings.map((x) => this.brief(x, year)),
       ancestors, story,
-      height: Math.round(172 + (1 - Math.min(bodyG, 1.5)) * 24 * Math.min(1, (born - (isShipBody(id.b) ? born - 100 : S[id.b * NF + F.founded])) / 300) + (hash01(id.b, id.q, id.i, 61) - 0.5) * 22),
-      personality: [62, 63, 64, 65, 66].map((k) => Math.round(hash01(id.b, id.q, id.i, k) * 100) / 100) as Biography['personality'],
+      height: this.heightOf(id, born),
+      personality: this.personalityOf(id),
       generationsHere: ancestors.filter((a) => a.who.place === this.bodyName(id.b)).length + 1,
       faith,
       descendants: { total: desc.total, alive: desc.alive, generations: desc.generations, places: [...desc.places.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([b, n]) => ({ body: b, name: this.bodyName(b), n })) },
