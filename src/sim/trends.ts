@@ -97,9 +97,14 @@ export function buildTrends(e: Engine): Trends | null {
     }
     return ans;
   };
+  const memo = new Map<number, Map<number, number>>();
   const gdpAt = (k: number) => {
-    const m = new Map<number, number>();
-    if (k >= 0) for (let r = sStart[k]; r < sEnd[k]; r++) m.set(e.hist[r * w + 1], e.hist[r * w + gdpCol]);
+    let m = memo.get(k);
+    if (!m) {
+      m = new Map<number, number>();
+      if (k >= 0) for (let r = sStart[k]; r < sEnd[k]; r++) m.set(e.hist[r * w + 1], e.hist[r * w + gdpCol]);
+      memo.set(k, m);
+    }
     return m;
   };
   const markets: Trends['markets'] = [];
@@ -109,15 +114,18 @@ export function buildTrends(e: Engine): Trends | null {
     const kY = sampleAt(Y);
     if (kY < 0) continue;
     const then = gdpAt(sampleAt(Y - MARKET_WINDOW));
-    const gain: { body: number; now: number; then: number }[] = [];
+    // bounded top-5, stable in sample-row order on equal gains
+    const top: { body: number; now: number; then: number; gain: number }[] = [];
     for (let r = sStart[kY]; r < sEnd[kY]; r++) {
       const body = e.hist[r * w + 1];
       if (isShipBody(body)) continue;
-      const now = e.hist[r * w + gdpCol], before = then.get(body) ?? 0;
-      if (now - before > 0) gain.push({ body, now, then: before });
+      const now = e.hist[r * w + gdpCol], before = then.get(body) ?? 0, gain = now - before;
+      if (!(gain > 0)) continue;
+      let i = top.length;
+      for (let j = 0; j < top.length; j++) if (top[j].gain < gain) { i = j; break; }
+      if (i < 5) { top.splice(i, 0, { body, now, then: before, gain }); if (top.length > 5) top.pop(); }
     }
-    gain.sort((a, b) => b.now - b.then - (a.now - a.then));
-    for (const g of gain.slice(0, 5)) markets.push({ p, year: Y, body: g.body, now: g.now, then: g.then });
+    for (const g of top) markets.push({ p, year: Y, body: g.body, now: g.now, then: g.then });
   }
 
   const shocks: Trends['shocks'] = [];
