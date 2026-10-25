@@ -633,8 +633,8 @@ function followYear(y: number): void {
   }
   // mid-voyage (or lost): if their ship is drawn among the stars, shadow the ship itself
   const rec = s.ship && ctx.snap ? ctx.snap.ships.find((sh) => sh.kind !== 1 && sh.from === s.ship!.from && sh.to === s.ship!.to && Math.abs(sh.depart - s.ship!.depart) < 0.6) : undefined;
-  const at = rec ? explainLocate('shipl', shipId(rec)) : null;
-  if (rec && at) {
+  if (rec) {
+    // pull tracks whatever it points at every frame; the ship head appears once the view syncs
     const ref: Ref = { kind: 'thing', ex: 'shipl', id: shipId(rec) };
     if (level !== 'local') setLevel('local');
     pull = ref;
