@@ -173,23 +173,38 @@ for (let k = 0; k < 20; k++) {
     if (b === world.earth) w += preEarth;
     wB.set(b, w); wTot += w;
   }
-  const expEarth = wB.get(world.earth)! / wTot;
-  let hits = 0, got = 0;
-  for (let k = 0; k < 400; k++) { const r = L.pickLife(-1, 0, 'any', YR, undefined, k + 1000); if (r.person) { got++; if (r.person.b === world.earth) hits++; } }
-  ok(got > 300 && Math.abs(hits / got - expEarth) <= 0.07, `T3: births-path Earth share ${(hits / got).toFixed(3)} ≈ expected ${expEarth.toFixed(3)} (n=${got})`);
+  /** binomial sanity band: within 4 SD of the expected count */
+  const within4 = (hits: number, n: number, p: number) => Math.abs(hits - n * p) <= 4 * Math.sqrt(n * p * (1 - p));
+  /** the smallest set of top bodies holding ≥ 25% of the draw weight, and its share */
+  const topSet = (w: Map<number, number>) => {
+    const tot = [...w.values()].reduce((a, x) => a + x, 0);
+    const set = new Set<number>();
+    let s = 0;
+    for (const [b, v] of [...w.entries()].sort((a, b) => b[1] - a[1])) { if (s >= tot * 0.25) break; set.add(b); s += v; }
+    return { set, p: tot ? s / tot : 0 };
+  };
+  console.log(`  T3: births-path Earth share ${(wB.get(world.earth)! / wTot).toFixed(3)}`);
+  const S = topSet(wB);
+  let hitsS = 0, got = 0;
+  for (let k = 0; k < 400; k++) { const r = L.pickLife(-1, 0, 'any', YR, undefined, k + 1000); if (r.person) { got++; if (S.set.has(r.person.b)) hitsS++; } }
+  ok(got > 300 && got * S.p >= 20 && within4(hitsS, got, S.p), `T3: births-path top-${S.set.size} worlds share ${S.p.toFixed(3)}: expected ${(got * S.p).toFixed(0)}, got ${hitsS} (n=${got})`);
   // census path (filtered, no born range): ∝ head-count at the census period
   const pC = Math.max(0, Math.min(L.D.lastPeriod, periodOf(YR) - 1));
-  let cTot = 0, cEarth = 0;
-  for (const b of bodies3) { const v = Math.max(0, e.ledger!.popEnd.get(b)?.[pC] ?? 0); cTot += v; if (b === world.earth) cEarth = v; }
-  const expC = cEarth / cTot;
-  let hits2 = 0, got2 = 0;
+  const wC = new Map<number, number>();
+  for (const b of bodies3) wC.set(b, Math.max(0, e.ledger!.popEnd.get(b)?.[pC] ?? 0));
+  const cTot = [...wC.values()].reduce((a, x) => a + x, 0);
+  console.log(`  T3: census-path Earth share ${(wC.get(world.earth)! / cTot).toFixed(3)}`);
+  const S2 = topSet(wC);
+  let hits2S = 0, got2 = 0;
   for (let k = 0; k < 400; k++) {
     const r = L.pickLife(-1, 0, 'any', YR, { sex: 'f' }, k + 5000);
     if (!r.person) continue;
     got2++;
-    if (L.biography(idStr(r.person), YR)?.where?.body === world.earth) hits2++;
+    const w = L.biography(idStr(r.person), YR)?.where?.body;
+    if (w !== undefined && S2.set.has(w)) hits2S++;
   }
-  ok(got2 > 300 && Math.abs(hits2 / got2 - expC) <= 0.07, `T3: census-path Earth share ${(hits2 / got2).toFixed(3)} ≈ expected ${expC.toFixed(3)} (n=${got2})`);
+  ok(got2 > 300 && got2 * S2.p >= 20 && within4(hits2S, got2, S2.p), `T3: census-path top-${S2.set.size} worlds share ${S2.p.toFixed(3)}: expected ${(got2 * S2.p).toFixed(0)}, got ${hits2S} (n=${got2})`);
+  ok(!within4(0, got, S.p) && !within4(0, got2, S2.p), 'T3: zero hits in the top worlds would fail');
 }
 
 // --- T4: 'random' is exactly 'any'
