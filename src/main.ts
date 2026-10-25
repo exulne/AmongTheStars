@@ -20,6 +20,7 @@ import { GALAXIES, buildWorld } from './sim/world.ts';
 import { ChartStrip, globalSeries, type Series } from './ui/charts.ts';
 import { fmtNum, fmtYear, parseCount } from './ui/format.ts';
 import { Inspector } from './ui/inspector.ts';
+import { LifePick } from './ui/lifePick.ts';
 import { installDataDesk } from './ui/dataDesk.ts';
 import { DISCLAIMER } from './data/provenance.ts';
 import { STAMP_CODE } from './ui/stamp.ts';
@@ -32,12 +33,16 @@ import { wayOfWarHtml } from './ui/wayOfWar.ts';
 import { EraMood } from './view/eraMood.ts';
 import { ShipConsole } from './ship/console.ts';
 import { Voyage } from './ship/voyage.ts';
+import { Voice } from './ship/voice.ts';
+import { OracleAgent } from './ship/agent.ts';
+import { FuturePaths } from './ui/futurePaths.ts';
+import { toolSummary } from './sim/milestones.ts';
 import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionCss, faithCss, stageLegend, type ColorMode } from './view/colorModes.ts';
 import { names as naming } from './ui/names.ts';
 import { StreetView } from './view/street.ts';
 import { Picker } from './explain/picker.ts';
 import { explainLocate, explainName, explainerFor } from './explain/registry.ts';
-import { resetShips, setMissionApi, setShipApi } from './explain/ships.ts';
+import { resetShips, setMissionApi, setShipApi, shipId } from './explain/ships.ts';
 import { GalaxyView, LocalView, LEVELS, PLANET_SUN, PlanetView, SystemView, UniverseView, alive, cityCount, cityDir, makeSky, popOf, stageOf, systemSummary, type Ctx, type Level, type Pickable, type Ref, type View } from './view/views.ts';
 
 // ------------------------------------------------------------------ DOM
@@ -60,6 +65,7 @@ app.innerHTML = `
       <label for="seed">Future #</label><input id="seed" inputmode="numeric" value="1" size="6">
       <button id="reroll" class="link" type="button">Another future</button>
       <button id="chronicle" class="link" type="button">Chronicle</button>
+      <button id="lifepick" class="link" type="button" aria-expanded="false" title="Pick one person and follow their whole life">Follow a life</button>
       <button id="data" class="link" type="button" aria-pressed="false">Data</button>
       <button id="board" class="link" type="button" aria-pressed="false" title="Fly this future yourself: tell the ship where and when">Board the Starship</button>
       <span class="status num" aria-live="polite"></span>
@@ -192,7 +198,7 @@ const dataPanel = installDataDesk({
   app, scene: canvas, world, sim, ctx, view: () => views[level],
   selectBody: (b) => select(asPick({ kind: 'body', id: b })),
   showSeries: (key) => { if (charts.el.hidden) chartsToggle.click(); charts.show(key); },
-  pickYear: (y) => timeline.set(y, true),
+  pickYear: (y) => seekTo(y),
 });
 // a permanent notice: what this is not
 {
@@ -216,6 +222,7 @@ const views: Record<Level, View> = {
   street: new StreetView((b, y, o, n) => sim.residents(b, y, o, n)),
 };
 const street = views.street as StreetView;
+street.setPersonFetch((pid, y) => sim.person(pid, y));
 // seen from the Sun in the local view; behind the whole galaxy it is only a backdrop
 const sky = makeSky(1, 7000, 'sky', () => (level === 'local' ? { name: 'the Sun', x: 0, y: 0, z: 0, sol: true } : null));
 scene.add(sky);
@@ -575,6 +582,100 @@ inspector.onDive = (p) => { select(p); dive(p); };
 inspector.onLookCloser = (pid, bio) => enterPerson(pid, null, bio);
 inspector.onEnter = () => { if (ctx.selected) dive(ctx.selected); };
 inspector.onBio = () => { if (micro.pid) { inspector.openPerson(micro.pid); inspector.el.classList.add('open'); } };
+
+/** Seek to a year (and a world): a click may name a year not yet simulated. */
+function seekTo(y: number, b?: number): void {
+  // events past the simulated frontier can't be shown yet: park the year, go as far
+  // as we can, and the loop lands on the real year once it's simulated
+  const front = sim.done ? 10000 : (sim.years[sim.frontier] ?? 0);
+  pendingYear = y > front ? y : null;
+  timeline.set(Math.min(y, front), true);
+  if (b != null) select(asPick({ kind: 'body', id: b }));
+}
+
+// pick one person and follow their whole life: a quiet panel off the header
+const lifePick = new LifePick({
+  bodies: () => sim.birthPlaces(),
+  home: world.earth,
+  nameOf: (b) => naming.place(world, b),
+  year: () => ctx.year,
+  find: (b, n, k, y, w) => sim.findPerson(b, n, k, y, w),
+  seek: seekTo,
+  open: (pid) => { inspector.openPerson(pid); inspector.el.classList.add('open'); startFollow(pid); },
+});
+app.append(lifePick.el);
+const lifePickBtn = app.querySelector<HTMLButtonElement>('#lifepick')!;
+lifePick.onToggle = (on) => lifePickBtn.setAttribute('aria-expanded', String(on));
+lifePickBtn.addEventListener('click', () => { if (following) stopFollow(); else lifePick.toggle(); });
+
+// ------------------------------------------------------------------ following one life
+
+/** The person whose pathway the camera is shadowing, if any. */
+let following: { pid: string; name: string; path: Biography['path']; idx: number } | null = null;
+
+function stopFollow(): void {
+  if (!following) return;
+  following = null;
+  street.followPid = null;
+  pull = null;
+  lifePickBtn.textContent = 'Follow a life';
+  lifePickBtn.setAttribute('aria-pressed', 'false');
+}
+
+/** Read their whole path once, then track them through it as time moves. */
+async function startFollow(pid: string): Promise<void> {
+  const g = runGen;
+  const m = await sim.person(pid, ctx.year);
+  if (g !== runGen || inspector.personId !== pid || !m.bio?.path.length) return;
+  following = { pid, name: m.bio.name, path: m.bio.path, idx: -1 };
+  street.followPid = pid;
+  lifePickBtn.textContent = 'Stop following';
+  lifePickBtn.setAttribute('aria-pressed', 'true');
+  followYear(ctx.year);
+}
+
+/** The next stop of theirs with solid ground under it. */
+function nextStop(path: Biography['path'], i: number): number | undefined {
+  for (let j = i; j < path.length; j++) if (path[j].body !== null) return path[j].body!;
+  return undefined;
+}
+
+/** Where they are at year y → where the camera goes. A no-op once in place. */
+function followYear(y: number): void {
+  if (!following || !sim.years.length) return;
+  const p = following.path;
+  let idx = p.findIndex((s) => y < (s.to ?? Infinity));
+  if (idx < 0) idx = p.length - 1;               // after death: linger where they ended
+  const s = p[idx];
+  const moved = idx !== following.idx;
+  following.idx = idx;
+  if (s.body !== null && world.bodies[s.body]) {
+    pull = null;
+    if (moved || level !== 'street' || ctx.body !== s.body) {
+      const b = s.body;
+      if (level === 'street' && ctx.body !== b) { ctx.body = b; ctx.system = world.bodies[b].system; ctx.city = 0; setLevel('street', { kind: 'city', id: 0 }); }
+      else if (level !== 'street') setLevel('street', { kind: 'city', id: 0 }, () => { ctx.body = b; ctx.system = world.bodies[b].system; ctx.city = 0; });
+    }
+    return;
+  }
+  // mid-voyage (or lost): if their ship is drawn among the stars, shadow the ship itself
+  const rec = s.ship && ctx.snap ? ctx.snap.ships.find((sh) => sh.kind !== 1 && sh.from === s.ship!.from && sh.to === s.ship!.to && Math.abs(sh.depart - s.ship!.depart) < 0.6) : undefined;
+  if (rec) {
+    // pull tracks whatever it points at every frame; the ship head appears once the view syncs
+    const ref: Ref = { kind: 'thing', ex: 'shipl', id: shipId(rec) };
+    if (level !== 'local') setLevel('local');
+    pull = ref;
+    return;
+  }
+  // an untrackable leg — a warp hop, or a ship already gone: wait at the world they're bound for
+  pull = null;
+  const anchor = (s.ship && world.bodies[s.ship.to]) ? s.ship.to : nextStop(p, idx);
+  if (anchor !== undefined && (level !== 'planet' || ctx.body !== anchor))
+    setLevel('planet', { kind: 'body', id: anchor }, () => { ctx.body = anchor; ctx.system = world.bodies[anchor].system; });
+}
+
+inspector.onFollow = (pid) => { inspector.el.classList.add('open'); startFollow(pid); };
+inspector.onPerson = (id) => { if (following && id !== following.pid) stopFollow(); };
 
 // Wheel out past the outer limit goes up a level. Wheel in over a thing pulls
 // it to the centre of the view, and once close enough enters it.
@@ -967,6 +1068,7 @@ function refreshPanels(): void {
   const sel = ctx.selected, place = sel?.kind === 'body' ? sel.id : sel?.kind === 'city' || level === 'planet' || level === 'street' ? ctx.body : -1;
   calendar.place(ctx.snap, place, ctx.year, sim.years[sim.frontier] ?? 0);
   dataPanel.refresh();
+  followYear(ctx.year);
 }
 
 charts.setSource((key): Series | null => {
@@ -1018,6 +1120,21 @@ timeline.onChange = (y) => {
   requestState(y);
   charts.setYear(y);
 };
+
+// a hand on the timeline (the slider and its keys, a typed year, an age, Play, the Space and arrow
+// shortcuts) drops a year parked by a link, the URL or Watch; seeks made in code keep it
+const dropParked = (): void => { pendingYear = null; };
+timeline.el.addEventListener('input', (e) => { if ((e.target as HTMLElement).matches('input[type=range]')) dropParked(); });
+timeline.el.addEventListener('keydown', (e) => {
+  const t = e.target as HTMLElement;
+  if (t.matches('input[type=range]') ? e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.code === 'Space' : t.matches('.tl-big') && e.key === 'Enter') dropParked();
+});
+timeline.el.addEventListener('click', (e) => { if ((e.target as HTMLElement).closest('[data-age], .tl-play')) dropParked(); });
+window.addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.code === 'Space' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') dropParked();
+});
 
 sim.onProgress = () => {
   const era = GM.era;
@@ -1082,6 +1199,8 @@ function startRun(seed: number): void {
   runGen++;
   clearSocietyLooks();
   inspector.resetPeople();
+  lifePick.hide();
+  stopFollow();
   resetShips();
   ctx.snap = null; lastStep = -1; wanted = -1; inFlight = false; events = []; history = null; fc = null;
   ticker.clear(); tickFrom = 0;
@@ -1120,7 +1239,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key.length === 1 && /[\p{L}\p{N}#]/u.test(e.key)) { e.preventDefault(); search.focus(e.key); return; }
   if (e.code === 'Space') { e.preventDefault(); timeline.toggle(); }
   else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); timeline.step(e.key === 'ArrowRight' ? 1 : -1, e.shiftKey); }
-  else if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; else if (level === 'street' && street.follow >= 0) street.follow = -1; else select(null); }
+  else if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; else if (!lifePick.el.hidden) lifePick.hide(); else if (following) stopFollow(); else if (level === 'street' && street.follow >= 0) street.follow = -1; else select(null); }
   else if (e.key === '/') { e.preventDefault(); search.focus(); }
   else if (e.key === '?') help.hidden = !help.hidden;
   else if (e.key === 'Enter' && ctx.selected && !(e.target instanceof HTMLButtonElement)) dive(ctx.selected);
@@ -1226,6 +1345,63 @@ search.onPick = (h) => {
     if (level !== 'planet' || ctx.body !== h.id) setLevel('planet', { kind: 'body', id: h.id }, () => { ctx.body = h.id; ctx.system = world.bodies[h.id].system; });
   }
 };
+
+// ------------------------------------------------------------------ what leads to…?
+
+const pathsVoice = new Voice();
+let pathsLinked = false, pathsWatch = 0;
+app.querySelector('#lifepick')!.insertAdjacentHTML('afterend', '<button id="paths" class="link" type="button" aria-expanded="false" title="Name a moment in the timeline and see the futures that reach it">What leads to…?</button>');
+const pathsBtn = app.querySelector<HTMLButtonElement>('#paths')!;
+const paths = new FuturePaths({
+  world, seed: () => sim.seed, voice: pathsVoice,
+  connect: () => { if (!pathsLinked) { pathsLinked = true; void pathsVoice.connect(); } },
+  show: showFuture,
+});
+app.append(paths.el);
+// the paths rail and the life picker share the same dock: only one is open at a time
+paths.onToggle = (on) => { pathsBtn.setAttribute('aria-expanded', String(on)); if (on) lifePick.hide(); };
+pathsBtn.addEventListener('click', () => paths.toggle());
+lifePickBtn.addEventListener('click', () => paths.hide());
+
+/** Fly the screen into a future at a calendar year; with play, run time from ~40y before up to it. */
+function showFuture(seed: number, calYear: number, o: { body?: number; system?: number; play?: boolean } = {}): void {
+  const y = Math.max(0, Math.min(calYear - 2040, 10000)), from = o.play ? Math.max(0, y - 40) : y;
+  pull = null;
+  cancelAnimationFrame(pathsWatch);
+  if (seed !== sim.seed) { seedInput.value = String(seed); startRun(seed); }
+  const g = runGen;
+  seekTo(from);
+  if (o.body !== undefined && o.body >= 0) search.onPick({ kind: 'body', id: o.body, name: world.bodies[o.body].name, sub: '' });
+  else if (o.system !== undefined) search.onPick({ kind: 'system', id: o.system, name: world.systems[o.system].name, sub: '' });
+  if (!o.play) return;
+  let started = false;
+  const watch = () => {
+    if (g !== runGen) return;   // the user switched future
+    if (!started) {
+      if (pendingYear !== null || ctx.year < from - 0.5) { pathsWatch = requestAnimationFrame(watch); return; }
+      if (timeline.frontier <= ctx.year + 1) { pathsWatch = requestAnimationFrame(watch); return; }   // playing at the frontier would jump back to year 0
+      started = true;
+      if (!timeline.playing) timeline.toggle();
+    } else if (!timeline.playing) return;   // the user paused: hands off
+    if (ctx.year >= y) { if (timeline.playing) timeline.toggle(); return; }
+    pathsWatch = requestAnimationFrame(watch);
+  };
+  pathsWatch = requestAnimationFrame(watch);
+}
+
+paths.setAgent(new OracleAgent(import.meta.env.VITE_ELEVEN_AGENT_ID || null, {
+  // tool arguments come from the LLM: coerce them before they reach the sim
+  find_futures: async ({ goal }) => {
+    const r = await paths.ask(String(goal ?? ''));
+    return 'error' in r ? `${r.error} Try: ${r.suggestions.join(', ')}.` : toolSummary(r.chain, r.results, r.tried);
+  },
+  watch_future: async ({ future, year }) => {
+    const f = Math.trunc(Number(future)), y = year == null ? undefined : Math.round(Number(year));
+    if (!(f >= 1) || (y !== undefined && !Number.isFinite(y))) throw new Error(`No future ${future}${year == null ? '' : ` at ${year}`}.`);
+    paths.watch(f, y);
+    return y ? `Showing future ${f} in ${y}.` : `Playing future ${f} up to the goal.`;
+  },
+}));
 
 // ------------------------------------------------------------------ the Starship
 
@@ -1372,4 +1548,4 @@ function loop(now: number): void {
 }
 requestAnimationFrame(loop);
 
-if (import.meta.env.DEV) Object.assign(window, { __app: { ctx, views, setLevel, dive, select, timeline, camera, controls, micro, multiverse, enterPerson, street, inspector, sim, get level() { return level; }, get busy() { return busy; }, get flying() { return !!flight; } } });
+if (import.meta.env.DEV) Object.assign(window, { __app: { ctx, views, setLevel, dive, select, timeline, camera, controls, micro, multiverse, enterPerson, street, inspector, sim, get level() { return level; }, get busy() { return busy; }, get flying() { return !!flight; }, get following() { return following; }, get pull() { return pull; } } });

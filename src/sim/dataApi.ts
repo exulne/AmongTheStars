@@ -4,7 +4,6 @@
 // slices, so the worker keeps answering while it scans.
 
 import { isAlive } from './catalog.ts';
-import { FC, HG, NFC } from './civ.ts';
 import { Engine, type SimState } from './engine.ts';
 import { F, NF } from './metrics.ts';
 import { NMC } from './launchEconomics.ts';
@@ -18,9 +17,8 @@ export type DataReq =
   | { type: 'table'; id: number; step: number }
   | { type: 'scan'; id: number; expr: string; agg: Agg; of?: string; stride: number }
   | { type: 'runinfo'; id: number }
-  /** a place field or expression summed per group (faction, faith, system or stage) at every stride-th step */
+  /** a place field or expression summed per group (faction, system or stage) at every stride-th step */
   | { type: 'groups'; id: number; by: GroupBy; of?: string; stride: number; top: number; focus?: number }
-  | { type: 'faiths'; id: number }
   /** every field of up to a few places at every stride-th step */
   | { type: 'place'; id: number; bodies: number[]; stride: number }
   /** mission economics records launched up to a year (launchEconomics.ts MC columns) */
@@ -37,8 +35,6 @@ export type DataRes =
   | { type: 'runinfo'; id: number; seed: number; done: boolean; feasible: number[]; costMult: number[]; wanderlust: number; techDone: number[] }
   /** values[i * keys.length + k]: group keys[k] at steps[i]; other: the rest; total: every living place */
   | { type: 'groups'; id: number; pending?: boolean; error?: string; by: GroupBy; steps: Int32Array; keys: number[]; values: Float64Array; other: Float64Array; total: Float64Array; nGroups: Int32Array }
-  /** every faith by number: its name and where it was founded (body -1: the faiths of Earth) */
-  | { type: 'faiths'; id: number; pending?: boolean; faiths: { n: number; name: string; body: number; year: number }[] }
   /** rows[(i * bodies.length + j) * NF + f]: field f of bodies[j] at steps[i] (NaN before it was settled) */
   | { type: 'place'; id: number; pending?: boolean; bodies: number[]; steps: Int32Array; rows: Float64Array }
   /** rows[i * NMC + c]: column c of mission i, launch order; the run's seed and the assumption scenario it was priced with */
@@ -47,7 +43,7 @@ export type DataRes =
   | LabRes;
 
 export type PlaceRes = Extract<DataRes, { type: 'place' }>;
-export type GroupBy = 'faction' | 'culture' | 'system' | 'stage';
+export type GroupBy = 'faction' | 'system' | 'stage';
 
 export interface DataEnv {
   world: World;
@@ -55,13 +51,11 @@ export interface DataEnv {
   snaps: () => SimState[];
   stateAt: (step: number) => Engine;
   post: (m: DataRes, transfer?: Transferable[]) => void;
-  /** faith f's name (row f of the faith table), once the people of the run exist (else null) */
-  faithName?: (f: number) => string | null;
   /** give a replaying engine the same war minds as the main run */
   minds?: (e: Engine) => void;
 }
 
-const DATA_TYPES = new Set(['table', 'scan', 'runinfo', 'groups', 'faiths', 'place', 'missions', 'mission', ...LAB_TYPES]);
+const DATA_TYPES = new Set(['table', 'scan', 'runinfo', 'groups', 'place', 'missions', 'mission', ...LAB_TYPES]);
 export function isDataReq(m: { type: string }): m is DataReq { return DATA_TYPES.has(m.type); }
 
 export const living = isAlive;
@@ -139,7 +133,7 @@ export function handleData(m: DataReq, env: DataEnv): void {
     const steps: number[] = [], chunks: Float64Array[] = [];
     scan(env, m.stride, (st, step) => {
       const r = new Float64Array(nb * NF).fill(NaN);
-      bodies.forEach((b, j) => { if (st.S[b * NF + F.stage] >= 0) r.set(st.S.subarray(b * NF, b * NF + NF), j * NF); });
+      bodies.forEach((b, j) => { if (st.S[b * NF + F.stage] >= 0) { r.set(st.S.subarray(b * NF, b * NF + NF), j * NF); r[j * NF + F.culture] = NaN; } });
       steps.push(step); chunks.push(r);
     }).then((ok) => {
       const rows = new Float64Array(chunks.length * nb * NF);
@@ -147,27 +141,12 @@ export function handleData(m: DataReq, env: DataEnv): void {
       const st = Int32Array.from(steps);
       env.post({ type: 'place', id: m.id, pending: !ok, bodies, steps: st, rows }, [st.buffer, rows.buffer]);
     });
-  }
-  else if (m.type === 'faiths') {
-    // a place's culture is its biggest faith: 0 for Earth's old faiths, else 1 + its row in the faith table
-    const e = env.main();
-    const out: { n: number; name: string; body: number; year: number }[] = [{ n: 0, name: "Earth's old faiths", body: -1, year: 0 }];
-    let pending = !e || !e.done || !env.faithName;
-    if (e && !pending) {
-      const T = e.st.hx.faith, nF = e.st.hx.hg[HG.nFaith];
-      for (let f = 0; f < nF; f++) {
-        const name = env.faithName!(f);
-        if (name === null) { pending = true; break; }
-        out.push({ n: f + 1, name, body: T[f * NFC + FC.home], year: T[f * NFC + FC.year] });
-      }
-    }
-    env.post({ type: 'faiths', id: m.id, pending, faiths: pending ? [] : out });
   } else if (m.type === 'table') {
     const e = env.stateAt(m.step), st = e.st;
     const ids: number[] = [];
     for (let n = 0; n < st.nSettled; n++) if (living(st.S[st.settled[n] * NF + F.stage])) ids.push(st.settled[n]);
     const rows = new Float64Array(ids.length * NF);
-    ids.forEach((b, i) => rows.set(st.S.subarray(b * NF, b * NF + NF), i * NF));
+    ids.forEach((b, i) => { rows.set(st.S.subarray(b * NF, b * NF + NF), i * NF); rows[i * NF + F.culture] = NaN; });
     const bodies = Int32Array.from(ids);
     env.post({ type: 'table', id: m.id, step: st.step, year: e.years[st.step], bodies, rows }, [bodies.buffer, rows.buffer]);
   } else if (m.type === 'scan') {
@@ -214,7 +193,7 @@ export function handleData(m: DataReq, env: DataEnv): void {
 
 /** The group a settlement belongs to. */
 export function groupKey(by: GroupBy, S: Float64Array, o: number, sys: number): number {
-  return by === 'faction' ? S[o + F.faction] : by === 'culture' ? S[o + F.culture] : by === 'stage' ? S[o + F.stage] : sys;
+  return by === 'faction' ? S[o + F.faction] : by === 'stage' ? S[o + F.stage] : sys;
 }
 
 function groups(m: Extract<DataReq, { type: 'groups' }>, env: DataEnv): void {

@@ -1,0 +1,45 @@
+/* The "What leads to…?" rail: same docking as the life-pick panel (style.css .lifepick). */
+.paths { position: absolute; z-index: 6; top: 0; right: 0; bottom: var(--bottom-h, 200px); width: min(22rem, 34vw); box-sizing: border-box; padding: 0.9rem 1.1rem; overflow-y: auto;
+  background: rgba(10,12,18,0.82); backdrop-filter: blur(10px); border-left: 1px solid var(--rule); }
+.paths[hidden] { display: none; }
+.paths .pf-title { margin: 0 0 0.5rem; }
+.paths .pf-sec { margin: 0.8rem 0 0.15rem; padding-top: 0.55rem; border-top: 1px solid var(--rule); font-size: 0.64rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--quiet); }
+.paths .pf-x { position: absolute; top: 0.1rem; right: 0.3rem; color: var(--quiet); font-size: 1.1rem; }
+.paths .pf-x:hover { color: var(--ink); }
+.paths .pf-ask { display: flex; gap: 0.4rem; align-items: baseline; flex-wrap: wrap; }
+.paths .pf-ask input[type="text"] { flex: 1; min-width: 0; background: transparent; border: 0; border-bottom: 1px solid var(--rule); color: var(--ink); font-size: 0.85rem; border-radius: 0; }
+.paths .pf-chips { display: flex; flex-wrap: wrap; gap: 0.3rem 0.7rem; margin: 0.5rem 0 0; }
+.paths .pf-aux { display: flex; gap: 0.9rem; align-items: baseline; margin: 0.55rem 0 0; color: var(--quiet); font-size: 0.8rem; }
+.paths .pf-aux label { display: flex; gap: 0.3rem; align-items: baseline; }
+.paths .pf-mic.on { color: var(--accent); }
+.paths .pf-n { flex: 1 0 100%; display: flex; gap: 0.3rem; align-items: baseline; justify-content: flex-end; margin: 0.25rem 0 0; color: var(--quiet); font-size: 0.72rem; white-space: nowrap; }
+.paths .pf-n input { width: 3.5em; background: transparent; border: 0; border-bottom: 1px solid var(--rule); color: var(--ink); font-size: 0.8rem; border-radius: 0; text-align: right; }
+.paths .pf-all { display: block; margin: 0.5rem auto 0; color: var(--quiet); font-size: 0.78rem; }
+.paths .pf-status { margin: 0.5rem 0 0; font-size: 0.8rem; color: var(--quiet); min-height: 1.1em; }
+.paths .pf-mode { margin: 0.3rem 0 0; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+.paths .pf-transcript { margin: 0.3rem 0 0; max-height: 9rem; overflow-y: auto; font-size: 0.78rem; }
+.paths .pf-transcript p { margin: 0.2rem 0; }
+.paths .pf-transcript .you { color: var(--quiet); }
+.paths .pf-transcript .you::before { content: "you: "; }
+.paths .pf-transcript .agent::before { content: "oracle: "; color: var(--accent); }
+.paths .pf-card { margin: 0.6rem 0 0; padding: 0.55rem 0.7rem; border: 1px solid var(--rule); border-radius: 6px; background: rgba(255,255,255,0.025); }
+.paths .pf-card .pf-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.6rem; }
+.paths .pf-card .pf-delta { color: var(--quiet); font-size: 0.72rem; }
+.paths .pf-card .pf-hl { margin: 0.2rem 0 0; font-size: 0.78rem; color: var(--accent); }
+.paths .pf-card canvas.pf-spark { display: block; width: 100%; height: 54px; margin: 0.3rem 0 0; }
+.paths .pf-card .pf-steps { max-height: 11rem; overflow-y: auto; margin-top: 0.35rem; }
+.paths .pf-card .pf-step { display: flex; gap: 0.6rem; align-items: baseline; margin: 0.2rem 0; font-size: 0.78rem; cursor: pointer; }
+.paths .pf-card .pf-step:hover { color: var(--accent); }
+.paths .pf-card .pf-step:hover .y { color: var(--accent); }
+.paths .pf-card .pf-step .y { flex: 0 0 3.2em; text-align: right; color: var(--quiet); }
+.paths .pf-card .pf-step.goal { color: var(--accent); }
+.paths .pf-card .pf-parts { margin-top: 0.35rem; }
+.paths .pf-card .pf-part { display: flex; gap: 0.6rem; align-items: baseline; margin: 0.15rem 0; font-size: 0.78rem; cursor: pointer; }
+.paths .pf-card .pf-part:hover { color: var(--accent); }
+.paths .pf-card .pf-part .y { flex: 0 0 3.2em; text-align: right; color: var(--accent); }
+.paths .pf-card .pf-actions { display: flex; gap: 0.9rem; margin-top: 0.4rem; }
+.paths .pf-miss { margin: 0.4rem 0 0; font-size: 0.76rem; color: var(--quiet); }
+.paths .pf-footer { margin: 0.7rem 0 0; font-size: 0.78rem; }
+@media (max-width: 40rem) {
+  .paths { top: auto; bottom: calc(var(--bottom-h, 200px) + 8px); left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); width: auto; max-height: 46vh; }
+}

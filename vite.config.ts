@@ -31,7 +31,8 @@ export default defineConfig(({ mode }) => {
   const key = env.ELEVENLABS_API_KEY;
   return {
     plugins: [viteSingleFile()],
-    define: { __BUILD__: JSON.stringify(stamp()) },
+    // __ELEVEN_PROXY__: whether the dev proxy holds a key; the key itself stays here
+    define: { __BUILD__: JSON.stringify(stamp()), __ELEVEN_PROXY__: JSON.stringify(!!key) },
     worker: { format: 'es' },
     // satellite.js ships a top-level await, which the dev pre-bundle's default target rejects
     optimizeDeps: { esbuildOptions: { target: 'es2022' } },

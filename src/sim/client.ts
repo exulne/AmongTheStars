@@ -3,6 +3,7 @@
 import SimWorker from './worker.ts?worker&inline';
 import type { FromWorker, ToWorker } from './worker.ts';
 import { NGM } from './metrics.ts';
+import type { PickWant } from './lives.ts';
 import type { DataReq, DataRes } from './dataApi.ts';
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -58,13 +59,21 @@ export class SimClient {
   residents(body: number, year: number, offset: number, count: number) { return this.ask<Msg<'residents'>>({ type: 'residents', body, year, offset, count }); }
   person(person: string, year: number) { return this.ask<Msg<'person'>>({ type: 'person', person, year }); }
   residentAt(body: number, year: number, k: number) { return this.ask<Msg<'residentAt'>>({ type: 'residentAt', body, year, k }); }
+  /** the n-th person ever born on `body` (n = 0: at random; body = -1: any world that saw births), of a kind, matching `want` */
+  findPerson(body: number, n: number, kind: string, year: number, want?: PickWant) { return this.ask<Msg<'findPerson'>>({ type: 'findPerson', body, n, kind, year, want }); }
+  /** every world that saw a birth in this future (real bodies only) */
+  birthPlaces() { return this.ask<Msg<'birthPlaces'>>({ type: 'birthPlaces' }); }
   chronicle(from: number, to: number, opts: { body?: number; query?: string; limit?: number; minWeight?: number } = {}) { return this.ask<Msg<'chronicle'>>({ type: 'chronicle', from, to, ...opts }); }
   society(body: number, step: number) { return this.ask<Msg<'society'>>({ type: 'society', body, step }); }
   ship(from: number, to: number, depart: number) { return this.ask<Msg<'ship'>>({ type: 'ship', from, to, depart }); }
   placeNames() { return this.ask<Msg<'placeNames'>>({ type: 'placeNames' }); }
+  /** every faith by number (0: Earth's old faiths): [n, name], once the run's people exist */
+  faithNames() { return this.ask<Msg<'faithNames'>>({ type: 'faithNames' }); }
   inventions() { return this.ask<Msg<'inventions'>>({ type: 'inventions' }); }
   /** ages, faiths, polities and wars of this future, with their names */
   annals() { return this.ask<Msg<'annals'>>({ type: 'annals' }); }
+  /** society-level trends over the whole run: migration, shocks, hotspots */
+  trends() { return this.ask<Msg<'trends'>>({ type: 'trends' }); }
   /** how this future fights at a year: the generation of war minds, and wars in the last `span` years against the span before */
   wayOfWar(year: number, span = 500) { return this.ask<Msg<'wayOfWar'>>({ type: 'wayOfWar', year, span }); }
   state(step: number) { return this.ask<StateMsg>({ type: 'state', step }); }

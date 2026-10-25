@@ -45,7 +45,7 @@ if (bio) {
   for (const id of ids) {
     const b = L.biography(id, 10000);
     if (!b) continue;
-    console.log(`\n== ${b.name} (${Math.round(2040 + b.born)}–${b.died ? Math.round(2040 + b.died.year) : ''})${b.faith ? `, raised in ${b.faith}` : ''}`);
+    console.log(`\n== ${b.name} (${Math.round(2040 + b.born)}–${b.died ? Math.round(2040 + b.died.year) : ''})`);
     for (const s of b.story) console.log(`  ${Math.round(2040 + s.year)}  ${s.text}`);
   }
 }

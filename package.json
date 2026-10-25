@@ -10,6 +10,8 @@
     "sim": "node --experimental-strip-types scripts/headless.ts",
     "check": "node scripts/check.ts && node scripts/people-check.ts && node scripts/econ-check.ts && node scripts/geo-check.ts && node scripts/orbit-check.ts && node scripts/impact-check.ts",
     "check:geo": "node scripts/geo-check.ts",
+    "check:paths": "node scripts/paths-check.ts",
+    "eleven:agent": "node scripts/eleven-agent.ts",
     "check:econ": "node scripts/econ-check.ts",
     "check:orbits": "node scripts/orbit-check.ts",
     "check:impacts": "node scripts/impact-check.ts",
@@ -17,6 +19,7 @@
     "calibrate:msis": "node scripts/msis-calibrate.ts",
     "check:people": "node scripts/people-check.ts",
     "check:data": "node scripts/query-check.ts && node scripts/data-check.ts",
+    "check:trends": "node scripts/trends-check.ts",
     "check:explain": "esbuild scripts/explain-check.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/explain-check.mjs --log-level=warning && node node_modules/.cache/explain-check.mjs"
   },
   "devDependencies": {

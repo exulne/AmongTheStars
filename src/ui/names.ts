@@ -38,10 +38,10 @@ class Names {
     const ask = () => {
       if (g !== this.gen) return;
       const wait: Promise<void>[] = [];
-      if (!gotF) wait.push(sim.data<'faiths'>({ type: 'faiths' }).then((m) => {
+      if (!gotF) wait.push(sim.faithNames().then((m) => {
         if (g !== this.gen || m.pending) return;
         gotF = true;
-        for (const f of m.faiths) this.faiths.set(f.n, f.name);
+        for (const [n, name] of m.names) this.faiths.set(n, name);
       }));
       if (!gotP) wait.push(sim.placeNames().then((m) => {
         if (g !== this.gen || m.pending) return;

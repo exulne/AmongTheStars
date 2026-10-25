@@ -6,11 +6,13 @@ import { EV } from './catalog.ts';
 import { Engine, type SimState } from './engine.ts';
 import { HIST_FIELDS, NGM } from './metrics.ts';
 import { Chronicle, type Annals, type Entry } from './chronicle.ts';
-import { Lives, type Biography, type PersonBrief } from './lives.ts';
+import { buildTrends, type Trends } from './trends.ts';
+import { Lives, type Biography, type PersonBrief, type PickWant } from './lives.ts';
 import { SocietyModel, type Society } from './society.ts';
 import { buildWorld } from './world.ts';
 import { HG, NWC, OUTCOME, WAR_KIND, WC } from './civ.ts';
 import { SHIP_BODY, periodOf, periodStart } from './ledger.ts';
+import { idStr } from './demography.ts';
 import { handleData, isDataReq, type DataReq, type DataRes } from './dataApi.ts';
 import { NGEO, type GeoSnap } from './geo.ts';
 import { NetMind } from '../ml/netMind.ts';
@@ -28,13 +30,17 @@ export type ToWorker =
   | { type: 'residents'; id: number; body: number; year: number; offset: number; count: number }
   | { type: 'person'; id: number; person: string; year: number }
   | { type: 'residentAt'; id: number; body: number; year: number; k: number }
+  | { type: 'findPerson'; id: number; body: number; n: number; kind: string; year: number; want?: PickWant }
+  | { type: 'birthPlaces'; id: number }
   | { type: 'chronicle'; id: number; from: number; to: number; body?: number; query?: string; limit?: number; minWeight?: number }
   | { type: 'inventions'; id: number }
   | { type: 'society'; id: number; body: number; step: number }
   | { type: 'placeNames'; id: number }
+  | { type: 'faithNames'; id: number }
   | DataReq
   | { type: 'ship'; id: number; from: number; to: number; depart: number }
   | { type: 'annals'; id: number }
+  | { type: 'trends'; id: number }
   | { type: 'wayOfWar'; id: number; year: number; span: number };
 
 export type FromWorker =
@@ -45,14 +51,19 @@ export type FromWorker =
   | { type: 'residents'; id: number; pending?: boolean; total: number; asOf: number; offset: number; people: PersonBrief[]; pyramid: { band: number; women: number; men: number }[] }
   | { type: 'person'; id: number; pending?: boolean; bio: Biography | null }
   | { type: 'residentAt'; id: number; pending?: boolean; person: string | null }
+  | { type: 'findPerson'; id: number; pending?: boolean; person: string | null; brief: PersonBrief | null; total: number; scanned: number; standing?: Biography['standing']; life?: { year: number; text: string; body?: number }[] }
+  | { type: 'birthPlaces'; id: number; pending?: boolean; bodies: number[] }
   | { type: 'chronicle'; id: number; pending?: boolean; entries: Entry[] }
   | { type: 'inventions'; id: number; pending?: boolean; list: { tech: number; year: number; entry: Entry | null }[] }
   | { type: 'society'; id: number; pending?: boolean; society: Society | null }
   /** places whose people call them something other than the catalogue name: [body, name] */
   | { type: 'placeNames'; id: number; pending?: boolean; names: [number, string][] }
+  /** every faith by number (0: Earth's old faiths): [n, name] — narrative only, not data */
+  | { type: 'faithNames'; id: number; pending?: boolean; names: [number, string][] }
   | DataRes
   | { type: 'ship'; id: number; pending?: boolean; ship: ShipInfo | null }
   | { type: 'annals'; id: number; pending?: boolean; annals: Annals | null }
+  | { type: 'trends'; id: number; pending?: boolean; trends: Trends | null }
   | { type: 'wayOfWar'; id: number; way: WayOfWar };
 
 /** Wars begun in a span of years, and how they went. */
@@ -137,6 +148,15 @@ function start(seed: number, token: number, gens: WarGens | null): void {
 
 function stateAt(step: number): Engine {
   if (!main || !replay) throw new Error('not running');
+  // a seek can ask for the future: grind the engine forward until covered, bounded
+  // so the worker stays responsive — whatever's still missing keeps coming via chunks
+  if (step > main.st.step) {
+    const tEnd = performance.now() + 2000;
+    while (!main.done && main.st.step < step && performance.now() < tEnd) {
+      main.step();
+      if (main.st.step % SNAP_EVERY === 0) snaps.push(main.snapshot());
+    }
+  }
   step = Math.min(step, main.st.step);
   if (step === main.st.step) return main;
   if (replay.st.step !== step) {
@@ -168,7 +188,7 @@ function wayOfWar(year: number, span: number): WayOfWar {
   };
 }
 
-const dataEnv = { world, main: () => main, snaps: () => snaps, stateAt, post: (m: DataRes, t: Transferable[] = []) => post(m, t), faithName: (f: number) => (people() && chron ? chron.faithName(f) : null), minds: (e: Engine) => minds(e, e.seed, warGens) };
+const dataEnv = { world, main: () => main, snaps: () => snaps, stateAt, post: (m: DataRes, t: Transferable[] = []) => post(m, t), minds: (e: Engine) => minds(e, e.seed, warGens) };
 
 self.onmessage = (ev: MessageEvent<ToWorker>) => {
   const m = ev.data;
@@ -201,6 +221,16 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
   } else if (m.type === 'residentAt') {
     const L = people();
     post({ type: 'residentAt', id: m.id, pending: !L, person: L ? L.residentAt(m.body, m.year, m.k) : null });
+  } else if (m.type === 'findPerson') {
+    const L = people();
+    if (!L) post({ type: 'findPerson', id: m.id, pending: true, person: null, brief: null, total: 0, scanned: 0 });
+    else {
+      const r = L.pickLife(m.body, Math.floor(m.n), m.kind, m.year, m.want, (m.id * 2654435761) >>> 0);
+      post({ type: 'findPerson', id: m.id, person: r.person ? idStr(r.person) : null, brief: r.person ? L.brief(r.person, m.year) : null, total: r.total, scanned: r.scanned, standing: r.standing, life: r.person ? L.lifeEvents(idStr(r.person)) : undefined });
+    }
+  } else if (m.type === 'birthPlaces') {
+    const L = people();
+    post({ type: 'birthPlaces', id: m.id, pending: !L, bodies: L ? L.birthBodies() : [] });
   } else if (m.type === 'chronicle') {
     const ok = people() && chron;
     post({ type: 'chronicle', id: m.id, pending: !ok, entries: ok ? chron!.list(m.from, m.to, { body: m.body, query: m.query, limit: m.limit, minWeight: m.minWeight }) : [] });
@@ -215,6 +245,14 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
     const L = people(), names: [number, string][] = [];
     if (L) world.bodies.forEach((b, i) => { const n = L.placeName(i); if (n && n !== b.name) names.push([i, n]); });
     post({ type: 'placeNames', id: m.id, pending: !L, names });
+  } else if (m.type === 'faithNames') {
+    // a place's culture is its biggest faith: 0 for Earth's old faiths, else 1 + its row in the faith table
+    const ok = !!(people() && chron && main), names: [number, string][] = [[0, "Earth's old faiths"]];
+    if (ok) {
+      const nF = main!.st.hx.hg[HG.nFaith];
+      for (let f = 0; f < nF; f++) names.push([f + 1, chron!.faithName(f)]);
+    }
+    post({ type: 'faithNames', id: m.id, pending: !ok, names: ok ? names : [] });
   } else if (m.type === 'ship') {
     const L = people();
     post({ type: 'ship', id: m.id, pending: !L, ship: L ? shipInfo(L, m.from, m.to, m.depart) : null });
@@ -223,6 +261,9 @@ self.onmessage = (ev: MessageEvent<ToWorker>) => {
   } else if (m.type === 'annals') {
     const ok = people() && chron;
     post({ type: 'annals', id: m.id, pending: !ok, annals: ok ? chron!.annals() : null });
+  } else if (m.type === 'trends') {
+    const t = main ? buildTrends(main) : null;
+    post({ type: 'trends', id: m.id, pending: !t, trends: t });
   } else if (m.type === 'inventions') {
     const ok = people() && chron;
     post({ type: 'inventions', id: m.id, pending: !ok, list: ok ? chron!.inventions() : [] });

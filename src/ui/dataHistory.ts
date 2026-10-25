@@ -3,7 +3,7 @@
 // a place's full history (every field at every step) as CSV.
 
 import type { PlaceRes } from '../sim/dataApi.ts';
-import { NF, SETTLEMENT_FIELDS, SETTLEMENT_LABELS, type SField } from '../sim/metrics.ts';
+import { DATA_FIELDS, DATA_FIELD_IDX, NF, SETTLEMENT_LABELS, type SField } from '../sim/metrics.ts';
 import { PLACE_NAMES, placeBinder, tryCompile, type PlaceRow } from '../sim/query.ts';
 import { AnalystChart, type ALine } from './analystChart.ts';
 import { esc, showError, type DataHost, type DataTab } from './dataPanel.ts';
@@ -124,8 +124,8 @@ export class HistoryTab implements DataTab {
       const j = m ? m.bodies.indexOf(b) : -1;
       if (!m || j < 0) return;
       const sim = this.host.sim, nb = m.bodies.length, rows: number[][] = [];
-      m.steps.forEach((s, i) => { const o = (i * nb + j) * NF; if (!Number.isNaN(m.rows[o])) rows.push([2040 + sim.years[s], ...Array.from(m.rows.subarray(o, o + NF))]); });
-      void copyText(toCsv(['year', ...SETTLEMENT_FIELDS], rows, `History of ${this.host.world.bodies[b].name} (body ${b}): every field, ${rows.length} steps`), `History of ${this.host.world.bodies[b].name}`, status);
+      m.steps.forEach((s, i) => { const o = (i * nb + j) * NF; if (!Number.isNaN(m.rows[o])) rows.push([2040 + sim.years[s], ...DATA_FIELD_IDX.map((k) => m.rows[o + k])]); });
+      void copyText(toCsv(['year', ...DATA_FIELDS], rows, `History of ${this.host.world.bodies[b].name} (body ${b}): every field, ${rows.length} steps`), `History of ${this.host.world.bodies[b].name}`, status);
     } else if (d.dataset.act === 'pin') this.pin(this.host.selectedBody());
     else if (d.dataset.act === 'chartcsv') {
       const lines = this.lines();
