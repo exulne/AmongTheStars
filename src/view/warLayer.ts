@@ -191,7 +191,7 @@ export class WarLayer {
       if (age < LINGER + 20) this.ring(P, Math.max(0.05, age), FIRE, 0.18 * fade * (1 - age / (LINGER + 20)));
     }
     // polities arming: their stars pulse in their colour
-    if (snap?.postures.length) {
+    if (snap?.postures?.length) {
       const arming = new Map(snap.postures);
       const seen = new Set<number>();
       for (const b of snap.settled) {
@@ -276,7 +276,7 @@ export class WarLayer {
         if (w.outcome === OUTCOME.ANNEX) this.ring(pt, I.size(target) * 1.6 + (year - w.end) * 0.04, cT, 0.5 * fade * fade);
       }
     }
-    if (snap.postures.length) {
+    if (snap.postures?.length) {
       const arming = new Map(snap.postures);
       for (const b of world.systems[here].bodies) {
         const f = fac(b), p = arming.get(f);

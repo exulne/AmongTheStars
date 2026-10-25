@@ -105,7 +105,7 @@ export class BattleLayer {
   draw(world: World, snap: StateMsg | null, year: number, t: number, here: number): void {
     this.ns = 0; this.np = 0; this.nShips = 0; this.ptWar.length = 0; this.centres.clear();
     const T = REDUCED_MOTION ? t * 0.35 : t;
-    if (snap && here >= 0) for (const w of snap.wars) {
+    if (snap && here >= 0) for (const w of snap.wars ?? []) {
       if (w.kinetic || w.sys !== here || !warActive(w, year)) continue;
       const fa = frontOf(w, world, snap), fb = targetOf(w, world, snap);
       const pa = fa >= 0 ? this.body(fa) : null, pb = fb >= 0 ? this.body(fb) : null;
