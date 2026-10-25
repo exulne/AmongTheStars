@@ -31,10 +31,7 @@ import { wayOfWarHtml } from './ui/wayOfWar.ts';
 import { EraMood } from './view/eraMood.ts';
 import { ShipConsole } from './ship/console.ts';
 import { Voyage } from './ship/voyage.ts';
-import { Voice } from './ship/voice.ts';
-import { OracleAgent } from './ship/agent.ts';
-import { FuturePaths } from './ui/futurePaths.ts';
-import { toolSummary } from './sim/milestones.ts';
+import { installPaths } from './features/paths.ts';
 import { AGE_CSS, COLOR_MODES, HEAT_CSS, factionCss, faithCss, stageLegend, type ColorMode } from './view/colorModes.ts';
 import { names as naming } from './ui/names.ts';
 import { StreetView } from './view/street.ts';
@@ -1272,60 +1269,7 @@ search.onPick = (h) => {
 
 // ------------------------------------------------------------------ what leads to…?
 
-const pathsVoice = new Voice();
-let pathsLinked = false, pathsWatch = 0;
-app.querySelector('#lifepick')!.insertAdjacentHTML('afterend', '<button id="paths" class="link" type="button" aria-expanded="false" title="Name a moment in the timeline and see the futures that reach it">What leads to…?</button>');
-const pathsBtn = app.querySelector<HTMLButtonElement>('#paths')!;
-const paths = new FuturePaths({
-  world, seed: () => sim.seed, voice: pathsVoice,
-  connect: () => { if (!pathsLinked) { pathsLinked = true; void pathsVoice.connect(); } },
-  show: showFuture,
-});
-app.append(paths.el);
-// the paths rail and the life picker share the same dock: only one is open at a time
-paths.onToggle = (on) => { pathsBtn.setAttribute('aria-expanded', String(on)); if (on) follow.lifePick.hide(); };
-pathsBtn.addEventListener('click', () => paths.toggle());
-follow.lifePickBtn.addEventListener('click', () => paths.hide());
-
-/** Fly the screen into a future at a calendar year; with play, run time from ~40y before up to it. */
-function showFuture(seed: number, calYear: number, o: { body?: number; system?: number; play?: boolean } = {}): void {
-  const y = Math.max(0, Math.min(calYear - 2040, 10000)), from = o.play ? Math.max(0, y - 40) : y;
-  pull = null;
-  cancelAnimationFrame(pathsWatch);
-  if (seed !== sim.seed) { seedInput.value = String(seed); startRun(seed); }
-  const g = runGen;
-  seekTo(from);
-  if (o.body !== undefined && o.body >= 0) search.onPick({ kind: 'body', id: o.body, name: world.bodies[o.body].name, sub: '' });
-  else if (o.system !== undefined) search.onPick({ kind: 'system', id: o.system, name: world.systems[o.system].name, sub: '' });
-  if (!o.play) return;
-  let started = false;
-  const watch = () => {
-    if (g !== runGen) return;   // the user switched future
-    if (!started) {
-      if (pendingYear !== null || ctx.year < from - 0.5) { pathsWatch = requestAnimationFrame(watch); return; }
-      if (timeline.frontier <= ctx.year + 1) { pathsWatch = requestAnimationFrame(watch); return; }   // playing at the frontier would jump back to year 0
-      started = true;
-      if (!timeline.playing) timeline.toggle();
-    } else if (!timeline.playing) return;   // the user paused: hands off
-    if (ctx.year >= y) { if (timeline.playing) timeline.toggle(); return; }
-    pathsWatch = requestAnimationFrame(watch);
-  };
-  pathsWatch = requestAnimationFrame(watch);
-}
-
-paths.setAgent(new OracleAgent(import.meta.env.VITE_ELEVEN_AGENT_ID || null, {
-  // tool arguments come from the LLM: coerce them before they reach the sim
-  find_futures: async ({ goal }) => {
-    const r = await paths.ask(String(goal ?? ''));
-    return 'error' in r ? `${r.error} Try: ${r.suggestions.join(', ')}.` : toolSummary(r.chain, r.results, r.tried);
-  },
-  watch_future: async ({ future, year }) => {
-    const f = Math.trunc(Number(future)), y = year == null ? undefined : Math.round(Number(year));
-    if (!(f >= 1) || (y !== undefined && !Number.isFinite(y))) throw new Error(`No future ${future}${year == null ? '' : ` at ${year}`}.`);
-    paths.watch(f, y);
-    return y ? `Showing future ${f} in ${y}.` : `Playing future ${f} up to the goal.`;
-  },
-}));
+installPaths(api, follow);
 
 // ------------------------------------------------------------------ the Starship
 
