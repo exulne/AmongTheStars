@@ -305,7 +305,7 @@ export function parseGoal(text: string, world: World): ParseResult {
   if (stage >= 0) {
     if (gal) {
       const G = galName(gal.gal);
-      const label = stage === STAGE.OUTPOST ? `the first settlement in ${G}` : `the first ${STAGE_NAMES[stage].toLowerCase()} in ${G}`;
+      const label = stage === STAGE.OUTPOST ? `the first settlement in ${G}` : `the first ${stage === STAGE.UPLOADED ? 'uploaded world' : STAGE_NAMES[stage].toLowerCase()} in ${G}`;
       return { goal: { id: `stage:${stage}:gal:${gal.gal}`, label, detail: `a world in ${G} becomes ${article(STAGE_NAMES[stage])} ${STAGE_NAMES[stage]}: ${STAGE_DETAIL[stage] ?? ''} — reachable only through traversable wormholes`, kind: 'stage', galaxy: gal.gal, stage } };
     }
     if (place) {
@@ -317,7 +317,7 @@ export function parseGoal(text: string, world: World): ParseResult {
     if (stage === STAGE.COLONY && /another star|interstellar|exoplanet|beyond (the )?solar system|other stars|extrasolar|alien (world|planet)/.test(t)) {
       return { goal: { id: 'metric:systems:2', label: 'the first settlement around another star', detail: 'settlements in two star systems (Sol plus one more)', kind: 'metric', metric: 'systems', threshold: 2 } };
     }
-    const lbl = stage === STAGE.OUTPOST ? 'the first settlement beyond Earth' : `the first ${STAGE_NAMES[stage].toLowerCase()} beyond Earth`;
+    const lbl = stage === STAGE.OUTPOST ? 'the first settlement beyond Earth' : `the first ${stage === STAGE.UPLOADED ? 'uploaded world' : STAGE_NAMES[stage].toLowerCase()} beyond Earth`;
     return { goal: { id: `stage:${stage}:any`, label: lbl, detail: `any world but Earth becomes ${article(STAGE_NAMES[stage])} ${STAGE_NAMES[stage]}: ${STAGE_DETAIL[stage] ?? ''}`, kind: 'stage', body: -1, stage } };
   }
 
@@ -930,7 +930,7 @@ export function progress(goal: Goal, e: Engine): string {
         const wi = TECH_INDEX.get('wormholes')!;
         if (st.techDone[wi] < 0) return st.techProg[wi] < 0 ? 'traversable wormholes proved impossible in this future' : 'traversable wormholes were never invented';
         const G = galName(goal.galaxy);
-        const got = best < 0 ? `${G === 'another galaxy' ? 'no other galaxy' : G} was never settled` : `nowhere in ${G} passed ${article(STAGE_NAMES[best])} ${STAGE_NAMES[best]}`;
+        const got = best < 0 ? (G === 'another galaxy' ? 'no other galaxy was ever settled' : `${G} was never settled`) : `nowhere in ${G} passed ${article(STAGE_NAMES[best])} ${STAGE_NAMES[best]}`;
         return `traversable wormholes came in ${YEAR0 + st.techDone[wi]}, but ${got}`;
       }
       const where = goal.body !== undefined && goal.body >= 0 ? bName(goal.body) : goal.system !== undefined ? `the ${e.world.systems[goal.system].name} system` : 'anywhere';
