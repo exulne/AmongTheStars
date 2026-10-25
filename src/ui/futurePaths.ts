@@ -148,8 +148,8 @@ export class FuturePaths {
     const pr = parseGoal(text, this.opts.world);
     this.results = [];
     this.tried = 0;
-    this.transcriptEl.hidden = true;
-    this.transcriptEl.innerHTML = '';
+    // a live Oracle conversation keeps its transcript; only cold asks clear it
+    if (!this.agent?.active) { this.transcriptEl.hidden = true; this.transcriptEl.innerHTML = ''; }
     if ('error' in pr) {
       this.goal = null;
       this.status(pr.error);
@@ -287,7 +287,8 @@ export class FuturePaths {
         mode: (m) => this.agentMode(m),
         status: (s) => this.status(s),
       });
-      this.agentMode('listening');
+      this.status('');
+      this.agentMode(agent.active ? 'listening' : '');
     } catch (e) {
       this.status(`The Oracle could not speak: ${(e as Error).message ?? e}`);
     }
