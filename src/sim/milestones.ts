@@ -3,7 +3,7 @@
 // a finished run's event log into the road that got there. Pure: no DOM, no
 // timers — it runs the same in the page, in a worker, and in node.
 
-import { YEAR0, type Engine, type SimEvent } from './engine.ts';
+import { Engine, YEAR0, type SimEvent } from './engine.ts';
 import { ERAS, EV, STAGE, STAGE_NAMES, TECHS, isAlive } from './catalog.ts';
 import { F, GM, NF, NGM } from './metrics.ts';
 import { GF, Geo, NGEO } from './geo.ts';
@@ -27,7 +27,7 @@ export interface Goal {
   galaxy?: string;    // a GALAXIES name, or '*' = any galaxy except the Milky Way
 }
 
-export type ParseResult = { goal: Goal } | { error: string; suggestions: string[] };
+export type ParseResult = { goal: Goal; notes?: string[] } | { error: string; suggestions: string[] };
 
 export interface Chain { stages: Goal[][] }      // stages in order ("then"); goals within a stage in any order ("and")
 export type Joint = 'then' | 'and';
@@ -317,7 +317,8 @@ export function parseGoal(text: string, world: World): ParseResult {
     if (stage === STAGE.COLONY && /another star|interstellar|exoplanet|beyond (the )?solar system|other stars|extrasolar|alien (world|planet)/.test(t)) {
       return { goal: { id: 'metric:systems:2', label: 'the first settlement around another star', detail: 'settlements in two star systems (Sol plus one more)', kind: 'metric', metric: 'systems', threshold: 2 } };
     }
-    return { goal: { id: `stage:${stage}:any`, label: stageLabel(world, null, stage), detail: `any settlement becomes ${article(STAGE_NAMES[stage])} ${STAGE_NAMES[stage]}: ${STAGE_DETAIL[stage] ?? ''}`, kind: 'stage', body: -1, stage } };
+    const lbl = stage === STAGE.OUTPOST ? 'the first settlement beyond Earth' : `the first ${STAGE_NAMES[stage].toLowerCase()} beyond Earth`;
+    return { goal: { id: `stage:${stage}:any`, label: lbl, detail: `any world but Earth becomes ${article(STAGE_NAMES[stage])} ${STAGE_NAMES[stage]}: ${STAGE_DETAIL[stage] ?? ''}`, kind: 'stage', body: -1, stage } };
   }
 
   // --- bare metrics
@@ -340,12 +341,56 @@ export function parseGoal(text: string, world: World): ParseResult {
   return fail(`I can't read a moment in time out of that.`);
 }
 
+// ------------------------------------------------------------------ one event, strictly
+
+/** A fresh engine at step 0, for the "already true in 2040" check — one per world. */
+const zero = new WeakMap<World, Engine>();
+function engine0(world: World): Engine {
+  let e = zero.get(world);
+  if (!e) { e = new Engine(world, 1); e.ledger = null; zero.set(world, e); }
+  return e;
+}
+
+/** What already holds at step 0, for the already-true message. */
+function whyTrue(goal: Goal, e: Engine): string {
+  const bName = (b: number) => e.world.bodies[b].name;
+  switch (goal.kind) {
+    case 'stage': {
+      for (const b of goalBodies(goal, e.world)) {
+        const v = e.st.S[b * NF + F.stage];
+        if (isAlive(v) && v >= goal.stage!) return `${bName(b)} is already ${article(STAGE_NAMES[v])} ${STAGE_NAMES[v]}`;
+      }
+      return 'it already holds at the start';
+    }
+    case 'pop': return `${bName(goal.body!)} already has ${fmtPeople(Math.round(e.st.S[goal.body! * NF + F.pop]))} people`;
+    case 'metric': {
+      const v = e.series[GM[goal.metric!]];
+      if (goal.metric === 'pop') return `humanity already numbers ${fmtPeople(Math.round(v))}`;
+      if (goal.metric === 'systems') return `${Math.round(v)} star systems already hold settlements`;
+      return `the Kardashev rating is already ${v.toFixed(2)}`;
+    }
+    case 'tech': return `${TECHS[goal.tech!].name} is already known`;
+    default: return 'it already holds at the start';
+  }
+}
+
+/** What a tag (and later the mic and the Oracle) is made from: parseGoal plus the checks that keep a tag honest. */
+export function parseEvent(text: string, world: World): ParseResult {
+  const r = parseGoal(text, world);
+  if ('error' in r) return r;
+  const e0 = engine0(world);
+  if (reached(r.goal, e0)) {
+    return { error: `That's already true in 2040: ${whyTrue(r.goal, e0)}.`, suggestions: [...SUGGESTIONS] };
+  }
+  return r;
+}
+
 // ------------------------------------------------------------------ watching a run
 
 /** The bodies a stage/pop goal can land on. */
 function goalBodies(goal: Goal, world: World): number[] {
   if (goal.body !== undefined && goal.body >= 0) return [goal.body];
-  if (goal.body === -1) return world.bodies.map((b) => b.id);
+  if (goal.body === -1) return world.bodies.filter((b) => b.id !== world.earth).map((b) => b.id);
   if (goal.system !== undefined) return world.systems[goal.system].bodies;
   if (goal.galaxy) return world.systems.filter((s) => goal.galaxy === '*' ? s.galaxy !== 'Milky Way' : s.galaxy === goal.galaxy).flatMap((s) => s.bodies);
   return [];
