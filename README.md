@@ -200,3 +200,10 @@ npm run dev
 ```
 
 The key stays in the dev server (`scripts/openaiDev.ts`): the page gets a two-minute client secret for one WebRTC call to OpenAI's Realtime API (`gpt-realtime-2.1`), and typed questions go through a server-side proxy to the Responses API (`gpt-5.4-mini`). The single-file build has no server, so there the panel says "Voice assistant needs the local dev server". Architecture, security model and the tool list: `research/gpt-assistant.md`; code: `src/assistant/`.
+
+## Team
+
+- exulne
+- Kuan Yi Wang
+- shao
+- Omid
