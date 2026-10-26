@@ -1,5 +1,4 @@
-# 2SOON2026
-
+# Among The Stars
 **A simulation of humanity taking over space, starting with Mars in 2040 and running 10,000 years forward.**
 
 You drag a slider through time. At any year you can zoom from the whole universe down to one galaxy, one star, one planet, one city, and one person in that city. Every number at every moment (people, energy, money, water, metal, knowledge, wars) comes out of the simulation and can be charted.
@@ -202,8 +201,7 @@ npm run dev
 The key stays in the dev server (`scripts/openaiDev.ts`): the page gets a two-minute client secret for one WebRTC call to OpenAI's Realtime API (`gpt-realtime-2.1`), and typed questions go through a server-side proxy to the Responses API (`gpt-5.4-mini`). The single-file build has no server, so there the panel says "Voice assistant needs the local dev server". Architecture, security model and the tool list: `research/gpt-assistant.md`; code: `src/assistant/`.
 
 ## Team
-
-- exulne
+- Ethan Xu
 - Kuan Yi Wang
 - shao
 - Omid
